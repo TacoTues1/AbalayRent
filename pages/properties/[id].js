@@ -938,7 +938,7 @@ export default function PropertyDetail() {
 
               {/* Location / Get Directions - Separate Section */}
               <div className="py-2">
-                <h3 className="text-3xl font-bold text-gray-900 mb-3 uppercase tracking-wider">Location</h3>
+                <h3 className="text-3xl font-bold text-gray-900 mb-3 uppercase tracking-wider">Property Location</h3>
                 <div className="w-full h-[500px] bg-gray-50 rounded-xl overflow-hidden relative" ref={locationMapRef} id="property-location-map">
                   {/* Map Loading Overlay */}
                   {mapLoading && (

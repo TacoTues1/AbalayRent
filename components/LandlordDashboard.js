@@ -1424,7 +1424,7 @@ export default function LandlordDashboard({ session, profile }) {
             <div className="relative z-10">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
                 <div>
-                  <p className="text-white/60 text-sm font-medium mb-1">Welcome back</p>
+                  <p className="text-white/60 text-sm font-medium mb-1">Welcome</p>
                   <h1 className="text-3xl sm:text-4xl font-black tracking-tight">{profile?.first_name} {profile?.last_name}</h1>
                   <p className="text-white/70 mt-2 text-sm sm:text-base">Manage your properties, tenants, and finances from one place.</p>
                 </div>
