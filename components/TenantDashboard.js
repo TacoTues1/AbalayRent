@@ -1,7 +1,7 @@
 import Lottie from "lottie-react"
 import { useRouter } from 'next/router'
 import { showToast } from 'nextjs-toast-notify'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import loadingAnimation from "../assets/loading.json"
 import { createNotification } from '../lib/notifications'
 import { supabase } from '../lib/supabaseClient'
@@ -79,6 +79,17 @@ export default function TenantDashboard({ session, profile }) {
   const maxDisplayItems = 8
   const router = useRouter()
 
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState([])
+  const [showSearchDropdown, setShowSearchDropdown] = useState(false)
+  const [isSearching, setIsSearching] = useState(false)
+  const searchRef = useRef(null)
+
+  // Compute Most Favorite and Top Rated IDs
+  const mostFavoriteId = Object.entries(propertyStats).filter(([_, s]) => (s.favorite_count || 0) > 0).sort((a, b) => b[1].favorite_count - a[1].favorite_count)?.[0]?.[0];
+  const topRatedId = Object.entries(propertyStats).filter(([_, s]) => (s.review_count || 0) > 0).sort((a, b) => b[1].avg_rating - a[1].avg_rating || b[1].review_count - a[1].review_count)?.[0]?.[0];
+
   // Mount animation trigger
   const [mounted, setMounted] = useState(false)
 
@@ -97,6 +108,51 @@ export default function TenantDashboard({ session, profile }) {
   useEffect(() => {
     setMounted(true)
   }, [])
+
+  // Real-time search with debounce
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchResults([])
+      setShowSearchDropdown(false)
+      return
+    }
+    const debounceTimer = setTimeout(async () => {
+      setIsSearching(true)
+      try {
+        const { data, error } = await supabase
+          .from('properties')
+          .select('id, title, city, price, images, status')
+          .eq('is_deleted', false)
+          .or(`title.ilike.%${searchQuery}%,city.ilike.%${searchQuery}%,address.ilike.%${searchQuery}%`)
+          .limit(6)
+        if (data && !error) {
+          setSearchResults(data)
+          setShowSearchDropdown(true)
+        }
+      } catch (err) {
+        console.error('Search error:', err)
+      } finally {
+        setIsSearching(false)
+      }
+    }, 300)
+    return () => clearTimeout(debounceTimer)
+  }, [searchQuery])
+
+  // Click outside to close search dropdown
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (searchRef.current && !searchRef.current.contains(event.target)) {
+        setShowSearchDropdown(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [searchRef])
+
+  const handleSearch = () => {
+    if (!searchQuery.trim()) return
+    router.push(`/properties/allProperties?search=${encodeURIComponent(searchQuery.trim())}`)
+  }
 
   // Auto-slide images for property cards (3 seconds interval - adjust as needed)
   useEffect(() => {
@@ -862,12 +918,13 @@ export default function TenantDashboard({ session, profile }) {
   }, [pendingPayments, tenantOccupancy])
 
   async function checkPendingReviews(userId) {
-    // Fetch ended occupancies
+    // Fetch ended occupancies that haven't been dismissed for review
     const { data: endedOccupancies } = await supabase
       .from('tenant_occupancies')
       .select('*, property:properties(id, title)')
       .eq('tenant_id', userId)
       .eq('status', 'ended')
+      .neq('review_dismissed', true)
       .order('created_at', { ascending: false })
 
     if (!endedOccupancies || endedOccupancies.length === 0) return
@@ -875,20 +932,10 @@ export default function TenantDashboard({ session, profile }) {
     const { data: existingReviews } = await supabase.from('reviews').select('occupancy_id').eq('user_id', userId)
     const reviewedOccupancyIds = existingReviews?.map(r => r.occupancy_id) || []
 
-    // Check localStorage for permanently dismissed reviews
-    const dismissedReviews = JSON.parse(localStorage.getItem('dismissedReviews') || '[]').map(String)
-
-    // console.log('[ReviewModal] Ended occupancies:', endedOccupancies.map(o => ({ id: o.id, property: o.property?.title })))
-    // console.log('[ReviewModal] Already reviewed IDs:', reviewedOccupancyIds)
-    // console.log('[ReviewModal] Dismissed IDs from localStorage:', dismissedReviews)
-
-    // Find first occupancy that is ENDED, NOT REVIEWED, and NOT permanently DISMISSED
+    // Find first occupancy that is ENDED and NOT REVIEWED
     const unreviewed = endedOccupancies.find(o =>
-      !reviewedOccupancyIds.includes(o.id) &&
-      !dismissedReviews.includes(String(o.id))
+      !reviewedOccupancyIds.includes(o.id)
     )
-
-    console.log('[ReviewModal] Unreviewed occupancy found:', unreviewed ? { id: unreviewed.id, property: unreviewed.property?.title } : 'NONE')
 
     if (unreviewed) {
       setReviewTarget(unreviewed)
@@ -896,39 +943,25 @@ export default function TenantDashboard({ session, profile }) {
     }
   }
 
-  // Close the modal — if "don't show again" is checked, permanently dismiss for this property
-  function handleCancelReview() {
+  // Close the modal — if "don't show again" is checked, permanently dismiss in DB
+  async function handleCancelReview() {
     if (dontShowReviewAgain && reviewTarget) {
-      const dismissedRaw = JSON.parse(localStorage.getItem('dismissedReviews') || '[]')
-      const targetId = String(reviewTarget.id)
-      const dismissedStrings = dismissedRaw.map(String)
-
-      if (!dismissedStrings.includes(targetId)) {
-        dismissedRaw.push(targetId)
-        localStorage.setItem('dismissedReviews', JSON.stringify(dismissedRaw))
-      }
+      await supabase
+        .from('tenant_occupancies')
+        .update({ review_dismissed: true })
+        .eq('id', reviewTarget.id)
     }
     setShowReviewModal(false)
     setDontShowReviewAgain(false)
   }
 
-  // Skip Review — ALWAYS permanently dismisses the review for this property
-  function handleSkipReview() {
-    console.log('[ReviewModal] Skip clicked. reviewTarget:', reviewTarget?.id, 'property:', reviewTarget?.property?.title)
+  // Skip Review — ALWAYS permanently dismisses the review in DB
+  async function handleSkipReview() {
     if (reviewTarget) {
-      const dismissedRaw = JSON.parse(localStorage.getItem('dismissedReviews') || '[]')
-      const targetId = String(reviewTarget.id)
-      const dismissedStrings = dismissedRaw.map(String)
-
-      if (!dismissedStrings.includes(targetId)) {
-        dismissedRaw.push(targetId)
-        localStorage.setItem('dismissedReviews', JSON.stringify(dismissedRaw))
-        console.log('[ReviewModal] ✅ Saved to localStorage. New dismissed list:', JSON.stringify(dismissedRaw))
-      } else {
-        console.log('[ReviewModal] Already in dismissed list')
-      }
-    } else {
-      console.log('[ReviewModal] ⚠️ No reviewTarget! Cannot save dismissal.')
+      await supabase
+        .from('tenant_occupancies')
+        .update({ review_dismissed: true })
+        .eq('id', reviewTarget.id)
     }
     setShowReviewModal(false)
     setDontShowReviewAgain(false)
@@ -1267,7 +1300,19 @@ export default function TenantDashboard({ session, profile }) {
       <div className="p-1.5 sm:p-2">
         <div className="mb-0.5 sm:mb-1">
           <div className="flex justify-between items-start">
-            <h3 className="text-xs sm:text-base font-bold text-gray-900 line-clamp-1">{property.title}</h3>
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0 pr-1">
+              <h3 className="text-xs sm:text-base font-bold text-gray-900 line-clamp-1">{property.title}</h3>
+              {mostFavoriteId && property.id === mostFavoriteId && (
+                <span className="shrink-0 px-1 py-0.5 bg-rose-100 text-rose-600 border border-rose-200 text-[8px] font-bold rounded uppercase tracking-wider">
+                  Most Favorite
+                </span>
+              )}
+              {topRatedId && property.id === topRatedId && (
+                <span className="shrink-0 px-1 py-0.5 bg-amber-100 text-amber-600 border border-amber-200 text-[8px] font-bold rounded uppercase tracking-wider">
+                  Top Rated
+                </span>
+              )}
+            </div>
             {stats.review_count > 0 && (<div className="flex items-center gap-1 text-xs shrink-0"><svg className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400" viewBox="0 0 24 24"><path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg><span className="font-bold text-gray-900">{stats.avg_rating.toFixed(1)}</span></div>)}
           </div>
           <p className="text-gray-500 text-[10px] sm:text-xs truncate">{property.city}, Philippines</p>
@@ -1824,12 +1869,87 @@ export default function TenantDashboard({ session, profile }) {
           <div className="space-y-8">
             {/* All Properties Section */}
             <div className={`mb-0 mt-8 transition-all duration-700 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-2">
-                <div className="mb-2 sm:mb-0 w-full sm:w-auto">
-                  <h2 className="text-2xl font-black text-black">Recommended Properties</h2>
-                  <p className="text-sm text-gray-500">Based on your preferences</p>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center mb-2 gap-3">
+                <h2 className="text-2xl font-black text-black shrink-0">Recommended Properties</h2>
+                <div className="flex items-center gap-3 w-full sm:w-auto sm:flex-1 sm:max-w-md lg:max-w-lg">
+                  <div className="relative flex-1" ref={searchRef}>
+                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none z-10">
+                      {isSearching ? (
+                        <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin"></div>
+                      ) : (
+                        <svg className="text-gray-400 w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Search properties, cities..."
+                      className="w-full bg-white border border-gray-200 rounded-full focus:ring-2 focus:ring-black/20 focus:border-gray-400 font-medium pl-11 pr-10 py-3 text-sm transition-all duration-300 hover:border-gray-300 hover:shadow-md focus:shadow-md placeholder:text-gray-400 shadow-sm"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onFocus={() => searchResults.length > 0 && setShowSearchDropdown(true)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && searchQuery.trim()) handleSearch()
+                        if (e.key === 'Escape') setShowSearchDropdown(false)
+                      }}
+                    />
+                    {searchQuery && (
+                      <button
+                        onClick={() => { setSearchQuery(''); setSearchResults([]); setShowSearchDropdown(false) }}
+                        className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-900 transition-colors cursor-pointer"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
+                    )}
+                    {/* Search Dropdown */}
+                    {showSearchDropdown && searchResults.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden z-50" style={{ animationDuration: '0.2s' }}>
+                        <div className="p-2">
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">Search Results</p>
+                          {searchResults.map((property) => (
+                            <div
+                              key={property.id}
+                              onClick={() => { router.push(`/properties/${property.id}`); setShowSearchDropdown(false) }}
+                              className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer transition-all duration-200 group"
+                            >
+                              <div className="w-10 h-10 rounded-lg overflow-hidden bg-gray-100 flex-shrink-0">
+                                {property.images?.[0] ? (
+                                  <img src={property.images[0]} alt={property.title} className="w-full h-full object-cover" />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-gray-400">
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-bold text-gray-900 truncate">{property.title}</p>
+                                <div className="flex items-center gap-2 text-xs text-gray-500">
+                                  <span>{property.city}</span>
+                                  <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
+                                  <span className="font-bold text-gray-900">₱{Number(property.price).toLocaleString()}/mo</span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="border-t border-gray-100 p-2">
+                          <button
+                            onClick={() => { handleSearch(); setShowSearchDropdown(false) }}
+                            className="w-full text-center py-2 text-sm font-bold text-gray-900 hover:bg-gray-50 rounded-lg transition-colors cursor-pointer"
+                          >
+                            View all results for "{searchQuery}"
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {showSearchDropdown && searchQuery.trim() && searchResults.length === 0 && !isSearching && (
+                      <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden z-50 p-4 text-center">
+                        <p className="text-sm font-medium text-gray-500">No properties found for "{searchQuery}"</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <span onClick={handleSeeMore} className="text-sm font-semibold text-black hover:text-gray-600 cursor-pointer flex items-center gap-1 hover:underline transition-all">
+
+                <span onClick={handleSeeMore} className="text-sm font-semibold text-black hover:text-gray-600 cursor-pointer flex items-center gap-1 hover:underline transition-all shrink-0 ml-auto">
                   See More Properties<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
                 </span>
               </div>

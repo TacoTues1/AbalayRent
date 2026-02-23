@@ -478,6 +478,9 @@ export default function AllProperties() {
     </div>
   )
 
+  const mostFavoriteId = Object.entries(propertyStats).filter(([_, s]) => (s.favorite_count || 0) > 0).sort((a, b) => b[1].favorite_count - a[1].favorite_count)?.[0]?.[0];
+  const topRatedId = Object.entries(propertyStats).filter(([_, s]) => (s.review_count || 0) > 0).sort((a, b) => b[1].avg_rating - a[1].avg_rating || b[1].review_count - a[1].review_count)?.[0]?.[0];
+
   const renderPropertyCard = (property) => {
     const images = getPropertyImages(property)
     const currentIndex = currentImageIndex[property.id] || 0
@@ -589,7 +592,19 @@ export default function AllProperties() {
         <div className="p-3 sm:p-4 flex-1 flex flex-col">
           <div className="mb-2">
             <div className="flex justify-between items-start mb-0.5">
-              <h3 className="text-sm sm:text-base font-bold text-gray-900 line-clamp-1 break-all">{property.title}</h3>
+              <div className="flex flex-wrap items-center gap-1.5 min-w-0 pr-1">
+                <h3 className="text-sm sm:text-base font-bold text-gray-900 line-clamp-1 break-all">{property.title}</h3>
+                {mostFavoriteId && property.id === mostFavoriteId && (
+                  <span className="shrink-0 px-1 py-0.5 bg-rose-100 text-rose-600 border border-rose-200 text-[8px] font-bold rounded uppercase tracking-wider">
+                    Most Favorite
+                  </span>
+                )}
+                {topRatedId && property.id === topRatedId && (
+                  <span className="shrink-0 px-1 py-0.5 bg-amber-100 text-amber-600 border border-amber-200 text-[8px] font-bold rounded uppercase tracking-wider">
+                    Top Rated
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center gap-1 text-gray-500 text-xs mb-2">

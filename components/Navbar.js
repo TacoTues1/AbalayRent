@@ -484,6 +484,12 @@ export default function Navbar() {
     }
   }
 
+  useEffect(() => {
+    if (profile?.role === 'admin' && router.pathname !== '/dashboard') {
+      router.push('/dashboard')
+    }
+  }, [profile, router.pathname])
+
   const isActive = (path) => router.pathname === path
 
   if (profile?.role === 'admin') {

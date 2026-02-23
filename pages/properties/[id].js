@@ -14,6 +14,7 @@ export default function PropertyDetail() {
   const router = useRouter()
   const { id } = router.query
   const [property, setProperty] = useState(null)
+  const [propertyStatsInfo, setPropertyStatsInfo] = useState({ isMostFavorite: false, isTopRated: false })
   const [loading, setLoading] = useState(true)
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
@@ -89,8 +90,26 @@ export default function PropertyDetail() {
     if (id) {
       loadProperty()
       loadReviews()
+      loadPropertyStats()
     }
   }, [id])
+
+  async function loadPropertyStats() {
+    const { data } = await supabase.from('property_stats').select('*')
+    if (data && id) {
+      const mostFav = data.filter(d => (d.favorite_count || 0) > 0).sort((a, b) => b.favorite_count - a.favorite_count)[0]?.property_id;
+      const topRated = data.filter(d => (d.review_count || 0) > 0).sort((a, b) => b.avg_rating - a.avg_rating || b.review_count - a.review_count)[0]?.property_id;
+
+      const currentPropStats = data.find(d => d.property_id === id) || { favorite_count: 0, review_count: 0 };
+
+      setPropertyStatsInfo({
+        isMostFavorite: mostFav === id,
+        isTopRated: topRated === id,
+        favoriteCount: currentPropStats.favorite_count || 0,
+        reviewCount: currentPropStats.review_count || 0
+      });
+    }
+  }
 
   // Load slots when property (and landlord) is available
   useEffect(() => {
@@ -613,9 +632,10 @@ export default function PropertyDetail() {
           {/* Header Section */}
           <div className="flex flex-col md:flex-row md:items-start justify-between mb-5 gap-4">
             <div className="flex-1">
-              <div className="flex items-center gap-3 mb-1">
+              <div className="flex flex-wrap items-center gap-2 mb-1">
                 <h1 className="text-2xl font-bold text-gray-900 tracking-tight">{property.title}</h1>
-                <span className={`px-2.5 py-0.5 text-xs font-bold rounded-full border flex items-center gap-1.5 w-fit ${property.status === 'available'
+
+                <span className={`px-2.5 py-0.5 text-xs font-bold rounded-full border flex items-center gap-1 w-fit ${property.status === 'available'
                   ? 'bg-green-50 text-green-700 border-green-100'
                   : property.status === 'occupied'
                     ? 'bg-blue-50 text-blue-700 border-blue-100'
@@ -625,6 +645,8 @@ export default function PropertyDetail() {
                     }`}></span>
                   {property.status === 'available' ? 'Available' : property.status === 'occupied' ? 'Occupied' : 'Not Available'}
                 </span>
+
+
               </div>
               <div className="flex items-center gap-2 mb-2">
                 <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
@@ -774,6 +796,25 @@ export default function PropertyDetail() {
                     <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-blue-600 shadow-sm"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg></div>
                     <div><p className="text-xl font-black text-gray-900 leading-none">{property.area_sqft}</p><p className="text-xs text-gray-500 font-bold uppercase tracking-wider">Sq. Ft.</p></div>
                   </div>
+                  {propertyStatsInfo.isTopRated && (
+                    <div className="flex items-center gap-0 bg-amber-50 pr-4 pl-1 py-1.5 rounded-xl border border-amber-200 shadow-sm w-fit">
+                      <img src="/toprated.png" alt="Top Rated" className="h-10 sm:h-12 w-auto object-contain flex-shrink-0 -mb-2" />
+                      <div className="flex flex-col ml-1">
+                        <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider leading-none">Top Rated</span>
+                        <span className="text-sm font-bold text-amber-800 leading-none mt-1">{propertyStatsInfo.reviewCount} Reviews</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {propertyStatsInfo.isMostFavorite && (
+                    <div className="flex items-center gap-0 bg-rose-50 pr-4 pl-1 py-1.5 rounded-xl border border-rose-200 shadow-sm w-fit">
+                      <img src="/mostfavorite.png" alt="Most Favorite" className="h-10 sm:h-12 w-auto object-contain flex-shrink-0 -mb-2" />
+                      <div className="flex flex-col ml-1">
+                        <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wider leading-none">Most Favorite</span>
+                        <span className="text-sm font-bold text-rose-800 leading-none mt-1">{propertyStatsInfo.favoriteCount} Favorites</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="mb-8">
                   <h3 className="text-3xl font-bold text-gray-900 mb-3 uppercase tracking-wider">About this property</h3>

@@ -1,6 +1,7 @@
 import '../styles/globals.css'
 import { supabase } from '../lib/supabaseClient'
 import Navbar from '../components/Navbar'
+import NotificationToast from '../components/NotificationToast'
 import Meta from '../components/Meta'
 import { Analytics } from "@vercel/analytics/next"
 import { SpeedInsights } from "@vercel/speed-insights/next"
@@ -16,6 +17,7 @@ function MyApp({ Component, pageProps }) {
       <Meta />
 
       {!hideNavbarPaths.includes(router.pathname) && <Navbar />}
+      <NotificationToast />
 
       <Component {...pageProps} supabase={supabase} />
       <Analytics />
