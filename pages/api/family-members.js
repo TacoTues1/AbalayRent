@@ -30,7 +30,7 @@ export default async function handler(req, res) {
             let tenantBalance = 0
 
             if (parentOcc) {
-                // Pending payments
+                // Pending payments (basic - for dashboard)
                 const { data: pending } = await supabaseAdmin
                     .from('payment_requests')
                     .select('*')
@@ -41,7 +41,7 @@ export default async function handler(req, res) {
                     .order('due_date', { ascending: true })
                 pendingPayments = pending || []
 
-                // Payment history
+                // Payment history (basic - for dashboard)
                 const { data: history } = await supabaseAdmin
                     .from('payment_requests')
                     .select('*')
@@ -90,6 +90,26 @@ export default async function handler(req, res) {
                     .limit(1)
                     .maybeSingle()
 
+                // ─── FULL DATA FOR PAYMENTS PAGE (with relations) ───
+                // Payment requests with full relations (for payments page display)
+                const { data: fullRequests } = await supabaseAdmin
+                    .from('payment_requests')
+                    .select(`
+                        *,
+                        properties(title, address),
+                        tenant_profile:profiles!payment_requests_tenant_fkey(first_name, middle_name, last_name, phone),
+                        landlord_profile:profiles!payment_requests_landlord_fkey(first_name, middle_name, last_name, phone)
+                    `)
+                    .eq('tenant', parentOcc.tenant_id)
+                    .order('created_at', { ascending: false })
+
+                // Payments table (confirmed payments with relations)
+                const { data: paymentsData } = await supabaseAdmin
+                    .from('payments')
+                    .select('*, properties(title), profiles!payments_tenant_fkey(first_name, middle_name, last_name)')
+                    .eq('tenant', parentOcc.tenant_id)
+                    .order('paid_at', { ascending: false })
+
                 return res.status(200).json({
                     occupancy: parentOcc,
                     pendingPayments,
@@ -97,7 +117,9 @@ export default async function handler(req, res) {
                     tenantBalance,
                     lastPaidBill: lastPaid || null,
                     allPaidBills: allPaid || [],
-                    securityDepositPaid: !!paidSecDep
+                    securityDepositPaid: !!paidSecDep,
+                    fullPaymentRequests: fullRequests || [],
+                    paymentsHistory: paymentsData || []
                 })
             }
 

@@ -50,6 +50,7 @@ export default function TenantDashboard({ session, profile }) {
   const [tenantBalance, setTenantBalance] = useState(0)
   const [pendingPayments, setPendingPayments] = useState([])
   const [paymentHistory, setPaymentHistory] = useState([]) // NEW: Payment History State
+  const [familyPaidBills, setFamilyPaidBills] = useState([]) // Full paid bills data for accurate next date calc
   const [showEndRequestModal, setShowEndRequestModal] = useState(false)
   const [endRequestDate, setEndRequestDate] = useState('')
   const [endRequestReason, setEndRequestReason] = useState('')
@@ -439,7 +440,10 @@ export default function TenantDashboard({ session, profile }) {
     } else {
       // Family member: use already-loaded state (from API)
       allPendingBills = pendingPayments.filter(p => p.status === 'pending' && parseFloat(p.rent_amount) > 0);
-      allPaidBills = paymentHistory;
+      // Use the robust allPaidBills fetched from family-members.js to ensure advance_amount logic works
+      allPaidBills = familyPaidBills && familyPaidBills.length > 0
+        ? familyPaidBills
+        : [...paymentHistory].sort((a, b) => new Date(b.due_date) - new Date(a.due_date));
     }
 
     // Filter to only bills for this occupancy/property, but be lenient
@@ -508,14 +512,21 @@ export default function TenantDashboard({ session, profile }) {
 
       // If no pending bill found in initial query, do a more aggressive search
       console.log('⚠️ No pending bill found in initial query, doing aggressive search...');
-      const { data: aggressivePendingCheck } = await supabase
-        .from('payment_requests')
-        .select('due_date, occupancy_id, property_id, is_move_in_payment, is_renewal_payment, status')
-        .eq('tenant', session.user.id)
-        .eq('status', 'pending')
-        .gt('rent_amount', 0)
-        .order('due_date', { ascending: true })
-        .limit(5); // Get multiple to see what's available
+
+      let aggressivePendingCheck = null;
+      if (isOwn) {
+        const { data } = await supabase
+          .from('payment_requests')
+          .select('due_date, occupancy_id, property_id, is_move_in_payment, is_renewal_payment, status')
+          .eq('tenant', currentOccupancy.tenant_id)
+          .eq('status', 'pending')
+          .gt('rent_amount', 0)
+          .order('due_date', { ascending: true })
+          .limit(5); // Get multiple to see what's available
+        aggressivePendingCheck = data;
+      } else {
+        aggressivePendingCheck = allPendingBills.slice(0, 5);
+      }
 
       console.log('Aggressive pending bill search results:', aggressivePendingCheck);
 
@@ -677,16 +688,22 @@ export default function TenantDashboard({ session, profile }) {
             // BUT first check if there are any pending bills - if so, don't show "All Paid"
             if (paidPeriodEnd >= endDate) {
               // Before showing "All Paid", check for pending bills one more time
-              const { data: finalPendingCheck } = await supabase
-                .from('payment_requests')
-                .select('due_date, occupancy_id, property_id, is_renewal_payment')
-                .eq('tenant', session.user.id)
-                .eq('status', 'pending')
-                .gt('rent_amount', 0)
-                .neq('is_renewal_payment', true)
-                .order('due_date', { ascending: true })
-                .limit(1)
-                .maybeSingle();
+              let finalPendingCheck = null;
+              if (isOwn) {
+                const { data } = await supabase
+                  .from('payment_requests')
+                  .select('due_date, occupancy_id, property_id, is_renewal_payment')
+                  .eq('tenant', currentOccupancy.tenant_id)
+                  .eq('status', 'pending')
+                  .gt('rent_amount', 0)
+                  .neq('is_renewal_payment', true)
+                  .order('due_date', { ascending: true })
+                  .limit(1)
+                  .maybeSingle();
+                finalPendingCheck = data;
+              } else {
+                finalPendingCheck = allPendingBills && allPendingBills.find(p => p.is_renewal_payment !== true);
+              }
 
               if (finalPendingCheck && finalPendingCheck.due_date) {
                 // There's a pending bill, use it instead of "All Paid"
@@ -725,15 +742,21 @@ export default function TenantDashboard({ session, profile }) {
         // This must happen BEFORE any contract end date checks to prevent "All Paid" from showing incorrectly
         if (!pendingBill) {
           // Check for ANY pending bill (move-in or regular rent bill)
-          const { data: anyPendingBillData } = await supabase
-            .from('payment_requests')
-            .select('due_date, occupancy_id, property_id, is_move_in_payment, is_renewal_payment')
-            .eq('tenant', session.user.id)
-            .eq('status', 'pending')
-            .gt('rent_amount', 0)
-            .order('due_date', { ascending: true })
-            .limit(1)
-            .maybeSingle();
+          let anyPendingBillData = null;
+          if (isOwn) {
+            const { data } = await supabase
+              .from('payment_requests')
+              .select('due_date, occupancy_id, property_id, is_move_in_payment, is_renewal_payment')
+              .eq('tenant', currentOccupancy.tenant_id)
+              .eq('status', 'pending')
+              .gt('rent_amount', 0)
+              .order('due_date', { ascending: true })
+              .limit(1)
+              .maybeSingle();
+            anyPendingBillData = data;
+          } else {
+            anyPendingBillData = allPendingBills && allPendingBills.length > 0 ? allPendingBills[0] : null;
+          }
 
           // Only use it if it's not a renewal payment
           const anyPendingBill = (anyPendingBillData && anyPendingBillData.is_renewal_payment !== true) ? anyPendingBillData : null;
@@ -906,7 +929,7 @@ export default function TenantDashboard({ session, profile }) {
 
   useEffect(() => {
     if (tenantOccupancy) calculateNextPayment(tenantOccupancy.id, tenantOccupancy)
-  }, [pendingPayments, tenantOccupancy])
+  }, [pendingPayments, tenantOccupancy, familyPaidBills, paymentHistory])
 
   async function checkPendingReviews(userId) {
     // Fetch ended occupancies that haven't been dismissed for review
@@ -1034,13 +1057,14 @@ export default function TenantDashboard({ session, profile }) {
     if (!finalOccupancy) {
       // Check if user is a family member via API (bypasses RLS)
       try {
-        const fmRes = await fetch(`/api/family-members?member_id=${session.user.id}`)
+        const fmRes = await fetch(`/api/family-members?member_id=${session.user.id}`, { cache: 'no-store' })
         const fmData = await fmRes.json()
         if (fmData?.occupancy) {
           finalOccupancy = fmData.occupancy
           // Set payment data directly from API (bypasses RLS)
           if (fmData.pendingPayments) setPendingPayments(fmData.pendingPayments)
           if (fmData.paymentHistory) setPaymentHistory(fmData.paymentHistory)
+          if (fmData.allPaidBills) setFamilyPaidBills(fmData.allPaidBills)
           if (fmData.tenantBalance !== undefined) setTenantBalance(fmData.tenantBalance)
           if (fmData.lastPaidBill !== undefined) setLastPayment(fmData.lastPaidBill)
           if (fmData.securityDepositPaid !== undefined) setSecurityDepositPaid(fmData.securityDepositPaid)
@@ -1066,7 +1090,8 @@ export default function TenantDashboard({ session, profile }) {
         // Can only renew if:
         // 1. More than 29 days remaining (not in the last month block)
         // 2. Not already requested
-        setCanRenew(diffDays > 29 && !finalOccupancy.renewal_requested)
+        // 3. User is the primary tenant (not a family member)
+        setCanRenew(diffDays > 29 && !finalOccupancy.renewal_requested && finalOccupancy.tenant_id === session?.user?.id)
         setRenewalRequested(finalOccupancy.renewal_requested || false)
       }
 
@@ -1269,7 +1294,7 @@ export default function TenantDashboard({ session, profile }) {
     if (!occId) return
     setLoadingFamily(true)
     try {
-      const res = await fetch(`/api/family-members?occupancy_id=${occId}`)
+      const res = await fetch(`/api/family-members?occupancy_id=${occId}`, { cache: 'no-store' })
       const data = await res.json()
       if (data.members) setFamilyMembers(data.members)
     } catch (err) {
@@ -1474,122 +1499,84 @@ export default function TenantDashboard({ session, profile }) {
 
   return (
     <div className="min-h-screen bg-[#F5F5F5] flex flex-col scroll-smooth">
-      <div className="max-w-[1800px] w-full mx-auto px-4 sm:px-6 lg:px-8 pt-8 relative z-10 flex-1">
+      <div className="max-w-[1800px] w-full mx-auto mt-0 px-4 sm:px-6 lg:px-8 pt-2 relative z-10 flex-1">
 
         {tenantOccupancy ? (
           /* --- ACTIVE PROPERTY SECTION (MANAGEMENT VIEW) --- */
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-4">
-              <div>
-                <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Your Active Property</h1>
-                <p className="text-slate-500 mt-1">Manage your active lease and upcoming payments.</p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => router.push('/properties/allProperties')}
-                  className="text-sm font-bold text-slate-600 hover:text-slate-900 hover:underline transition-all cursor-pointer"
-                >
-                  See More Properties
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start mt-4">
 
               {/* Left Column: Property Details & Support (Minimized) */}
               <div className="lg:col-span-4 space-y-6">
-                <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-                  <div className="relative w-full h-48 bg-gray-100 group">
-                    {tenantOccupancy.property?.images?.length > 0 ? (
-                      <>
-                        <img src={tenantOccupancy.property.images[activePropertyImageIndex]}
-                          className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500" alt="Property"
-                        />
-                        {/* Image slider dots indicator */}
-                        {tenantOccupancy.property.images.length > 1 && (
-                          <div className="absolute top-3 right-3 flex gap-1 z-20">
-                            {tenantOccupancy.property.images.map((_, idx) => (
-                              <div
-                                key={idx}
-                                className={`h-1.5 rounded-full transition-all duration-300 shadow-sm ${idx === activePropertyImageIndex ? 'w-4 bg-white' : 'w-1.5 bg-white/60'}`}
-                              />
-                            ))}
-                          </div>
-                        )}
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent">
-                          <span
-                            className={`absolute top-3 left-3 inline-flex items-center gap-1.5 px-2.5 py-0.5
-                                rounded-full text-[10px] font-bold uppercase tracking-wider border
-                                ${tenantOccupancy.status === 'pending_end'
-                                ? 'bg-amber-50 text-amber-700 border-amber-200'
-                                : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                              }`}
-                          >
-                            <span
-                              className={`w-1.5 h-1.5 rounded-full
-                                    ${tenantOccupancy.status === 'pending_end' ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                            />
-                            {tenantOccupancy.status === 'pending_end' ? 'Move-out Pending' : 'Active Lease'}
-                          </span>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="absolute inset-0 flex items-center justify-center text-gray-400">
-                        <svg className="w-12 h-12 mb-2 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+
+                {/* Active Property Card */}
+                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
                       </div>
-                    )}
-                    <div className="absolute bottom-0 left-0 right-0 p-4 text-white z-10">
-                      <h2 className="text-xl font-bold leading-tight drop-shadow-md mb-0.5 truncate">
-                        {tenantOccupancy.property?.title}
-                      </h2>
-                      <p className="text-white/90 text-xs font-medium drop-shadow-md flex items-start gap-1">
-                        <svg className="w-3.5 h-3.5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                        <span className="truncate">
-                          {tenantOccupancy.property?.address}, {tenantOccupancy.property?.city}
-                        </span>
-                      </p>
-                    </div>
+                      Active Property
+                    </h2>
+                    <button
+                      onClick={() => router.push('/properties/allProperties')}
+                      className="text-[10px] font-bold text-slate-500 hover:text-black hover:underline cursor-pointer uppercase tracking-wider bg-gray-50 px-2 py-1 rounded"
+                    >
+                      See More
+                    </button>
                   </div>
-                  <div className="p-4 bg-white border-t border-gray-100">
-                    <div className="flex flex-col gap-1.5 mb-4 px-1">
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="text-gray-500 font-semibold uppercase tracking-wide">Lease Start</span>
-                        <span className="font-bold text-gray-900 font-mono">{new Date(tenantOccupancy.start_date || tenantOccupancy.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}</span>
+
+                  <div className="flex flex-col gap-4">
+                    {/* Image & Details */}
+                    <div className="flex items-center gap-4">
+                      {tenantOccupancy.property?.images?.length > 0 ? (
+                        <div className="w-[85px] h-[85px] shrink-0 rounded-2xl overflow-hidden shadow-sm border border-gray-100 bg-gray-50">
+                          <img src={tenantOccupancy.property.images[activePropertyImageIndex]} alt="Property" className="w-full h-full object-cover" />
+                        </div>
+                      ) : (
+                        <div className="w-[85px] h-[85px] shrink-0 rounded-2xl bg-gray-100 border border-gray-200 flex items-center justify-center text-gray-400">
+                          <svg className="w-8 h-8 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                        </div>
+                      )}
+                      <div className="flex flex-col min-w-0">
+                        <h1 className="text-lg font-bold text-slate-900 tracking-tight leading-tight line-clamp-1 mb-0.5">{tenantOccupancy.property?.title}</h1>
+                        <p className="text-gray-500 text-[11px] flex items-start gap-1 font-medium mb-1.5">
+                          <svg className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                          <span className="line-clamp-2 leading-snug">{tenantOccupancy.property?.city}, {tenantOccupancy.property?.address}</span>
+                        </p>
+                        <span className={`self-start px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide border ${tenantOccupancy.status === 'pending_end' ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-[#E3F6ED] text-[#1E9A5B] border-[#1E9A5B]/20'} shadow-sm`}>
+                          {tenantOccupancy.status === 'pending_end' ? 'Move-out Pending' : 'Active Lease'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Expiration date */}
+                    <div className="bg-gray-50 rounded-xl p-3 border border-gray-100 flex flex-col gap-1.5 mt-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Lease Start</span>
+                        <span className="text-gray-900 text-xs font-bold font-mono">
+                          {new Date(tenantOccupancy.start_date || tenantOccupancy.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}
+                        </span>
                       </div>
                       {tenantOccupancy.contract_end_date && (
-                        <div className="flex justify-between items-center text-xs">
-                          <span className="text-gray-500 font-semibold uppercase tracking-wide">Lease End</span>
-                          <span className="font-bold text-gray-900 font-mono">{new Date(tenantOccupancy.contract_end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}</span>
+                        <div className="flex justify-between items-center border-t border-gray-200 pt-1.5">
+                          <span className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Lease Ends</span>
+                          <span className="text-gray-900 text-xs font-bold font-mono">
+                            {new Date(tenantOccupancy.contract_end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}
+                          </span>
                         </div>
                       )}
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button onClick={() => router.push(`/properties/${tenantOccupancy.property?.id}`)} className="py-2 text-sm bg-gray-100 text-gray-700 font-bold rounded-lg hover:bg-gray-200 border border-gray-200 cursor-pointer">View Details</button>
-                      {tenantOccupancy?.contract_url && (
-                        <a href={tenantOccupancy.contract_url} target="_blank" rel="noopener noreferrer" className="py-2 text-sm bg-black text-white font-bold rounded-lg hover:bg-gray-800 cursor-pointer text-center flex items-center justify-center gap-1">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                          View Contract
-                        </a>
-                      )}
-                      {tenantOccupancy.property?.terms_conditions && (
-                        <a href={tenantOccupancy.property.terms_conditions.startsWith('http') ? tenantOccupancy.property.terms_conditions : '/terms'} target="_blank" rel="noopener noreferrer" className="py-2 text-sm bg-white text-black font-bold rounded-lg hover:bg-gray-50 border border-gray-300 cursor-pointer flex items-center justify-center gap-1">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                          Property Terms
-                        </a>
-                      )}
-                      {canRenew && !isFamilyMember && (
-                        <button onClick={() => setShowRenewalModal(true)} className="py-2 text-sm bg-white text-black font-bold rounded-lg hover:bg-gray-50 border border-gray-300 cursor-pointer flex items-center justify-center gap-1">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                          Renew Contract
-                        </button>
-                      )}
-                      {!isFamilyMember && (
-                        <button onClick={() => setShowEndRequestModal(true)} className="py-2 text-sm border border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition-colors cursor-pointer">End Contract</button>
-                      )}
+
+                    {/* Buttons Grid */}
+                    <div className="flex flex-col gap-2 mt-1">
+                      <div className="grid grid-cols-2 gap-2">
+                        <button onClick={() => router.push(`/properties/${tenantOccupancy.property?.id}`)} className="py-2.5 text-xs bg-white text-gray-800 font-bold rounded-xl border border-gray-200 hover:bg-gray-50 transition-colors shadow-sm cursor-pointer items-center justify-center flex text-center">Details</button>
+                        {tenantOccupancy?.contract_url && <a href={tenantOccupancy.contract_url} target="_blank" rel="noopener noreferrer" className="py-2.5 text-xs bg-white text-gray-800 font-bold rounded-xl border border-gray-200 hover:bg-gray-50 shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-1.5"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> Contract</a>}
+                        {tenantOccupancy.property?.terms_conditions && <a href={tenantOccupancy.property.terms_conditions.startsWith('http') ? tenantOccupancy.property.terms_conditions : '/terms'} target="_blank" rel="noopener noreferrer" className="col-span-1 py-2.5 text-xs bg-white text-gray-800 font-bold rounded-xl border border-gray-200 hover:bg-gray-50 shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> Terms</a>}
+                        {canRenew && !isFamilyMember && <button onClick={() => setShowRenewalModal(true)} className="col-span-1 py-2.5 text-xs bg-[#3B82F6] text-white font-bold rounded-xl hover:bg-blue-600 border border-transparent shadow-sm shadow-blue-500/30 transition-colors cursor-pointer whitespace-nowrap text-center">Renew</button>}
+                      </div>
+                      {!isFamilyMember && <button onClick={() => setShowEndRequestModal(true)} className="w-full py-2 text-[11px] uppercase tracking-wider bg-white text-red-500 font-bold rounded-xl border border-red-100 hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors cursor-pointer text-center">End Contract</button>}
                     </div>
                   </div>
                 </div>
@@ -1634,7 +1621,7 @@ export default function TenantDashboard({ session, profile }) {
                 <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-full bg-violet-100 text-violet-700 flex items-center justify-center">
+                      <div className="w-8 h-8 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
                       </div>
                       <div>
@@ -1645,7 +1632,7 @@ export default function TenantDashboard({ session, profile }) {
                     {!isFamilyMember && familyMembers.length < 4 && (
                       <button
                         onClick={() => setShowFamilyModal(true)}
-                        className="text-[10px] font-bold text-violet-600 bg-violet-50 hover:bg-violet-100 px-3 py-1.5 rounded-full transition-colors cursor-pointer border border-violet-200"
+                        className="text-[10px] font-bold text-black-600 bg-gray-50 hover:bg-gray-100 px-3 py-1.5 rounded-full transition-colors cursor-pointer border border-gray-200"
                       >
                         + Add Member
                       </button>
@@ -1653,14 +1640,17 @@ export default function TenantDashboard({ session, profile }) {
                   </div>
 
                   {/* Primary Tenant (Mother) */}
-                  <div className="p-2.5 bg-gradient-to-r from-violet-50 to-purple-50 rounded-xl border border-violet-100 mb-2">
+                  <div className="p-2.5 bg-gradient-to-r from-gray-50 to-gray-50 rounded-xl border border-gray-100 mb-2">
                     <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-full bg-violet-600 text-white flex items-center justify-center font-bold text-xs shadow-sm">
+                      <div className="w-8 h-8 rounded-full bg-gray-600 text-white flex items-center justify-center font-bold text-xs shadow-sm">
                         {isFamilyMember
                           ? (tenantOccupancy?.tenant?.avatar_url
                             ? <img src={tenantOccupancy.tenant.avatar_url} alt="" className="w-full h-full rounded-full object-cover" />
                             : `${tenantOccupancy?.tenant?.first_name?.[0] || ''}${tenantOccupancy?.tenant?.last_name?.[0] || ''}`)
-                          : '👑'}
+                          : (profile?.avatar_url
+                            ? <img src={profile.avatar_url} alt="" className="w-full h-full rounded-full object-cover" />
+                            : `${profile?.first_name?.[0] || ''}${profile?.last_name?.[0] || ''}`)
+                        }
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-bold text-gray-900 truncate">
@@ -1668,9 +1658,9 @@ export default function TenantDashboard({ session, profile }) {
                             ? `${tenantOccupancy?.tenant?.first_name || ''} ${tenantOccupancy?.tenant?.last_name || ''}`.trim() || 'Primary Tenant'
                             : `${profile.first_name} ${profile.last_name}`}
                         </p>
-                        <p className="text-[10px] text-violet-600 font-semibold">Primary Tenant</p>
+                        <p className="text-[10px] text-gray-600 font-semibold">Primary Tenant</p>
                       </div>
-                      <span className="text-[9px] font-bold bg-violet-200 text-violet-800 px-2 py-0.5 rounded-full">Owner</span>
+                      <span className="text-[9px] font-bold bg-gray-200 text-black-800 px-2 py-0.5 rounded-full">Owner</span>
                     </div>
                   </div>
 
@@ -1748,54 +1738,54 @@ export default function TenantDashboard({ session, profile }) {
                 {showFamilyModal && (
                   <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }} onClick={() => { setShowFamilyModal(false); setFamilySearchQuery(''); setFamilySearchResults([]) }}>
                     <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)' }} />
-                    <div style={{ position: 'relative', backgroundColor: '#ffffff', borderRadius: '24px', boxShadow: '0 25px 50px rgba(0,0,0,0.25)', width: '100%', maxWidth: '420px', maxHeight: '85vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
+                    <div style={{ position: 'relative', backgroundColor: '#ffffff', borderRadius: '28px', boxShadow: '0 30px 60px -12px rgba(0,0,0,0.3)', width: '100%', maxWidth: '440px', maxHeight: '85vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()} className="animate-in zoom-in-95 duration-200">
                       {/* Modal Header */}
-                      <div className="bg-gradient-to-r from-violet-600 to-purple-600" style={{ padding: '20px 24px' }}>
+                      <div className="bg-gray-900" style={{ padding: '24px 28px' }}>
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: '#fff' }}>
-                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" /></svg>
+                          <div className="flex items-center gap-4">
+                            <div className="w-[52px] h-[52px] rounded-2xl flex items-center justify-center bg-white/20 text-white shadow-sm">
+                              <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" /></svg>
                             </div>
-                            <div>
-                              <p style={{ color: '#fff', fontWeight: 700, fontSize: '16px' }}>Add Family Member</p>
-                              <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '11px' }}>{familyMembers.length}/4 slots used</p>
+                            <div className="flex flex-col">
+                              <p className="text-white font-black text-[22px] tracking-tight leading-none mb-1">Add Family Member</p>
+                              <p className="text-white/80 font-medium text-[13px]">{familyMembers.length}/4 slots used</p>
                             </div>
                           </div>
-                          <button type="button" onClick={() => { setShowFamilyModal(false); setFamilySearchQuery(''); setFamilySearchResults([]) }} className="w-8 h-8 rounded-full flex items-center justify-center cursor-pointer" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
-                            <svg className="w-4 h-4" style={{ color: '#fff' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                          <button type="button" onClick={() => { setShowFamilyModal(false); setFamilySearchQuery(''); setFamilySearchResults([]) }} className="w-10 h-10 rounded-full flex items-center justify-center bg-white/20 hover:bg-white/30 transition-all text-white cursor-pointer shadow-sm">
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                           </button>
                         </div>
                       </div>
 
                       {/* Search Input */}
-                      <div className="p-4 border-b border-gray-100">
-                        <div className="relative">
-                          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                      <div className="px-5 pt-6 pb-5 bg-white border-b border-gray-100">
+                        <div className="relative mb-3">
+                          <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#9ca3af]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                           <input
                             type="text"
                             placeholder="Search by name or email..."
                             value={familySearchQuery}
                             onChange={e => setFamilySearchQuery(e.target.value)}
-                            className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-violet-300 focus:border-transparent transition-all"
+                            className="w-full pl-12 pr-4 py-3.5 bg-white border-[2px] border-gray-200 rounded-[24px] text-[15px] font-medium text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-4 focus:ring-gray-900/10 focus:border-gray-900 transition-all shadow-sm"
                             autoFocus
                           />
                           {familySearching && (
-                            <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                              <div className="w-4 h-4 border-2 border-violet-300 border-t-violet-600 rounded-full animate-spin"></div>
+                            <div className="absolute right-5 top-1/2 -translate-y-1/2">
+                              <div className="w-5 h-5 border-[3px] border-gray-900/30 border-t-gray-900 rounded-full animate-spin"></div>
                             </div>
                           )}
                         </div>
-                        <p className="text-[10px] text-gray-400 mt-2 ml-1">Only tenant accounts will appear in results.</p>
+                        <p className="text-[12px] font-medium text-[#9ca3af] ml-2">Only tenant accounts will appear in results.</p>
                       </div>
 
                       {/* Search Results */}
-                      <div className="flex-1 overflow-y-auto p-4" style={{ maxHeight: '360px' }}>
+                      <div className="flex-1 overflow-y-auto bg-[#fafafa]" style={{ maxHeight: '380px' }}>
                         {familySearchResults.length > 0 ? (
-                          <div className="space-y-2">
+                          <div className="p-4 space-y-2">
                             {familySearchResults.map(user => (
-                              <div key={user.id} className="p-3 bg-gray-50 rounded-xl border border-gray-100 hover:border-violet-200 hover:bg-violet-50/30 transition-all">
+                              <div key={user.id} className="p-3 bg-white rounded-[20px] border border-gray-200 hover:border-gray-400 hover:shadow-md transition-all shadow-sm">
                                 <div className="flex items-center gap-3">
-                                  <div className="w-10 h-10 rounded-full bg-gray-200 text-gray-700 flex items-center justify-center font-bold text-xs shadow-sm flex-shrink-0">
+                                  <div className="w-12 h-12 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center font-bold text-sm flex-shrink-0 shadow-sm border border-gray-200/50">
                                     {user.avatar_url ? (
                                       <img src={user.avatar_url} alt="" className="w-full h-full rounded-full object-cover" />
                                     ) : (
@@ -1803,16 +1793,16 @@ export default function TenantDashboard({ session, profile }) {
                                     )}
                                   </div>
                                   <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-bold text-gray-900 truncate">
+                                    <p className="text-[15px] font-bold text-gray-900 truncate tracking-tight">
                                       {user.first_name} {user.middle_name && user.middle_name.toLowerCase() !== 'n/a' ? user.middle_name + ' ' : ''}{user.last_name}
                                     </p>
-                                    <p className="text-[11px] text-gray-500 truncate">{user.email}</p>
-                                    {user.phone && <p className="text-[10px] text-gray-400">{user.phone}</p>}
+                                    <p className="text-[12px] font-medium text-gray-500 truncate">{user.email}</p>
+                                    {user.phone && <p className="text-[10px] text-gray-400 mt-0.5">{user.phone}</p>}
                                   </div>
                                   <button
                                     onClick={() => addFamilyMember(user.id)}
                                     disabled={addingMember === user.id}
-                                    className="text-xs font-bold text-white bg-violet-600 hover:bg-violet-700 px-4 py-2 rounded-lg transition-all cursor-pointer disabled:opacity-50 shadow-sm flex-shrink-0"
+                                    className="text-[13px] font-bold text-white bg-gray-900 hover:bg-black px-5 py-2.5 rounded-xl transition-all cursor-pointer disabled:opacity-50 shadow-md flex-shrink-0"
                                   >
                                     {addingMember === user.id ? (
                                       <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
@@ -1823,27 +1813,27 @@ export default function TenantDashboard({ session, profile }) {
                             ))}
                           </div>
                         ) : familySearchQuery.trim().length >= 2 && !familySearching ? (
-                          <div className="text-center py-8">
-                            <div className="w-12 h-12 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center mx-auto mb-3">
-                              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                          <div className="flex flex-col items-center justify-center py-14 px-6 text-center">
+                            <div className="w-16 h-16 rounded-full bg-gray-100 text-[#9ca3af] flex items-center justify-center mb-4 shadow-sm">
+                              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                             </div>
-                            <p className="text-sm font-medium text-gray-500">No tenant accounts found</p>
-                            <p className="text-[10px] text-gray-400 mt-1">Try a different name or email</p>
+                            <p className="text-[17px] font-bold text-gray-700 tracking-tight">No tenant accounts found</p>
+                            <p className="text-[13px] font-medium text-[#9ca3af] mt-1.5">Try a different name or email</p>
                           </div>
                         ) : (
-                          <div className="text-center py-8">
-                            <div className="w-12 h-12 rounded-full bg-violet-50 text-violet-400 flex items-center justify-center mx-auto mb-3">
-                              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                          <div className="flex flex-col items-center justify-center py-14 px-6 text-center">
+                            <div className="w-16 h-16 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center mb-4 shadow-sm">
+                              <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                             </div>
-                            <p className="text-sm font-medium text-gray-500">Search for a tenant</p>
-                            <p className="text-[10px] text-gray-400 mt-1">Type at least 2 characters to search</p>
+                            <p className="text-[17px] font-bold text-[#64748b] tracking-tight">Search for a tenant</p>
+                            <p className="text-[13px] font-medium text-[#94a3b8] mt-1.5">Type at least 2 characters to search</p>
                           </div>
                         )}
                       </div>
 
                       {/* Footer Note */}
-                      <div className="p-4 border-t border-gray-100 bg-gray-50/50">
-                        <p className="text-[10px] text-gray-500 text-center leading-relaxed">
+                      <div className="px-6 py-5 bg-white border-t border-gray-100">
+                        <p className="text-[13px] font-medium text-[#64748b] text-center leading-[1.6]">
                           Family members will have access to payments and maintenance for this property.
                           They cannot end the contract.
                         </p>
@@ -1971,7 +1961,13 @@ export default function TenantDashboard({ session, profile }) {
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                           </div>
                           <div>
-                            <p className="text-lg font-black text-slate-900">{nextPaymentDate || 'Loading...'}</p>
+                            {nextPaymentDate ? (
+                              <p className="text-lg font-black text-slate-900">{nextPaymentDate}</p>
+                            ) : (
+                              <p className="text-lg font-black text-slate-900 flex items-center gap-1">
+                                Loading <span className="flex items-center"><span className="animate-pulse delay-75">.</span><span className="animate-pulse delay-150">.</span><span className="animate-pulse delay-300">.</span></span>
+                              </p>
+                            )}
                             {tenantOccupancy?.property?.price && !String(nextPaymentDate).includes('All Paid') && (
                               <div className="mt-0.5">
                                 <p className="text-xs text-black-500 font-semibold">
@@ -2001,13 +1997,15 @@ export default function TenantDashboard({ session, profile }) {
                                       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                                       Contract ends in {daysUntilEnd} days
                                     </p>
-                                    <p
-                                      onClick={() => setShowRenewalModal(true)}
-                                      className="text-xs font-bold flex items-center gap-1 text-indigo-600 cursor-pointer hover:underline"
-                                    >
-                                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                                      Renew Contract Available
-                                    </p>
+                                    {canRenew && !isFamilyMember && (
+                                      <p
+                                        onClick={() => setShowRenewalModal(true)}
+                                        className="text-xs font-bold flex items-center gap-1 text-indigo-600 cursor-pointer hover:underline"
+                                      >
+                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                        Renew Contract Available
+                                      </p>
+                                    )}
                                   </div>
                                 );
                               }

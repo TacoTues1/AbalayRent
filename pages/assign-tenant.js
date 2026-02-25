@@ -449,7 +449,7 @@ export default function AssignTenantPage() {
         const c = colors[accentColor] || colors.blue
 
         return (
-            <>
+            <div className={`relative ${pickerOpen === pickerKey ? 'z-[9999]' : 'z-10'}`}>
                 {/* Tappable card */}
                 <div onClick={() => setPickerOpen(pickerKey)} className="flex items-center gap-3 p-3.5 bg-white rounded-2xl border border-gray-200 cursor-pointer hover:border-gray-300 hover:shadow-md transition-all group">
                     <div className={`w-9 h-9 rounded-xl ${c.iconBg} flex items-center justify-center transition-transform group-hover:scale-110`}>{icon}</div>
@@ -463,11 +463,11 @@ export default function AssignTenantPage() {
                     <svg className="w-4 h-4 text-gray-300 group-hover:text-gray-500 transition-colors flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                 </div>
 
-                {/* Modal overlay */}
+                {/* Popup overlay */}
                 {pickerOpen === pickerKey && (
-                    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }} onClick={() => setPickerOpen(null)}>
-                        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)' }} />
-                        <div style={{ position: 'relative', backgroundColor: '#ffffff', borderRadius: '20px', boxShadow: '0 25px 50px rgba(0,0,0,0.25)', width: '100%', maxWidth: '340px', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
+                    <>
+                        <div className="fixed inset-0 z-40" onClick={() => setPickerOpen(null)} />
+                        <div className="absolute top-[calc(100%+8px)] left-1/2 -translate-x-1/2 z-50 bg-white rounded-[20px] shadow-[0_15px_40px_-10px_rgba(0,0,0,0.25)] border border-gray-100 min-w-[340px] overflow-hidden animate-in fade-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
                             {/* Gradient Header */}
                             <div className={`bg-gradient-to-r ${c.headerBg}`} style={{ padding: '16px 20px' }}>
                                 <div className="flex items-center justify-between">
@@ -511,9 +511,9 @@ export default function AssignTenantPage() {
                                 </div>
                             )}
                         </div>
-                    </div>
+                    </>
                 )}
-            </>
+            </div>
         )
     }
 
@@ -553,31 +553,7 @@ export default function AssignTenantPage() {
                     {alreadyPaid && <p className="text-[10px] text-green-600 font-bold mt-2 flex items-center gap-1"><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg> No move-in bill will be generated</p>}
                 </div>
 
-                {/* Confirm assignment modal */}
-                {showConfirm && (
-                    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }} onClick={() => setShowConfirm(false)}>
-                        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)' }} />
-                        <div style={{ position: 'relative', backgroundColor: '#ffffff', borderRadius: '20px', boxShadow: '0 25px 50px rgba(0,0,0,0.25)', width: '100%', maxWidth: '384px', overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
-                            {/* Warning icon */}
-                            <div className="flex flex-col items-center pt-8 pb-4 px-6">
-                                <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mb-4">
-                                    <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
-                                </div>
-                                <h3 className="text-lg font-bold text-gray-900 mb-1">Confirm Assignment</h3>
-                                <p className="text-sm text-gray-500 text-center leading-relaxed">This action cannot be undone. The property status will change to <span className="font-semibold text-gray-700">occupied</span> and the tenant will be notified immediately.</p>
-                            </div>
-                            {/* Actions */}
-                            <div className="flex gap-3 px-6 pb-6">
-                                <button type="button" onClick={() => setShowConfirm(false)} className="flex-1 py-3 rounded-xl border border-gray-200 bg-gray-50 text-gray-700 font-bold text-sm hover:bg-gray-100 transition-all cursor-pointer">
-                                    Cancel
-                                </button>
-                                <button type="button" onClick={handleSubmit} disabled={submitting} className="flex-1 py-3 rounded-xl bg-red-600 text-white font-bold text-sm hover:bg-red-500 transition-all cursor-pointer disabled:opacity-50 shadow-lg">
-                                    {submitting ? (uploadingContract ? 'Uploading...' : 'Assigning...') : 'Yes, Assign'}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
+                {/* Placeholder for modal moved to root */}
             </div>
         )
     }
@@ -681,6 +657,31 @@ export default function AssignTenantPage() {
                     </div>
                 </div>
             </div>
+            {/* Confirm assignment modal moved here to avoid CSS transform confinement */}
+            {showConfirm && (
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }} onClick={() => setShowConfirm(false)}>
+                    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)' }} />
+                    <div style={{ position: 'relative', backgroundColor: '#ffffff', borderRadius: '24px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', width: '100%', maxWidth: '400px', overflow: 'hidden' }} className="animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+                        {/* Warning icon */}
+                        <div className="flex flex-col items-center pt-8 pb-4 px-6">
+                            <div className="w-16 h-16 rounded-full bg-red-50 flex items-center justify-center mb-4">
+                                <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
+                            </div>
+                            <h3 className="text-[20px] font-bold text-gray-900 mb-2">Confirm Assignment</h3>
+                            <p className="text-sm text-gray-500 text-center leading-relaxed">This action cannot be undone. The property status will change to <span className="font-semibold text-gray-900">occupied</span> and the tenant will be notified immediately.</p>
+                        </div>
+                        {/* Actions */}
+                        <div className="flex gap-4 px-6 pb-6">
+                            <button type="button" onClick={() => setShowConfirm(false)} className="flex-1 py-3.5 rounded-xl border border-gray-200 bg-white text-gray-700 font-bold text-sm hover:bg-gray-50 transition-all cursor-pointer shadow-sm">
+                                Cancel
+                            </button>
+                            <button type="button" onClick={handleSubmit} disabled={submitting} className="flex-1 py-3.5 rounded-xl bg-[#e31221] text-white font-bold text-sm hover:bg-red-600 transition-all cursor-pointer disabled:opacity-50 shadow-md">
+                                {submitting ? (uploadingContract ? 'Uploading...' : 'Assigning...') : 'Yes, Assign'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

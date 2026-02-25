@@ -822,7 +822,7 @@ export default function BookingsPage() {
       case 'accepted':
         return <span className="px-2.5 py-0.5 bg-green-50 text-green-700 text-[10px] font-bold uppercase tracking-wide border border-green-100 rounded-full">Booking Approved</span>
       case 'viewing_done':
-        return <span className="px-2.5 py-0.5 bg-indigo-50 text-indigo-700 text-[10px] font-bold uppercase tracking-wide border border-indigo-100 rounded-full">Viewing Success</span>
+        return <span className="px-2.5 py-0.5 bg-indigo-50 text-indigo-700 text-[10px] font-bold uppercase tracking-wide border border-indigo-100 rounded-full">Waiting for Assigning</span>
       case 'rejected':
       case 'cancelled':
         return <span className="px-2.5 py-0.5 bg-red-50 text-red-700 text-[10px] font-bold uppercase tracking-wide border border-red-100 rounded-full">{status}</span>

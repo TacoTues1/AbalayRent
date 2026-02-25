@@ -83,7 +83,6 @@ async function getFamilyMembersForNotification(tenantId, propertyId) {
             }
         }
 
-        // Add all family members (excluding the current tenant)
         for (const fm of familyMembers) {
             if (fm.member_id === tenantId) continue // Skip the tenant who already got notified
             let memberEmail = null
@@ -1071,6 +1070,48 @@ export default async function handler(req, res) {
                 }
             }
             return res.status(200).json({ success: true, type: 'maintenance_status' });
+        }
+        // ============================================
+        // NOTIFICATION TYPE: FAMILY MEMBER PAYMENT (For Primary Tenant / Mother)
+        // ============================================
+        if (type === 'family_payment') {
+            const { recipientEmail, recipientPhone, recipientName, familyMemberName, propertyTitle, amount, paymentMethod } = req.body
+
+            const results = { email: false, sms: false }
+            const methodLabel = paymentMethod === 'qr_code' ? 'QR Code' : paymentMethod === 'credit' ? 'Credit Balance' : paymentMethod || 'Cash'
+
+            // Send Email to Primary Tenant
+            if (recipientEmail) {
+                try {
+                    const { sendNotificationEmail } = await import('../../lib/email')
+                    await sendNotificationEmail({
+                        to: recipientEmail,
+                        subject: `Family Payment - ${familyMemberName || 'A family member'} paid ₱${(amount || 0).toLocaleString()}`,
+                        message: `Hi ${recipientName || 'Tenant'},\n\nYour family member ${familyMemberName || 'a family member'} has paid ₱${(amount || 0).toLocaleString()} for ${propertyTitle || 'your property'} via ${methodLabel}.\n\nThe payment is now awaiting landlord confirmation.\n\nThank you,\nEaseRent`
+                    })
+                    results.email = true
+                    console.log(`✅ Family payment email sent to ${recipientEmail}`)
+                } catch (err) {
+                    console.error(`Family payment email failed for ${recipientEmail}:`, err.message)
+                }
+            }
+
+            // Send SMS to Primary Tenant
+            if (recipientPhone) {
+                const phone = formatPhoneNumber(recipientPhone)
+                if (phone) {
+                    try {
+                        const { sendSMS } = await import('../../lib/sms')
+                        await sendSMS(phone, `[EaseRent] Your family member ${familyMemberName || 'someone'} paid ₱${(amount || 0).toLocaleString()} for ${propertyTitle || 'your property'} via ${methodLabel}. Awaiting landlord confirmation.`)
+                        results.sms = true
+                        console.log(`✅ Family payment SMS sent to ${phone}`)
+                    } catch (err) {
+                        console.error(`Family payment SMS failed for ${phone}:`, err.message)
+                    }
+                }
+            }
+
+            return res.status(200).json({ success: true, type: 'family_payment', results })
         }
 
         return res.status(400).json({ error: `Unknown notification type: ${type}` })

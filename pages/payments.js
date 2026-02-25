@@ -61,6 +61,9 @@ export default function PaymentsPage() {
   const [landlordAcceptedPayments, setLandlordAcceptedPayments] = useState(null) // Landlord's accepted payment methods
   const [selectedDetailBill, setSelectedDetailBill] = useState(null) // Bill selected for detail side panel
   const [chartFilter, setChartFilter] = useState('all')
+  const [isFamilyMember, setIsFamilyMember] = useState(false) // Track if user is a family member
+  const [primaryTenantId, setPrimaryTenantId] = useState(null) // Primary tenant ID for family members
+  const [parentOccupancyId, setParentOccupancyId] = useState(null) // Parent occupancy ID for family members
   const [chartYear, setChartYear] = useState(new Date().getFullYear())
   const [formData, setFormData] = useState({
     property_id: '',
@@ -179,7 +182,33 @@ export default function PaymentsPage() {
       .eq('id', userId)
       .maybeSingle()
 
-    setUserRole(data?.role || 'tenant')
+    const role = data?.role || 'tenant'
+
+    // If tenant, check if they are a family member (not the primary tenant)
+    // IMPORTANT: We must resolve this BEFORE setting userRole, because
+    // the useEffect that triggers loadPayments/loadPaymentRequests depends on userRole.
+    // If we set userRole first, those functions would run before primaryTenantId is available.
+    if (role === 'tenant') {
+      try {
+        const fmRes = await fetch(`/api/family-members?member_id=${userId}`, { cache: 'no-store' })
+        const fmData = await fmRes.json()
+        if (fmData?.occupancy) {
+          // User is a family member — use the primary tenant's ID for payment queries
+          setIsFamilyMember(true)
+          setPrimaryTenantId(fmData.occupancy.tenant_id)
+          setParentOccupancyId(fmData.occupancy.id)
+          // Pre-load payment data from API (bypasses RLS)
+          if (fmData.fullPaymentRequests) setPaymentRequests(fmData.fullPaymentRequests)
+          if (fmData.paymentsHistory) setPayments(fmData.paymentsHistory)
+          setLoading(false)
+        }
+      } catch (err) {
+        console.error('Family member check on payments page:', err)
+      }
+    }
+
+    // Set userRole LAST so the useEffect fires after primaryTenantId is set
+    setUserRole(role)
   }
 
   // UPDATED: Added Realtime Subscriptions
@@ -254,6 +283,21 @@ export default function PaymentsPage() {
   }
 
   async function loadPayments() {
+    // Family members: use API to bypass RLS
+    if (isFamilyMember && primaryTenantId) {
+      try {
+        const fmRes = await fetch(`/api/family-members?member_id=${session.user.id}`)
+        const fmData = await fmRes.json()
+        if (fmData?.paymentsHistory) {
+          setPayments(fmData.paymentsHistory)
+        }
+      } catch (err) {
+        console.error('Error loading family member payments:', err)
+      }
+      setLoading(false)
+      return
+    }
+
     let query = supabase
       .from('payments')
       .select('*, properties(title), profiles!payments_tenant_fkey(first_name, middle_name, last_name)')
@@ -271,6 +315,20 @@ export default function PaymentsPage() {
   }
 
   async function loadPaymentRequests() {
+    // Family members: use API to bypass RLS
+    if (isFamilyMember && primaryTenantId) {
+      try {
+        const fmRes = await fetch(`/api/family-members?member_id=${session.user.id}`)
+        const fmData = await fmRes.json()
+        if (fmData?.fullPaymentRequests) {
+          setPaymentRequests(fmData.fullPaymentRequests)
+        }
+      } catch (err) {
+        console.error('Error loading family member payment requests:', err)
+      }
+      return
+    }
+
     let query = supabase
       .from('payment_requests')
       .select(`
@@ -461,39 +519,44 @@ export default function PaymentsPage() {
     )
 
     // 1. Fetch Tenant Credit (filtered by occupancy)
-    // 1. Fetch Tenant Credit (filtered by occupancy)
     let credit = 0;
     if (userRole === 'tenant') {
-      let query = supabase.from('tenant_balances').select('amount').eq('tenant_id', session.user.id);
-
-      let targetOccupancyId = request.occupancy_id;
-
-      // If bill has no occupancy_id (legacy/unlinked), find the current active occupancy
-      if (!targetOccupancyId) {
-        const { data: activeOcc } = await supabase
-          .from('tenant_occupancies')
-          .select('id')
-          .eq('tenant_id', session.user.id)
-          .eq('status', 'active')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (activeOcc) targetOccupancyId = activeOcc.id;
-      }
-
-      if (targetOccupancyId) {
-        query = query.eq('occupancy_id', targetOccupancyId);
+      if (isFamilyMember && primaryTenantId) {
+        // Family members: use API to bypass RLS
+        try {
+          const fmRes = await fetch(`/api/family-members?member_id=${session.user.id}`, { cache: 'no-store' })
+          const fmData = await fmRes.json()
+          credit = parseFloat(fmData?.tenantBalance || 0)
+        } catch (err) {
+          console.error('Error fetching family member credit:', err)
+        }
       } else {
-        // If still no occupancy ID found, force a mismatch/empty result to avoid showing legacy global balance
-        // or filter for entries where occupancy_id IS NULL (if that's where global credit lives)
-        // But users reported seeing OLD contract credit. Old contracts usually have occupancy_ids.
-        // So simply NOT filtering was the issue. 
-        // We MUST rely on occupancy_id. If none, we assume 0 or "General" credit (null).
-        query = query.is('occupancy_id', null);
-      }
+        // Primary tenant: use direct Supabase query
+        let query = supabase.from('tenant_balances').select('amount').eq('tenant_id', session.user.id);
 
-      const { data } = await query.maybeSingle();
-      credit = parseFloat(data?.amount || 0);
+        let targetOccupancyId = request.occupancy_id;
+
+        if (!targetOccupancyId) {
+          const { data: activeOcc } = await supabase
+            .from('tenant_occupancies')
+            .select('id')
+            .eq('tenant_id', session.user.id)
+            .eq('status', 'active')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (activeOcc) targetOccupancyId = activeOcc.id;
+        }
+
+        if (targetOccupancyId) {
+          query = query.eq('occupancy_id', targetOccupancyId);
+        } else {
+          query = query.is('occupancy_id', null);
+        }
+
+        const { data } = await query.maybeSingle();
+        credit = parseFloat(data?.amount || 0);
+      }
     }
     setAppliedCredit(credit);
 
@@ -508,19 +571,24 @@ export default function PaymentsPage() {
     let occupancyId = request.occupancy_id;
 
     if (!occupancyId && userRole === 'tenant') {
-      // Bill doesn't have occupancy_id, try to find tenant's active occupancy
-      const { data: activeOcc } = await supabase
-        .from('tenant_occupancies')
-        .select('id')
-        .eq('tenant_id', session.user.id)
-        .eq('status', 'active')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      // For family members, use parentOccupancyId; otherwise lookup from tenant_occupancies
+      if (parentOccupancyId) {
+        occupancyId = parentOccupancyId;
+        console.log('Using parent occupancy for family member:', occupancyId);
+      } else {
+        const { data: activeOcc } = await supabase
+          .from('tenant_occupancies')
+          .select('id')
+          .eq('tenant_id', session.user.id)
+          .eq('status', 'active')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-      if (activeOcc) {
-        occupancyId = activeOcc.id;
-        console.log('Found active occupancy:', occupancyId);
+        if (activeOcc) {
+          occupancyId = activeOcc.id;
+          console.log('Found active occupancy:', occupancyId);
+        }
       }
     }
 
@@ -528,13 +596,29 @@ export default function PaymentsPage() {
 
     if (occupancyId) {
       try {
-        const { data: occupancy, error: occError } = await supabase
-          .from('tenant_occupancies')
-          .select('contract_end_date, start_date')
-          .eq('id', occupancyId)
-          .single();
+        let occupancy = null;
 
-        console.log('Occupancy query result - data:', JSON.stringify(occupancy), 'error:', occError);
+        if (isFamilyMember) {
+          // Family members: use API to bypass RLS
+          const fmRes = await fetch(`/api/family-members?member_id=${session.user.id}`)
+          const fmData = await fmRes.json()
+          if (fmData?.occupancy) {
+            occupancy = {
+              contract_end_date: fmData.occupancy.contract_end_date,
+              start_date: fmData.occupancy.start_date,
+              security_deposit: fmData.occupancy.security_deposit
+            }
+          }
+        } else {
+          // Primary tenant: use direct Supabase query
+          const { data: occData, error: occError } = await supabase
+            .from('tenant_occupancies')
+            .select('contract_end_date, start_date')
+            .eq('id', occupancyId)
+            .single();
+          occupancy = occData;
+          console.log('Occupancy query result - data:', JSON.stringify(occData), 'error:', occError);
+        }
 
         if (occupancy) {
           // Use rent from the bill request since occupancy doesn't have rent_amount
@@ -828,38 +912,77 @@ export default function PaymentsPage() {
       const rentPortion = Math.max(0, amountPaid - oneTimeCharges);
       const advancePaymentAmount = isMoveIn ? parseFloat(selectedBill.advance_amount || 0) : Math.max(0, rentPortion - firstMonthRent);
 
-      const { error } = await supabase
-        .from('payment_requests')
-        .update({
-          status: 'pending_confirmation',
-          paid_at: new Date().toISOString(),
-          payment_method: paymentMethod,
-          tenant_proof_url: proofUrl,
-          tenant_reference_number: referenceNumber.trim() || null,
-          advance_amount: advancePaymentAmount,
-          amount_paid: amountPaid
-        })
-        .eq('id', selectedBill.id);
+      // Update payment request status
+      if (isFamilyMember) {
+        // Family members: use API to bypass RLS
+        const fmPayRes = await fetch('/api/payments/family-pay', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            memberId: session.user.id,
+            paymentRequestId: selectedBill.id,
+            status: 'pending_confirmation',
+            paymentMethod,
+            proofUrl,
+            referenceNumber: referenceNumber.trim() || null,
+            advanceAmount: advancePaymentAmount,
+            amountPaid,
+            paidAt: new Date().toISOString()
+          })
+        });
+        const fmPayData = await fmPayRes.json();
+        if (!fmPayRes.ok) throw new Error(fmPayData.error || 'Payment submission failed');
+      } else {
+        // Primary tenant: use direct Supabase query
+        const { error } = await supabase
+          .from('payment_requests')
+          .update({
+            status: 'pending_confirmation',
+            paid_at: new Date().toISOString(),
+            payment_method: paymentMethod,
+            tenant_proof_url: proofUrl,
+            tenant_reference_number: referenceNumber.trim() || null,
+            advance_amount: advancePaymentAmount,
+            amount_paid: amountPaid
+          })
+          .eq('id', selectedBill.id);
 
-      if (error) throw error;
+        if (error) throw error;
+      }
 
       // Notify Landlord
       const totalPaid = parseFloat(customAmount);
       const monthsText = monthsCovered > 1 ? ` (${monthsCovered} months advance)` : '';
 
+      // Get the payer's name for notifications
+      const { data: payerProfile } = await supabase.from('profiles').select('first_name, last_name').eq('id', session.user.id).single();
+      const payerName = `${payerProfile?.first_name || ''} ${payerProfile?.last_name || ''}`.trim() || 'Tenant';
+      const payerLabel = isFamilyMember ? `Family member ${payerName}` : 'Tenant';
+
       await supabase.from('notifications').insert({
         recipient: selectedBill.landlord,
         actor: session.user.id,
         type: 'payment_confirmation_needed',
-        message: `Tenant paid ₱${totalPaid.toLocaleString()} for ${selectedBill.properties?.title || 'property'} via ${paymentMethod === 'qr_code' ? 'QR Code' : 'Cash'}${monthsText}. Please confirm payment receipt.`,
+        message: `${payerLabel} paid ₱${totalPaid.toLocaleString()} for ${selectedBill.properties?.title || 'property'} via ${paymentMethod === 'qr_code' ? 'QR Code' : 'Cash'}${monthsText}. Please confirm payment receipt.`,
         link: '/payments',
         data: { payment_request_id: selectedBill.id }
       });
 
-      // API Notification
+      // Notify Primary Tenant (mother) if a family member paid
+      if (isFamilyMember && primaryTenantId) {
+        await supabase.from('notifications').insert({
+          recipient: primaryTenantId,
+          actor: session.user.id,
+          type: 'family_payment',
+          message: `Your family member ${payerName} paid ₱${totalPaid.toLocaleString()} for ${selectedBill.properties?.title || 'property'} via ${paymentMethod === 'qr_code' ? 'QR Code' : 'Cash'}${monthsText}.`,
+          link: '/payments',
+          data: { payment_request_id: selectedBill.id }
+        });
+      }
+
+      // API Notification (Email/SMS)
       try {
         const { data: landlordProfile } = await supabase.from('profiles').select('first_name, last_name, phone').eq('id', selectedBill.landlord).single();
-        const { data: tenantProfile } = await supabase.from('profiles').select('first_name, last_name').eq('id', session.user.id).single();
         const { data: landlordEmail } = await supabase.rpc('get_user_email', { user_id: selectedBill.landlord });
 
         if (landlordEmail || landlordProfile?.phone) {
@@ -871,13 +994,36 @@ export default function PaymentsPage() {
               landlordEmail,
               landlordPhone: landlordProfile?.phone,
               landlordName: landlordProfile?.first_name || 'Landlord',
-              tenantName: `${tenantProfile?.first_name || ''} ${tenantProfile?.last_name || ''}`.trim() || 'Tenant',
+              tenantName: payerLabel,
               propertyTitle: selectedBill.properties?.title || 'property',
               amount: totalPaid,
               monthsCovered,
               paymentMethod
             })
           }).catch(err => console.error('Notification failed:', err));
+        }
+
+        // Email/SMS to mother if family member paid
+        if (isFamilyMember && primaryTenantId) {
+          const { data: motherProfile } = await supabase.from('profiles').select('first_name, last_name, phone').eq('id', primaryTenantId).single();
+          const { data: motherEmail } = await supabase.rpc('get_user_email', { user_id: primaryTenantId });
+
+          if (motherEmail || motherProfile?.phone) {
+            fetch('/api/notify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                type: 'family_payment',
+                recipientEmail: motherEmail,
+                recipientPhone: motherProfile?.phone,
+                recipientName: motherProfile?.first_name || 'Tenant',
+                familyMemberName: payerName,
+                propertyTitle: selectedBill.properties?.title || 'property',
+                amount: totalPaid,
+                paymentMethod
+              })
+            }).catch(err => console.error('Mother notification failed:', err));
+          }
         }
       } catch (notifyErr) { console.error('Notify Error:', notifyErr); }
 
@@ -903,21 +1049,38 @@ export default function PaymentsPage() {
       const res = await fetch('/api/payments/pay-with-credit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ paymentRequestId: selectedBill.id, tenantId: session.user.id })
+        body: JSON.stringify({ paymentRequestId: selectedBill.id, tenantId: primaryTenantId || session.user.id })
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Payment failed');
+
+      // Get payer's name for notifications
+      const { data: payerProfile } = await supabase.from('profiles').select('first_name, last_name').eq('id', session.user.id).single();
+      const payerName = `${payerProfile?.first_name || ''} ${payerProfile?.last_name || ''}`.trim() || 'Tenant';
+      const payerLabel = isFamilyMember ? `Family member ${payerName}` : 'Tenant';
 
       // Notify landlord
       await supabase.from('notifications').insert({
         recipient: selectedBill.landlord,
         actor: session.user.id,
         type: 'payment_confirmation_needed',
-        message: `Tenant paid for ${selectedBill.properties?.title || 'property'} using Credit Balance.`,
+        message: `${payerLabel} paid for ${selectedBill.properties?.title || 'property'} using Credit Balance.`,
         link: '/payments',
         data: { payment_request_id: selectedBill.id }
       })
+
+      // Notify Primary Tenant (mother) if a family member paid
+      if (isFamilyMember && primaryTenantId) {
+        await supabase.from('notifications').insert({
+          recipient: primaryTenantId,
+          actor: session.user.id,
+          type: 'family_payment',
+          message: `Your family member ${payerName} paid for ${selectedBill.properties?.title || 'property'} using Credit Balance.`,
+          link: '/payments',
+          data: { payment_request_id: selectedBill.id }
+        })
+      }
 
       showToast.success('Paid successfully using credit balance!', { duration: 4000, transition: "bounceIn" });
       setShowPaymentModal(false);
@@ -1147,7 +1310,8 @@ export default function PaymentsPage() {
           remarks: `Payment Request ID: ${selectedBill.id}`,
           paymentRequestId: selectedBill.id,
           allowedMethods,
-          landlordId: selectedBill.landlord
+          landlordId: selectedBill.landlord,
+          payerId: session.user.id
         }),
       });
 
@@ -2555,7 +2719,12 @@ export default function PaymentsPage() {
 
                 {/* Amount Input */}
                 <div className="space-y-3">
-                  <label className="block text-sm font-bold text-gray-700">Amount to Pay</label>
+                  <div className="flex justify-between items-center">
+                    <label className="block text-sm font-bold text-gray-700">Amount to Pay</label>
+                    {isFamilyMember && (
+                      <span className="text-xs text-indigo-600 font-bold bg-indigo-50 px-2 py-1 rounded-md">Expected amount only</span>
+                    )}
+                  </div>
                   <div className="relative group">
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400 text-lg group-focus-within:text-black transition-colors">₱</span>
                     <input
@@ -2564,7 +2733,8 @@ export default function PaymentsPage() {
                       min="1"
                       value={customAmount}
                       onChange={(e) => handleCustomAmountChange(e.target.value)}
-                      className={`w-full bg-white border-2 ${exceedsContract || isBelowMinimum ? 'border-red-500 bg-red-50/50' : 'border-gray-200 hover:border-gray-300 focus:border-black'} rounded-2xl pl-10 pr-4 py-4 font-bold text-2xl outline-none transition-all placeholder:text-gray-300`}
+                      disabled={isFamilyMember}
+                      className={`w-full bg-white border-2 ${exceedsContract || isBelowMinimum ? 'border-red-500 bg-red-50/50' : 'border-gray-200 hover:border-gray-300 focus:border-black'} ${isFamilyMember ? 'bg-gray-50 text-gray-500 cursor-not-allowed border-gray-100' : ''} rounded-2xl pl-10 pr-4 py-4 font-bold text-2xl outline-none transition-all placeholder:text-gray-300`}
                       placeholder="0.00"
                     />
                   </div>

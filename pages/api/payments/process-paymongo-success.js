@@ -276,33 +276,82 @@ export default async function handler(req, res) {
                 .eq('id', request.tenant)
                 .single();
 
+            // Detect if payer is a family member (different from primary tenant)
+            // PayerId comes from checkout metadata or we can check family_members table
+            let payerId = null;
+            let payerProfile = null;
+            let isFamilyPayer = false;
+
+            // Try to get payer_id from checkout session metadata
+            try {
+                const encoded2 = Buffer.from(`${process.env.PAYMONGO_SECRET_KEY}:`).toString('base64');
+                if (sessionId.startsWith('cs_')) {
+                    const metaRes = await fetch(`https://api.paymongo.com/v1/checkout_sessions/${sessionId}`, {
+                        headers: { accept: 'application/json', authorization: `Basic ${encoded2}` }
+                    });
+                    const metaData = await metaRes.json();
+                    payerId = metaData?.data?.attributes?.metadata?.payer_id;
+                }
+            } catch (metaErr) {
+                console.error('Failed to fetch payer metadata:', metaErr);
+            }
+
+            // If payerId exists and is different from tenant, it's a family member
+            if (payerId && payerId !== request.tenant) {
+                const { data: pp } = await supabase.from('profiles').select('first_name, last_name').eq('id', payerId).single();
+                if (pp) {
+                    payerProfile = pp;
+                    isFamilyPayer = true;
+                }
+            }
+
+            const tenantName = tenantProfile ? `${tenantProfile.first_name} ${tenantProfile.last_name}`.trim() : 'Tenant';
+            const payerName = payerProfile ? `${payerProfile.first_name} ${payerProfile.last_name}`.trim() : tenantName;
+
+            // Build display name for notifications
+            // Family member: "Juan Dela Cruz from Maria Dela Cruz"
+            // Primary tenant: "Maria Dela Cruz"
+            const displayName = isFamilyPayer ? `${payerName} from ${tenantName}` : tenantName;
+
             const message = `Payment of ₱${amountPaid.toLocaleString()} for "${request.properties?.title}" received (Via PayMongo).`;
 
-            // 1. Send SMS
+            // 1. Send SMS to primary tenant
             if (tenantProfile?.phone) {
                 try {
-                    await sendSMS(tenantProfile.phone, message);
+                    if (isFamilyPayer) {
+                        await sendSMS(tenantProfile.phone, `[EaseRent] Your family member ${payerName} paid ₱${amountPaid.toLocaleString()} for "${request.properties?.title}" via PayMongo.`);
+                    } else {
+                        await sendSMS(tenantProfile.phone, message);
+                    }
                 } catch (smsErr) {
                     console.error('SMS send error:', smsErr);
                 }
             }
 
-            // 2. Send Email
+            // 2. Send Email to primary tenant
             try {
                 const { data: userData } = await supabase.auth.admin.getUserById(request.tenant);
                 const tenantEmail = userData?.user?.email;
 
                 if (tenantEmail) {
-                    await sendNotificationEmail({
-                        to: tenantEmail,
-                        subject: 'Payment Successful (Via PayMongo)',
-                        message: `<div style="font-family: sans-serif; color: #333;">
+                    const emailMessage = isFamilyPayer
+                        ? `<div style="font-family: sans-serif; color: #333;">
+                               <p>Dear ${tenantProfile?.first_name || 'Tenant'},</p>
+                               <p>Your family member <strong>${payerName}</strong> has paid <strong>₱${amountPaid.toLocaleString()}</strong> for ${request.properties?.title} via PayMongo.</p>
+                               <p>Transaction ID: ${transactionId}</p>
+                               <p>Thank you!</p>
+                               </div>`
+                        : `<div style="font-family: sans-serif; color: #333;">
                                <p>Dear ${tenantProfile?.first_name || 'Tenant'},</p>
                                <p>We confirm that your payment of <strong>₱${amountPaid.toLocaleString()}</strong> has been successfully processed via PayMongo.</p>
                                <p>Property: ${request.properties?.title}</p>
                                <p>Transaction ID: ${transactionId}</p>
                                <p>Thank you!</p>
-                               </div>`
+                               </div>`;
+                    await sendNotificationEmail({
+                        to: tenantEmail,
+                        subject: isFamilyPayer ? `Family Payment - ${payerName} paid ₱${amountPaid.toLocaleString()}` : 'Payment Successful (Via PayMongo)',
+                        message: emailMessage
                     });
                 } else {
                     console.error('Email send error: No email found for user', request.tenant);
@@ -311,12 +360,12 @@ export default async function handler(req, res) {
                 console.error('Email send error:', emailErr);
             }
 
-            // Notify Landlord too
+            // Notify Landlord (in-app)
             await supabase.from('notifications').insert({
                 recipient: request.landlord,
                 actor: request.tenant,
                 type: 'payment_received',
-                message: `Tenant paid ₱${amountPaid.toLocaleString()} for ${request.properties?.title} via PayMongo.`,
+                message: `You have received a payment from ${displayName} for ${request.properties?.title} via PayMongo.`,
                 link: '/payments',
                 data: { payment_request_id: request.id }
             });
@@ -333,30 +382,29 @@ export default async function handler(req, res) {
                     .single();
 
                 const landlordName = landlordProfile ? `${landlordProfile.first_name} ${landlordProfile.last_name}` : 'Landlord';
-                const tenantName = tenantProfile ? `${tenantProfile.first_name} ${tenantProfile.last_name}` : 'Tenant';
 
                 if (landlordEmail) {
                     await sendOnlinePaymentReceivedEmail({
                         to: landlordEmail,
                         landlordName,
-                        tenantName,
+                        tenantName: displayName,
                         propertyTitle: request.properties?.title || 'Property',
                         amount: amountPaid,
                         paymentMethod: 'paymongo',
                         transactionId: transactionId
                     });
-                    console.log(`✅ PayMongo Lanlord Email sent to ${landlordEmail}`);
+                    console.log(`✅ PayMongo Landlord Email sent to ${landlordEmail}`);
                 }
 
                 // Send SMS to Landlord
                 if (landlordProfile?.phone) {
                     await sendPaymentReceivedNotification(landlordProfile.phone, {
                         method: 'paymongo',
-                        tenantName,
+                        tenantName: displayName,
                         amount: amountPaid.toLocaleString(),
                         propertyTitle: request.properties?.title || 'Property'
                     });
-                    console.log(`✅ PayMongo Lanlord SMS sent to ${landlordProfile.phone}`);
+                    console.log(`✅ PayMongo Landlord SMS sent to ${landlordProfile.phone}`);
                 }
 
             } catch (llErr) {
@@ -454,12 +502,15 @@ export default async function handler(req, res) {
                 const tenantFullName = tenantProfile2 ? `${tenantProfile2.first_name} ${tenantProfile2.last_name}` : 'Tenant';
                 const landlordFullName = landlordProfile2 ? `${landlordProfile2.first_name} ${landlordProfile2.last_name}` : 'Landlord';
 
+                // Use the same displayName logic from earlier for consistency in payout messages
+                const payoutDisplayName = isFamilyPayer ? `${payerName} from ${tenantName}` : tenantFullName;
+
                 // In-app notification
                 await supabase.from('notifications').insert({
                     recipient: request.landlord,
                     actor: request.tenant,
                     type: 'payout_received',
-                    message: `₱${payoutAmount.toLocaleString()} has been sent to your ${methodLabel} (${payoutDestination}) from ${tenantFullName}'s payment. Platform fee: ₱${platformFee.toLocaleString()}. Ref: ${payoutRefNumber}`,
+                    message: `₱${payoutAmount.toLocaleString()} has been sent to your ${methodLabel} (${payoutDestination}) from ${payoutDisplayName}'s payment. Platform fee: ₱${platformFee.toLocaleString()}. Ref: ${payoutRefNumber}`,
                     link: '/payments',
                     data: { payout_id: payoutRecord?.id, reference_number: payoutRefNumber }
                 });
@@ -480,7 +531,7 @@ export default async function handler(req, res) {
                                     <tr><td style="padding:8px 0;color:#333;font-weight:bold;">Amount Sent to You</td><td style="padding:8px 0;font-weight:bold;text-align:right;color:#00BFA5;">₱${payoutAmount.toLocaleString()}</td></tr>
                                 </table>
                                 <p>Property: ${request.properties?.title || 'Property'}</p>
-                                <p>Tenant: ${tenantFullName}</p>
+                                <p>Tenant: ${payoutDisplayName}</p>
                                 <p>Reference Number: <strong>${payoutRefNumber}</strong></p>
                                 <p>Transaction ID: <strong>${transactionId}</strong></p>
                                 <p>Thank you for using EaseRent!</p>
@@ -497,7 +548,7 @@ export default async function handler(req, res) {
                     try {
                         await sendSMS(
                             landlordProfile2.phone,
-                            `EaseRent: ₱${payoutAmount.toLocaleString()} sent to your ${methodLabel} (${payoutDestination}) from ${tenantFullName}'s payment for "${request.properties?.title}". Fee: ₱${platformFee}. Ref: ${payoutRefNumber}`
+                            `EaseRent: ₱${payoutAmount.toLocaleString()} sent to your ${methodLabel} (${payoutDestination}) from ${payoutDisplayName}'s payment for "${request.properties?.title}". Fee: ₱${platformFee}. Ref: ${payoutRefNumber}`
                         );
                         console.log(`✅ Payout SMS sent to ${landlordProfile2.phone}`);
                     } catch (smsErr) {

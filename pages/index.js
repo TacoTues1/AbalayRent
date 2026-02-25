@@ -522,7 +522,6 @@ export default function Home() {
 
       <div className="max-w-[1800px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-1">
 
-
         {/* All Properties Section - Fixed height container to prevent layout shift */}
         <div className="mb-2 pt-5">
           {/* Section Header */}
@@ -628,12 +627,12 @@ export default function Home() {
               </div>
             </div>
 
-            {properties.length > 0 && (
+            {/* {properties.length > 0 && (
               <span onClick={handleSeeMore} className="text-sm font-bold text-gray-900 hover:text-gray-600 cursor-pointer flex items-center gap-1 group transition-all duration-300 shrink-0 ml-auto">
                 See More Properties
                 <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
               </span>
-            )}
+            )} */}
           </div>
 
           {loading ? (

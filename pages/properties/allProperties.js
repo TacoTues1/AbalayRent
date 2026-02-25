@@ -12,6 +12,120 @@ import {
   CarouselNext,
   CarouselPrevious,
 } from '../../components/ui/carousel'
+import {
+  Map,
+  MapMarker,
+  MarkerContent,
+  MarkerPopup,
+  MapControls,
+  useMap
+} from '../../components/ui/map'
+import { LocateFixed } from 'lucide-react'
+
+// --- Distance Calculation Helper ---
+function getDistanceFromLatLonInKm(lat1, lon1, lat2, lon2) {
+  var R = 6371; // Radius of the earth in km
+  var dLat = deg2rad(lat2 - lat1);
+  var dLon = deg2rad(lon2 - lon1);
+  var a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // Distance in km
+}
+
+function deg2rad(deg) {
+  return deg * (Math.PI / 180)
+}
+
+const extractCoordinates = (link) => {
+  if (!link) return null;
+  const atMatch = link.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+  const qMatch = link.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/);
+  const placeMatch = link.match(/place\/(-?\d+\.\d+),(-?\d+\.\d+)/);
+  const match = atMatch || qMatch || placeMatch;
+  if (match) {
+    return { lat: match[1], lng: match[2] };
+  }
+  return null;
+};
+
+// --- Coverage Circle Component ---
+function MapCoverageCircle({ center }) {
+  const { map, isLoaded } = useMap();
+
+  useEffect(() => {
+    if (!isLoaded || !map || !center) return;
+    const sourceId = 'coverage-circle-source';
+    const layerIdFill = 'coverage-circle-fill';
+    const layerIdLine = 'coverage-circle-line';
+
+    const points = 64;
+    const coords = [];
+    const distanceX = 1 / (111.320 * Math.cos(center.latitude * Math.PI / 180));
+    const distanceY = 1 / 110.574;
+
+    for (let i = 0; i < points; i++) {
+      let theta = (i / points) * (2 * Math.PI);
+      let x = distanceX * Math.cos(theta);
+      let y = distanceY * Math.sin(theta);
+      coords.push([center.longitude + x, center.latitude + y]);
+    }
+    coords.push(coords[0]); // close the polygon
+
+    const geojson = {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [coords]
+      }
+    };
+
+    if (map.getSource(sourceId)) {
+      map.getSource(sourceId).setData(geojson);
+    } else {
+      map.addSource(sourceId, { type: 'geojson', data: geojson });
+      map.addLayer({
+        id: layerIdFill,
+        type: 'fill',
+        source: sourceId,
+        paint: {
+          'fill-color': '#3b82f6',
+          'fill-opacity': 0.15
+        }
+      });
+      map.addLayer({
+        id: layerIdLine,
+        type: 'line',
+        source: sourceId,
+        paint: {
+          'line-color': '#3b82f6',
+          'line-width': 2,
+          'line-opacity': 0.8,
+          'line-dasharray': [2, 2]
+        }
+      });
+    }
+
+    return () => {
+      if (map.getLayer(layerIdFill)) map.removeLayer(layerIdFill);
+      if (map.getLayer(layerIdLine)) map.removeLayer(layerIdLine);
+      if (map.getSource(sourceId)) map.removeSource(sourceId);
+    }
+  }, [map, isLoaded, center]);
+
+  useEffect(() => {
+    if (!isLoaded || !map || !center) return;
+    map.flyTo({
+      center: [center.longitude, center.latitude],
+      zoom: 14.5,
+      duration: 1200
+    });
+  }, [map, isLoaded, center]);
+
+  return null;
+}
 
 export default function AllProperties() {
   const router = useRouter()
@@ -33,6 +147,12 @@ export default function AllProperties() {
 
   // --- Responsive Filters State ---
   const [showMobileFilters, setShowMobileFilters] = useState(false)
+
+  // --- Location & Map State ---
+  const [filterNearMe, setFilterNearMe] = useState(false)
+  const [userLocation, setUserLocation] = useState(null)
+  const [showMapView, setShowMapView] = useState(false)
+  const [locationError, setLocationError] = useState('')
 
   // --- Comparison Feature State ---
   const [comparisonList, setComparisonList] = useState([])
@@ -121,7 +241,7 @@ export default function AllProperties() {
       loadProperties()
     }, 300)
     return () => clearTimeout(delayDebounceFn)
-  }, [searchQuery, selectedAmenities, priceRange, minRating, filterMostFavorite, sortBy, router.isReady, propertyStats])
+  }, [searchQuery, selectedAmenities, priceRange, minRating, filterMostFavorite, sortBy, router.isReady, propertyStats, filterNearMe, userLocation])
 
   // Disable body scroll when mobile filters are open
   useEffect(() => {
@@ -284,6 +404,21 @@ export default function AllProperties() {
       })
     }
 
+    // 4. Near Me Filter (1km maximum)
+    if (filterNearMe && userLocation) {
+      filteredData = filteredData.filter(property => {
+        const coords = extractCoordinates(property.location_link);
+        if (!coords) return false;
+        const dist = getDistanceFromLatLonInKm(
+          userLocation.latitude,
+          userLocation.longitude,
+          parseFloat(coords.lat),
+          parseFloat(coords.lng)
+        );
+        return dist <= 1; // within 1km
+      });
+    }
+
     setProperties(filteredData)
     setLoading(false)
   }
@@ -322,6 +457,10 @@ export default function AllProperties() {
     setSortBy('newest')
     setMinRating(0)
     setFilterMostFavorite(false)
+    setFilterNearMe(false)
+    setUserLocation(null)
+    setShowMapView(false)
+    setLocationError('')
   }
 
   const toggleComparison = (e, property) => {
@@ -345,10 +484,68 @@ export default function AllProperties() {
     router.push(`/compare?ids=${ids}`)
   }
 
+  const handleToggleNearMe = () => {
+    if (filterNearMe) {
+      setFilterNearMe(false)
+      setUserLocation(null)
+    } else {
+      if ("geolocation" in navigator) {
+        setLoading(true)
+        setLocationError('')
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            setUserLocation({
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude
+            })
+            setFilterNearMe(true)
+            setShowMapView(true) // Automatically switch to Map view
+            setShowMobileFilters(false) // Minimizes filter section
+          },
+          (err) => {
+            console.error("Geolocation error:", err)
+            setLocationError("Could not get your location. Please ensure location services are enabled.")
+            setLoading(false)
+          },
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        )
+      } else {
+        setLocationError("Geolocation is not supported by your browser.")
+      }
+    }
+  }
+
   // --- REUSABLE FILTER CONTENT ---
   // Note: Defined inline to prevent losing input focus on re-renders
   const filterContent = (
     <div className="space-y-6">
+      {/* Near Me */}
+      <div>
+        <label className="flex items-center justify-between p-4 bg-slate-50 border border-gray-100 rounded-2xl cursor-pointer hover:border-gray-200 transition-all shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="flex-shrink-0">
+              <LocateFixed className="w-5 h-5 text-emerald-500 stroke-[2.5]" />
+            </div>
+            <div>
+              <p className="text-[16px] font-bold text-[#111827] leading-none mb-1.5">
+                Find Near Me
+              </p>
+              <p className="text-[13px] text-gray-500 font-medium leading-none">Properties within 1km</p>
+            </div>
+          </div>
+          <div className="relative flex-shrink-0 mt-0.5">
+            <input
+              type="checkbox"
+              className="sr-only peer"
+              checked={filterNearMe}
+              onChange={handleToggleNearMe}
+            />
+            <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500 shadow-inner"></div>
+          </div>
+        </label>
+        {locationError && <p className="text-[10px] text-red-500 font-medium mt-1.5 ml-1 leading-snug">{locationError}</p>}
+      </div>
+
       {/* Search */}
       <div>
         <p className="text-xs font-bold text-gray-500 uppercase mb-2">Search</p>
@@ -672,24 +869,44 @@ export default function AllProperties() {
           </aside>
 
           {/* --- MOBILE FILTER TOGGLE & BOTTOM SHEET --- */}
-          <div className="lg:hidden w-full mb-4 flex justify-between items-center">
-            <div>
-              <h2 className="text-xl font-black text-black uppercase">Properties</h2>
-              <p className="text-xs text-gray-500">
-                {loading ? 'Searching...' : `${properties.length} results`}
-              </p>
+          <div className="lg:hidden w-full mb-4 space-y-3">
+            <div className="flex justify-between items-center bg-white p-3 rounded-2xl border border-gray-100 shadow-sm">
+              <div>
+                <h2 className="text-lg font-black text-black uppercase">Properties</h2>
+                <p className="text-xs text-gray-500">
+                  {loading ? 'Searching...' : `${properties.length} results`}
+                </p>
+              </div>
+
+              {/* Filter Trigger Button */}
+              <button
+                onClick={() => setShowMobileFilters(true)}
+                className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md active:scale-95 transition-transform"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                </svg>
+                Filters
+              </button>
             </div>
 
-            {/* Filter Trigger Button */}
-            <button
-              onClick={() => setShowMobileFilters(true)}
-              className="flex items-center gap-2 bg-white border border-gray-200 shadow-sm px-4 py-2 rounded-xl text-sm font-bold"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-              </svg>
-              Filters
-            </button>
+            {/* View Toggle (Mobile) */}
+            <div className="flex bg-gray-100 p-1.5 rounded-xl w-full">
+              <button
+                onClick={() => setShowMapView(false)}
+                className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${!showMapView ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
+                Grid
+              </button>
+              <button
+                onClick={() => setShowMapView(true)}
+                className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${showMapView ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
+                Map
+              </button>
+            </div>
           </div>
 
           {/* --- MOBILE FIXED BOTTOM SHEET --- */}
@@ -744,11 +961,31 @@ export default function AllProperties() {
           {/* --- RIGHT PANEL: ALL PROPERTIES --- */}
           <main className="flex-1 w-full">
 
-            <div className="hidden lg:block mb-6">
-              <h2 className="text-2xl font-black text-black uppercase">All Properties</h2>
-              <p className="text-sm text-gray-500">
-                {loading ? 'Searching...' : `Showing ${properties.length} results`}
-              </p>
+            <div className="hidden lg:flex mb-6 justify-between items-center bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
+              <div>
+                <h2 className="text-2xl font-black text-black uppercase">All Properties</h2>
+                <p className="text-sm text-gray-500">
+                  {loading ? 'Searching...' : `Showing ${properties.length} results`}
+                </p>
+              </div>
+
+              {/* View Toggle (Desktop) */}
+              <div className="flex bg-gray-100 p-1.5 rounded-xl">
+                <button
+                  onClick={() => setShowMapView(false)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${!showMapView ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
+                  Grid
+                </button>
+                <button
+                  onClick={() => setShowMapView(true)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${showMapView ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
+                  Map
+                </button>
+              </div>
             </div>
 
             {loading ? (
@@ -779,6 +1016,69 @@ export default function AllProperties() {
                 <button onClick={clearFilters} className="px-5 py-2 bg-black text-white rounded-xl text-sm font-semibold hover:bg-gray-800 transition-colors cursor-pointer">
                   Clear Filters
                 </button>
+              </div>
+            ) : showMapView ? (
+              <div className="w-full h-[70vh] min-h-[500px] rounded-3xl overflow-hidden border border-gray-200 shadow-sm relative z-0">
+                <Map
+                  initialViewState={{
+                    longitude: userLocation ? userLocation.longitude : (properties.length > 0 && extractCoordinates(properties[0].location_link) ? parseFloat(extractCoordinates(properties[0].location_link).lng) : 121.0),
+                    latitude: userLocation ? userLocation.latitude : (properties.length > 0 && extractCoordinates(properties[0].location_link) ? parseFloat(extractCoordinates(properties[0].location_link).lat) : 14.5),
+                    zoom: filterNearMe ? 14 : 11
+                  }}
+                  mapStyle="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+                  className="w-full h-full"
+                >
+                  <MapControls position="top-right" showLocate={true} showZoom={true} />
+
+                  {/* Coverage Circle */}
+                  <MapCoverageCircle center={filterNearMe ? userLocation : null} />
+
+                  {/* User Location Marker */}
+                  {userLocation && (
+                    <MapMarker longitude={userLocation.longitude} latitude={userLocation.latitude}>
+                      <MarkerContent>
+                        <div className="relative flex h-6 w-6 items-center justify-center">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-4 w-4 bg-blue-600 border-2 border-white shadow"></span>
+                        </div>
+                      </MarkerContent>
+                    </MapMarker>
+                  )}
+
+                  {/* Property Markers */}
+                  {properties.map(property => {
+                    const coords = extractCoordinates(property.location_link);
+                    if (!coords) return null;
+                    const lat = parseFloat(coords.lat);
+                    const lng = parseFloat(coords.lng);
+                    const isSelected = comparisonList.some(p => p.id === property.id);
+                    return (
+                      <MapMarker key={property.id} longitude={lng} latitude={lat}>
+                        <MarkerContent>
+                          <div
+                            onClick={(e) => { e.stopPropagation(); router.push(`/properties/${property.id}`) }}
+                            className={`px-3 py-1.5 rounded-full font-bold text-xs shadow-lg whitespace-nowrap cursor-pointer hover:scale-110 transition-all border-2 ${isSelected ? 'bg-black text-white border-white' : 'bg-white text-black border-gray-200 hover:bg-emerald-500 hover:text-white hover:border-emerald-600'}`}
+                          >
+                            ₱{Number(property.price).toLocaleString()}
+                          </div>
+                        </MarkerContent>
+                        <MarkerPopup closeButton={true} className="p-0 overflow-hidden w-48 rounded-xl border-gray-200 shadow-xl">
+                          <div className="text-left cursor-pointer bg-white" onClick={() => router.push(`/properties/${property.id}`)}>
+                            <img src={getPropertyImages(property)[0]} alt={property.title} className="w-full h-28 object-cover" />
+                            <div className="p-3">
+                              <h4 className="font-bold text-sm line-clamp-1 mb-0.5 text-gray-900">{property.title}</h4>
+                              <p className="text-[10px] text-gray-500 mb-2 truncate">{property.city}</p>
+                              <div className="flex justify-between items-end">
+                                <p className="font-black text-emerald-600 drop-shadow-sm text-sm">₱{Number(property.price).toLocaleString()}</p>
+                                <span className="text-[8px] uppercase tracking-wider font-bold text-gray-400">/mo</span>
+                              </div>
+                            </div>
+                          </div>
+                        </MarkerPopup>
+                      </MapMarker>
+                    );
+                  })}
+                </Map>
               </div>
             ) : (
               // GRID: 2 Columns Mobile, 3 lg, 4 xl

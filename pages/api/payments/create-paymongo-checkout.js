@@ -6,7 +6,7 @@ export default async function handler(req, res) {
         return res.status(405).json({ error: `Method ${req.method} Not Allowed` })
     }
 
-    const { amount, description, remarks, paymentRequestId, allowedMethods, landlordId } = req.body;
+    const { amount, description, remarks, paymentRequestId, allowedMethods, landlordId, payerId } = req.body;
 
     if (!process.env.PAYMONGO_SECRET_KEY) {
         return res.status(500).json({ error: 'PayMongo Secret Key is missing' });
@@ -58,6 +58,7 @@ export default async function handler(req, res) {
                         metadata: {
                             payment_request_id: paymentRequestId,
                             landlord_id: landlordId || '',
+                            payer_id: payerId || '',
                             remarks: remarks || ''
                         }
                     }

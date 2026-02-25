@@ -500,58 +500,59 @@ export default function Navbar() {
   if (!session) {
     return (
       <>
-        <div ref={navRef} className="absolute top-2 left-0 right-0 z-50 px-4 md:px-6 pointer-events-none">
-          {/*Logo*/}
-          <div className="absolute left-10 top-0 h-12 flex items-center pointer-events-auto z-50">
-            <Link
-              href="/"
-              className="flex items-center gap-3 text-black hover:opacity-80 transition-opacity"
-            >
-              <img
-                src="/home.png"
-                alt="EaseRent"
-                className="w-11 h-11 object-contain"
-              />
+        <style dangerouslySetInnerHTML={{ __html: "@import url('https://fonts.googleapis.com/css2?family=Pacifico&display=swap');" }} />
+        <div ref={navRef} className="absolute top-0 left-0 right-0 z-50 pointer-events-none bg-white border-b border-gray-100">
+          <nav className="w-full max-w-[1800px] mx-auto pointer-events-auto transition-all duration-300 py-3 px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between items-center h-10">
 
-              <div className="hidden sm:flex flex-col leading-tight">
-                <span className="text-1xl sm:text-2xl font-bold">
-                  Abalay
-                </span>
-
-                <span className="text-xs sm:text-sm text-gray-600">
-                  A Rental Management Platform
-                </span>
+              {/* Left Side: Logo */}
+              <div className="flex-1 flex items-center justify-start z-50">
+                <Link href="/" className="hidden lg:flex items-center gap-2.5 hover:opacity-80 transition-opacity">
+                  <img src="/home.png" alt="Abalay" className="w-10 h-10 object-contain" />
+                  <span className="text-[28px] text-black tracking-normal leading-none" style={{ fontFamily: '"Pacifico", cursive', marginTop: '-4px' }}>Abalay</span>
+                </Link>
               </div>
-            </Link>
-          </div>
 
-          {/*Login and Register*/}
-          <div className="absolute right-6 top-0 h-12 hidden sm:flex items-center gap-3 pointer-events-auto z-50">
-            <button onClick={() => router.push('/register-landlord')} className="px-4 py-2 text-md font-semibold text-gray-600 hover:text-black transition-all cursor-pointer">Become a Landlord</button>
-            <button onClick={() => router.push('/login')} className="px-4 py-2 text-md font-semibold bg-gray-100 hover:text-black hover:bg-black/50 rounded-lg transition-all cursor-pointer">Login</button>
-            <button onClick={() => router.push('/register')} className="px-6 py-4 text-md font-semibold bg-black text-white hover:bg-gray-800 rounded-xl shadow-md hover:shadow-lg transition-all transform cursor-pointer sm:px-5 sm:py-2">Register</button>
-          </div>
+              {/* Center: Links */}
+              <div className="hidden lg:flex relative flex-1 items-center justify-center gap-8 pointer-events-auto z-50">
+                <div className="absolute -bottom-4 h-[3px] bg-black rounded-t-full" style={{ left: `${underlineStyle.left}px`, width: `${underlineStyle.width}px`, opacity: underlineStyle.width ? 1 : 0, transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)' }} />
 
-          <nav className="max-w-lg mx-auto pointer-events-auto transition-all duration-300">
-            <div className="px-4 sm:px-6 lg:px-8">
-              <div className="flex justify-between items-center h-12">
+                <Link href="/" className={`nav-link text-sm font-semibold transition-colors ${isActive('/') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}>Home</Link>
+                <Link href="/about" className={`nav-link text-sm font-semibold transition-colors ${isActive('/about') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}>About</Link>
+                <Link href="/properties/allProperties" className={`nav-link text-sm font-semibold transition-colors ${isActive('/properties/allProperties') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}>Properties</Link>
+              </div>
 
-                <div className="flex-1"></div>
-                {/* --- CENTER: Text (Absolute Positioned) --- */}
-                {/* Mobile Center Text */}
-                <div className="absolute left-1/2 transform -translate-x-1/2 sm:hidden pointer-events-none">
-                  <span className="text-lg font-bold text-black">𝐓𝐞𝐬𝐬𝐲𝐍𝐓𝐞𝐝</span>
+              {/* Mobile Center Logo (Clickable) */}
+              <div className="absolute left-1/2 transform -translate-x-1/2 lg:hidden z-50 mt-1">
+                <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+                  <img src="/home.png" alt="Abalay" className="w-8 h-8 object-contain" />
+                  <span className="text-[22px] text-black tracking-normal" style={{ fontFamily: '"Pacifico", cursive', marginTop: '-2px' }}>Abalay</span>
+                </Link>
+              </div>
+
+              {/* Right Side Sections */}
+              <div className="flex-1 flex items-center justify-end gap-3 pointer-events-auto z-50">
+                <div className="hidden sm:flex items-center gap-4 lg:gap-6">
+                  {/* Become a Landlord button with Icon */}
+                  <button onClick={() => router.push('/register-landlord')} className="flex items-center gap-3 text-[16px] font-medium text-[#0F172A] hover:text-blue-600 transition-colors cursor-pointer whitespace-nowrap group">
+                    Become a Landlord
+                  </button>
+
+                  <div className="w-px h-7 bg-gray-200"></div>
+
+                  <button onClick={() => router.push('/login')} className="text-[16px] font-medium text-[#64748B] hover:text-[#0F172A] transition-colors cursor-pointer px-2">Log in</button>
+                  <button onClick={() => router.push('/register')} className="px-6 py-3 flex items-center gap-2 text-[15px] font-medium bg-[#0F172A] text-white hover:bg-[#1E293B] rounded-[99px] transition-all cursor-pointer shadow-md">
+                    Register
+                    <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M5 12h14"></path>
+                      <path d="M12 5l7 7-7 7"></path>
+                    </svg>
+                  </button>
                 </div>
 
-                {/* Desktop Center Welcome Text */}
-                {/* <div className="absolute left-1/2 transform -translate-x-1/2 hidden lg:block w-full max-w-4xl text-center">
-                  <span className="text-5xl lg:text-3xl font-bold text-gray-800 tracking-tight">
-                    Welcome to 𝐓𝐞𝐬𝐬𝐲𝐍𝐓𝐞𝐝
-                  </span>
-                </div> */}
-
-                <div className="sm:hidden flex items-center">
-                  <button onClick={() => setShowPublicMobileMenu(!showPublicMobileMenu)} className="p-2 rounded-xl text-black hover:bg-gray-100 transition-colors border border-gray-200 pointer-events-auto">
+                {/* Mobile Menu Button */}
+                <div className="lg:hidden flex items-center">
+                  <button onClick={() => setShowPublicMobileMenu(!showPublicMobileMenu)} className="p-2 rounded-xl text-black hover:bg-gray-100 transition-colors border border-gray-200 pointer-events-auto cursor-pointer">
                     <svg className={`w-5 h-5 transition-transform duration-300 ${showPublicMobileMenu ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       {showPublicMobileMenu ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /> : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />}
                     </svg>
@@ -562,16 +563,20 @@ export default function Navbar() {
           </nav>
 
           {showPublicMobileMenu && (
-            <div className="sm:hidden mt-3 max-w-7xl mx-auto bg-white/95 backdrop-blur-md border border-gray-200 shadow-2xl rounded-2xl overflow-hidden animate-in fade-in slide-in-from-top-4 duration-300 pointer-events-auto">
+            <div className="lg:hidden mt-2 max-w-7xl mx-auto bg-white/95 backdrop-blur-md border border-gray-200 shadow-2xl rounded-2xl overflow-hidden animate-in fade-in slide-in-from-top-4 duration-300 pointer-events-auto m-4">
               <div className="p-4 grid grid-cols-1 gap-2">
+                <button onClick={() => router.push('/')} className="w-full text-left flex items-center px-4 py-3 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 transition-all">Home</button>
+                <button onClick={() => router.push('/about')} className="w-full text-left flex items-center px-4 py-3 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 transition-all">About</button>
+                <button onClick={() => router.push('/properties/allProperties')} className="w-full text-left flex items-center px-4 py-3 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 transition-all">Properties</button>
+                <div className="h-px bg-gray-200 my-1"></div>
                 <button onClick={() => router.push('/register-landlord')} className="w-full text-left flex items-center px-4 py-3 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 transition-all">Become a Landlord</button>
                 <button onClick={() => router.push('/login')} className="w-full text-left flex items-center px-4 py-3 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 transition-all">Login</button>
-                <button onClick={() => router.push('/register')} className="w-full text-left flex items-center px-4 py-3 rounded-xl text-sm font-medium bg-black text-white shadow-md hover:bg-gray-900 transition-all">Register</button>
+                <button onClick={() => router.push('/register')} className="w-full text-left flex items-center px-4 py-3 rounded-xl text-sm font-medium bg-black text-white hover:bg-gray-900 transition-all">Register</button>
               </div>
             </div>
           )}
         </div>
-        <div className="h-18"></div>
+        <div className="h-16"></div>
         <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} initialMode={authMode} />
       </>
     )
@@ -580,258 +585,257 @@ export default function Navbar() {
   // --- Authenticated Navbar ---
   return (
     <>
-      <div ref={navRef} className="absolute top-4 left-0 right-0 z-50 px-4 md:px-6 pointer-events-none bg-[#F3F4F5]">
-        <nav className="max-w-6xl mx-auto bg-white/90 backdrop-blur-md border border-gray-200 shadow-xl rounded-full pointer-events-auto transition-all duration-300">
-          <div className="px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between items-center h-16">
+      <style dangerouslySetInnerHTML={{ __html: "@import url('https://fonts.googleapis.com/css2?family=Pacifico&display=swap');" }} />
+      <div ref={navRef} className="absolute top-0 left-0 right-0 z-50 pointer-events-none bg-white border-b border-gray-100">
+        <nav className="w-full max-w-[1800px] mx-auto pointer-events-auto transition-all duration-300 py-3 px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-10">
 
-              <div className="flex items-center gap-6 lg:gap-10">
-                <Link href="/dashboard" className="flex items-center gap-2 font-bold text-black hover:opacity-80 transition-opacity">
-                  <img src="/home.png" alt="EaseRent" className="w-8 h-8 object-contain" />
-                  <span className="hidden md:inline text-xl">Abalay</span>
-                </Link>
+            {/* Left Side: Logo */}
+            <div className="flex-1 flex items-center justify-start z-50">
+              <Link href="/dashboard" className="flex items-center gap-2.5 hover:opacity-80 transition-opacity">
+                <img src="/home.png" alt="Abalay" className="w-10 h-10 object-contain" />
+                <span className="text-[28px] text-black tracking-normal" style={{ fontFamily: '"Pacifico", cursive', marginTop: '-4px' }}>Abalay</span>
+              </Link>
+            </div>
 
-                <div className="hidden md:flex relative gap-1">
-                  <div className="absolute bottom-0 h-0.5 bg-black rounded-full" style={{ left: `${underlineStyle.left}px`, width: `${underlineStyle.width}px`, opacity: underlineStyle.width ? 1 : 0, transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)' }} />
+            {/* Center: Links */}
+            <div className="hidden md:flex relative flex-1 items-center justify-center gap-8">
+              <div className="absolute -bottom-4 h-[3px] bg-black rounded-t-full" style={{ left: `${underlineStyle.left}px`, width: `${underlineStyle.width}px`, opacity: underlineStyle.width ? 1 : 0, transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)' }} />
 
-                  <Link href="/dashboard" className={`nav-link px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive('/dashboard') ? 'active text-black' : 'text-gray-600 hover:text-black hover:bg-gray-200'}`}>Home</Link>
+              <Link href="/dashboard" className={`nav-link text-sm font-semibold transition-colors ${isActive('/dashboard') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}>Home</Link>
 
-                  {profile?.role === 'landlord' && (
-                    <>
-                      <Link href="/bookings" className={`nav-link px-3 py-2 text-sm font-medium rounded-md transition-colors relative group ${isActive('/bookings') ? 'active text-black' : 'text-gray-600 hover:text-black hover:bg-gray-200'} ${disabledClass}`}>
-                        Tenants Bookings
-                        {bookingCount > 0 && (
-                          <span className="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center border-2 border-white shadow-sm">
-                            {bookingCount > 9 ? '9+' : bookingCount}
-                          </span>
-                        )}
-                      </Link>
-                      <Link href="/maintenance" className={`nav-link px-3 py-2 text-sm font-medium rounded-md transition-colors relative group ${isActive('/maintenance') ? 'active text-black' : 'text-gray-600 hover:text-black hover:bg-gray-200'} ${disabledClass}`}>
-                        Tenants Maintenance
-                        {maintenanceCount > 0 && (
-                          <span className="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center border-2 border-white shadow-sm">
-                            {maintenanceCount > 9 ? '9+' : maintenanceCount}
-                          </span>
-                        )}
-                      </Link>
-                      <Link href="/properties/my-properties" className={`nav-link px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive('/properties/my-properties') ? 'active text-black' : 'text-gray-600 hover:text-black hover:bg-gray-200'} ${disabledClass}`}>My Properties</Link>
-                    </>
-                  )}
-
-                  {profile?.role === 'tenant' && (
-                    <>
-                      {/* <Link href="/applications" className={`nav-link px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive('/applications') ? 'active text-black' : 'text-gray-600 hover:text-black hover:bg-gray-200'} ${disabledClass}`}>My Inquiries</Link> */}
-                      <Link href="/bookings" className={`nav-link px-3 py-2 text-sm font-medium rounded-md transition-colors relative group ${isActive('/bookings') ? 'active text-black' : 'text-gray-600 hover:text-black hover:bg-gray-200'} ${disabledClass}`}>
-                        My Bookings
-                        {bookingCount > 0 && (
-                          <span className="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center border-2 border-white shadow-sm">
-                            {bookingCount > 9 ? '9+' : bookingCount}
-                          </span>
-                        )}
-                      </Link>
-                      <Link href="/maintenance" className={`nav-link px-3 py-2 text-sm font-medium rounded-md transition-colors relative group ${isActive('/maintenance') ? 'active text-black' : 'text-gray-600 hover:text-black hover:bg-gray-200'} ${disabledClass}`}>
-                        Maintenance
-                        {maintenanceCount > 0 && (
-                          <span className="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center border-2 border-white shadow-sm">
-                            {maintenanceCount > 9 ? '9+' : maintenanceCount}
-                          </span>
-                        )}
-                      </Link>
-                    </>
-                  )}
-
-                  <Link href="/messages" className={`nav-link px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive('/messages') ? 'active text-black' : 'text-gray-600 hover:text-black hover:bg-gray-200'} ${disabledClass}`}>Messages</Link>
-                </div>
-              </div>
-
-              <div className="absolute left-1/2 transform -translate-x-1/2 md:hidden pointer-events-none">
-                <span className="text-xl font-bold text-black">𝐓𝐞𝐬𝐬𝐲𝐍𝐓𝐞𝐝</span>
-              </div>
-
-              <div className="flex items-center gap-3">
-
-                {/* --- DESKTOP NOTIFICATIONS (FACEBOOK STYLE) --- */}
-                <div className={`relative hidden md:block ${disabledClass}`} ref={notifRef}>
-                  <button
-                    onClick={toggleNotifications}
-                    className={`relative p-2 rounded-full transition-all cursor-pointer ${showNotifDropdown || isActive('/notifications')
-                      ? 'bg-black text-white shadow-md'
-                      : 'text-gray-600 hover:bg-gray-100 hover:text-black'
-                      }`}
-                  >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-                    </svg>
-
-                    {unreadCount > 0 && (
-                      <span className="absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center border-2 border-white shadow-sm">
-                        {unreadCount > 9 ? '9+' : unreadCount}
+              {profile?.role === 'landlord' && (
+                <>
+                  <Link href="/bookings" className={`nav-link text-sm font-semibold transition-colors relative group ${isActive('/bookings') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
+                    Tenants Bookings
+                    {bookingCount > 0 && (
+                      <span className="absolute top-0 right-0 transform translate-x-3 -translate-y-2 bg-[#FF4B60] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center shadow-sm">
+                        {bookingCount > 9 ? '9+' : bookingCount}
                       </span>
                     )}
-                  </button>
+                  </Link>
+                  <Link href="/maintenance" className={`nav-link text-sm font-semibold transition-colors relative group ${isActive('/maintenance') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
+                    Maintenance
+                    {maintenanceCount > 0 && (
+                      <span className="absolute top-0 right-0 transform translate-x-3 -translate-y-2 bg-[#FF4B60] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center shadow-sm">
+                        {maintenanceCount > 9 ? '9+' : maintenanceCount}
+                      </span>
+                    )}
+                  </Link>
+                  <Link href="/payments" className={`nav-link text-sm font-semibold transition-colors ${isActive('/payments') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>Payments</Link>
+                </>
+              )}
 
-                  {/* Notification Dropdown */}
-                  {showNotifDropdown && (
-                    <div className="absolute right-0 mt-3 w-80 sm:w-96 bg-white/95 backdrop-blur-md border border-gray-100 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200 z-50">
-                      <div className="px-5 py-3 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
-                        <h3 className="font-bold text-black text-sm">Notifications</h3>
-                        <div className="flex items-center gap-3">
-                          {unreadCount > 0 && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                markAllAsRead();
-                              }}
-                              className="text-[10px] font-bold text-gray-500 hover:text-black cursor-pointer"
-                            >
-                              Read all
-                            </button>
-                          )}
+              {profile?.role === 'tenant' && (
+                <>
+                  <Link href="/bookings" className={`nav-link text-sm font-semibold transition-colors relative group ${isActive('/bookings') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
+                    My Bookings
+                    {bookingCount > 0 && (
+                      <span className="absolute top-0 right-0 transform translate-x-3 -translate-y-2 bg-[#FF4B60] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center shadow-sm">
+                        {bookingCount > 9 ? '9+' : bookingCount}
+                      </span>
+                    )}
+                  </Link>
+                  <Link href="/maintenance" className={`nav-link text-sm font-semibold transition-colors relative group ${isActive('/maintenance') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
+                    Maintenance
+                    {maintenanceCount > 0 && (
+                      <span className="absolute top-0 right-0 transform translate-x-3 -translate-y-2 bg-[#FF4B60] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center shadow-sm">
+                        {maintenanceCount > 9 ? '9+' : maintenanceCount}
+                      </span>
+                    )}
+                  </Link>
+                  <Link href="/payments" className={`nav-link text-sm font-semibold transition-colors ${isActive('/payments') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>Payments</Link>
+                </>
+              )}
+            </div>
+
+            {/* Mobile Center Logo (Clickable) - Removed since moved to left plane */}
+
+            <div className="flex-1 flex items-center justify-end gap-3 lg:gap-5 z-50">
+
+              {/* Message Icon */}
+              <Link href="/messages" className={`hidden md:flex p-1.5 rounded-full items-center justify-center transition-colors relative ${isActive('/messages') ? 'active bg-gray-300 text-gray-900' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'} ${disabledClass}`}>
+                <svg className="w-[22px] h-[22px]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+              </Link>
+
+              {/* --- DESKTOP NOTIFICATIONS (FACEBOOK STYLE) --- */}
+              <div className={`relative hidden md:block ${disabledClass}`} ref={notifRef}>
+                <button
+                  onClick={toggleNotifications}
+                  className={`relative p-1.5 rounded-full transition-colors cursor-pointer ${showNotifDropdown || isActive('/notifications')
+                    ? 'bg-gray-300 text-gray-900'
+                    : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'
+                    }`}
+                >
+                  <svg className="w-[22px] h-[22px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                  </svg>
+
+                  {unreadCount > 0 && (
+                    <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-[#FF4B60] rounded-full border-2 border-white"></span>
+                  )}
+                </button>
+
+                {/* Notification Dropdown */}
+                {showNotifDropdown && (
+                  <div className="absolute right-0 mt-3 w-80 sm:w-96 bg-white/95 backdrop-blur-md border border-gray-100 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200 z-50">
+                    <div className="px-5 py-3 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+                      <h3 className="font-bold text-black text-sm">Notifications</h3>
+                      <div className="flex items-center gap-3">
+                        {unreadCount > 0 && (
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              markAllAsUnread();
+                              markAllAsRead();
                             }}
                             className="text-[10px] font-bold text-gray-500 hover:text-black cursor-pointer"
                           >
-                            Unread all
+                            Read all
                           </button>
-                          <div className="w-px h-3 bg-gray-300"></div>
-                          <Link href="/notifications" onClick={() => setShowNotifDropdown(false)} className="text-xs font-semibold text-blue-600 hover:text-blue-700">View All</Link>
-                        </div>
+                        )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            markAllAsUnread();
+                          }}
+                          className="text-[10px] font-bold text-gray-500 hover:text-black cursor-pointer"
+                        >
+                          Unread all
+                        </button>
+                        <div className="w-px h-3 bg-gray-300"></div>
+                        <Link href="/notifications" onClick={() => setShowNotifDropdown(false)} className="text-xs font-semibold text-blue-600 hover:text-blue-700">View All</Link>
                       </div>
+                    </div>
 
-                      <div className="max-h-[80vh] overflow-y-auto">
-                        {notifications.length === 0 ? (
-                          <div className="p-8 text-center">
-                            <p className="text-sm text-gray-500">No new notifications</p>
-                          </div>
-                        ) : (
-                          notifications.map((notif) => (
-                            <div
-                              key={notif.id}
-                              onClick={() => handleNotificationClick(notif)}
-                              className={`group px-4 py-3 border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors ${!notif.read ? 'bg-blue-50/30' : ''}`}
-                            >
-                              <div className="flex gap-3">
-                                <div className="flex-shrink-0 mt-1">
-                                  <div className={`w-2 h-2 rounded-full ${!notif.read ? 'bg-blue-500' : 'bg-gray-300'}`}></div>
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <p className={`text-sm ${!notif.read ? 'font-semibold text-black' : 'text-gray-600'}`}>{notif.message}</p>
-                                  <p className="text-xs text-gray-400 mt-1">
-                                    {new Date(notif.created_at).toLocaleDateString()} • {new Date(notif.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                  </p>
-                                </div>
-                                {/* Action Icons */}
-                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <button
-                                    onClick={(e) => toggleNotifReadStatus(e, notif)}
-                                    className="p-1.5 text-gray-400 hover:text-black hover:bg-gray-100 rounded-lg cursor-pointer"
-                                    title={notif.read ? 'Mark as unread' : 'Mark as read'}
-                                  >
-                                    {notif.read ? (
-                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
-                                    ) : (
-                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                                    )}
-                                  </button>
-                                  <button
-                                    onClick={(e) => deleteNotifFromDropdown(e, notif.id)}
-                                    className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg cursor-pointer"
-                                    title="Delete"
-                                  >
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                  </button>
-                                </div>
+                    <div className="max-h-[80vh] overflow-y-auto">
+                      {notifications.length === 0 ? (
+                        <div className="p-8 text-center">
+                          <p className="text-sm text-gray-500">No new notifications</p>
+                        </div>
+                      ) : (
+                        notifications.map((notif) => (
+                          <div
+                            key={notif.id}
+                            onClick={() => handleNotificationClick(notif)}
+                            className={`group px-4 py-3 border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors ${!notif.read ? 'bg-blue-50/30' : ''}`}
+                          >
+                            <div className="flex gap-3">
+                              <div className="flex-shrink-0 mt-1">
+                                <div className={`w-2 h-2 rounded-full ${!notif.read ? 'bg-blue-500' : 'bg-gray-300'}`}></div>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className={`text-sm ${!notif.read ? 'font-semibold text-black' : 'text-gray-600'}`}>{notif.message}</p>
+                                <p className="text-xs text-gray-400 mt-1">
+                                  {new Date(notif.created_at).toLocaleDateString()} • {new Date(notif.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </p>
+                              </div>
+                              {/* Action Icons */}
+                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  onClick={(e) => toggleNotifReadStatus(e, notif)}
+                                  className="p-1.5 text-gray-400 hover:text-black hover:bg-gray-100 rounded-lg cursor-pointer"
+                                  title={notif.read ? 'Mark as unread' : 'Mark as read'}
+                                >
+                                  {notif.read ? (
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                                  ) : (
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                  )}
+                                </button>
+                                <button
+                                  onClick={(e) => deleteNotifFromDropdown(e, notif.id)}
+                                  className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg cursor-pointer"
+                                  title="Delete"
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                </button>
                               </div>
                             </div>
-                          ))
-                        )}
-                      </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
 
-                      <Link
-                        href="/notifications"
-                        onClick={() => setShowNotifDropdown(false)}
-                        className="block py-2.5 text-center text-xs font-semibold text-gray-500 hover:bg-gray-50 border-t border-gray-100"
-                      >
-                        See previous notifications
-                      </Link>
+                    <Link
+                      href="/notifications"
+                      onClick={() => setShowNotifDropdown(false)}
+                      className="block py-2.5 text-center text-xs font-semibold text-gray-500 hover:bg-gray-50 border-t border-gray-100"
+                    >
+                      See previous notifications
+                    </Link>
+                  </div>
+                )}
+              </div>
+
+              {/* Mobile Menu Button */}
+              <button onClick={() => setShowMobileMenu(!showMobileMenu)} className="md:hidden p-2 rounded-xl text-black hover:bg-gray-100 transition-colors border border-gray-200">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 bg-black text-white rounded-md flex items-center justify-center text-xs font-bold">
+                    {profile?.first_name?.charAt(0).toUpperCase() || 'U'}
+                  </div>
+                  <svg className={`w-5 h-5 transition-transform duration-300 ${showMobileMenu ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    {showMobileMenu ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /> : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />}
+                  </svg>
+                </div>
+              </button>
+
+              {/* Desktop User Dropdown */}
+              <div className="hidden md:block relative">
+                <button
+                  onClick={() => { setShowDropdown(!showDropdown); setShowNotifDropdown(false) }}
+                  className={`flex items-center gap-2 transition-colors group cursor-pointer focus:outline-none ml-2 py-1 pl-1 pr-3 rounded-full border border-transparent ${showDropdown ? 'bg-gray-300' : 'hover:bg-gray-100 hover:border-gray-200'}`}
+                >
+                  {profile?.avatar_url ? (
+                    <img src={profile.avatar_url} alt="Profile" className="w-[34px] h-[34px] rounded-full object-cover border border-gray-200" />
+                  ) : (
+                    <div className="w-[34px] h-[34px] bg-[#E17A20] text-white rounded-full flex items-center justify-center font-bold text-sm shadow-sm overflow-hidden relative">
+                      <img src="/avatar-placeholder.png" onError={(e) => { e.target.style.display = 'none' }} className="absolute inset-0 w-full h-full object-cover" />
+                      <span className="relative z-10">{profile?.first_name?.charAt(0).toUpperCase() || 'U'}</span>
                     </div>
                   )}
-                </div>
-
-                {/* Mobile Menu Button */}
-                <button onClick={() => setShowMobileMenu(!showMobileMenu)} className="md:hidden p-2 rounded-xl text-black hover:bg-gray-100 transition-colors border border-gray-200">
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 bg-black text-white rounded-md flex items-center justify-center text-xs font-bold">
-                      {profile?.first_name?.charAt(0).toUpperCase() || 'U'}
-                    </div>
-                    <svg className={`w-5 h-5 transition-transform duration-300 ${showMobileMenu ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      {showMobileMenu ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /> : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />}
-                    </svg>
-                  </div>
+                  <span className={`text-[14px] font-semibold md:hidden lg:block ${showDropdown ? 'text-gray-900' : 'text-gray-800'}`}>{profile?.first_name} {profile?.last_name}</span>
                 </button>
 
-                {/* Desktop User Dropdown */}
-                <div className="hidden md:block relative">
-                  <button onClick={() => { setShowDropdown(!showDropdown); setShowNotifDropdown(false) }} className="flex items-center gap-3 pl-2 pr-3 py-1.5 bg-white border border-gray-200 hover:border-black rounded-full shadow-sm hover:shadow transition-all group cursor-pointer">
-                    {profile?.avatar_url ? (
-                      <img src={profile.avatar_url} alt="Profile" className="w-8 h-8 rounded-full object-cover border border-gray-200" />
-                    ) : (
-                      <div className="w-8 h-8 bg-black text-white rounded-full flex items-center justify-center font-bold text-sm group-hover:bg-gray-800 transition-colors">
-                        {profile?.first_name?.charAt(0).toUpperCase() || 'U'}
-                      </div>
-                    )}
-                    <span className="text-sm font-medium text-gray-700 group-hover:text-black hidden lg:block">{profile?.first_name}</span>
-                    <svg className={`w-4 h-4 text-gray-500 transition-transform duration-300 ${showDropdown ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-
-                  {showDropdown && (
-                    <div className="absolute right-0 mt-3 w-64 bg-white/95 backdrop-blur-md border border-gray-100 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200 z-50">
-                      <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
-                        <div className="font-bold text-black text-base">{profile?.first_name} {profile?.last_name}</div>
-                        <div className="text-xs text-gray-500 mt-0.5 truncate">{session?.user?.email}</div>
-                        <div className="mt-2">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold ${profile?.role === 'landlord' ? 'bg-black text-white' : 'bg-blue-50 text-blue-700 border border-blue-100'}`}>
-                            {profile?.role === 'landlord' ? 'Landlord' : 'Tenant'}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="p-2 space-y-1">
-                        {profile?.role === 'landlord' && (
-                          <>
-                            <Link href="/properties/allProperties" onClick={() => setShowDropdown(false)} className="flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100 rounded-xl transition-colors">
-                              <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg> All Properties
-                            </Link>
-                            <Link href="/properties/my-properties" onClick={() => setShowDropdown(false)} className="flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100 rounded-xl transition-colors">
-                              <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg> My Properties
-                            </Link>
-                            <Link href="/schedule" onClick={() => setShowDropdown(false)} className="flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100 rounded-xl transition-colors">
-                              <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg> Schedule
-                            </Link>
-                          </>
-                        )}
-                        <Link href="/payments" onClick={() => setShowDropdown(false)} className="flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100 rounded-xl transition-colors">
-                          <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg> Payments
-                        </Link>
-                        <div className="h-px bg-gray-100 my-1"></div>
-                        <Link href="/settings" onClick={() => setShowDropdown(false)} className="flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100 rounded-xl transition-colors">
-                          <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg> Account Settings
-                        </Link>
-                        <Link href="/contact" onClick={() => setShowDropdown(false)} className="flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100 rounded-xl transition-colors">
-                          <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" /></svg> Emergency Contacts
-                        </Link>
-                        <button onClick={() => { setShowDropdown(false); handleSignOut() }} className="flex items-center gap-3 px-3 py-2.5 text-sm text-red-600 hover:bg-red-50 rounded-xl w-full text-left transition-colors mt-1 cursor-pointer">
-                          <svg className="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg> Log Out
-                        </button>
+                {showDropdown && (
+                  <div className="absolute right-0 mt-3 w-64 bg-white/95 backdrop-blur-md border border-gray-100 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200 z-50">
+                    <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
+                      <div className="font-bold text-black text-base">{profile?.first_name} {profile?.last_name}</div>
+                      <div className="text-xs text-gray-500 mt-0.5 truncate">{session?.user?.email}</div>
+                      <div className="mt-2">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold ${profile?.role === 'landlord' ? 'bg-black text-white' : 'bg-blue-50 text-blue-700 border border-blue-100'}`}>
+                          {profile?.role === 'landlord' ? 'Landlord' : 'Tenant'}
+                        </span>
                       </div>
                     </div>
-                  )}
-                </div>
+
+                    <div className="p-2 space-y-1">
+                      {profile?.role === 'landlord' && (
+                        <>
+                          <Link href="/properties/allProperties" onClick={() => setShowDropdown(false)} className="flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100 rounded-xl transition-colors">
+                            <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg> All Properties
+                          </Link>
+                          <Link href="/properties/my-properties" onClick={() => setShowDropdown(false)} className="flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100 rounded-xl transition-colors">
+                            <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg> My Properties
+                          </Link>
+                          <Link href="/schedule" onClick={() => setShowDropdown(false)} className="flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100 rounded-xl transition-colors">
+                            <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg> Schedule
+                          </Link>
+                        </>
+                      )}
+
+                      <div className="h-px bg-gray-100 my-1"></div>
+                      <Link href="/settings" onClick={() => setShowDropdown(false)} className="flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100 rounded-xl transition-colors">
+                        <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg> Account Settings
+                      </Link>
+                      <Link href="/contact" onClick={() => setShowDropdown(false)} className="flex items-center gap-3 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-100 rounded-xl transition-colors">
+                        <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" /></svg> Emergency Contacts
+                      </Link>
+                      <button onClick={() => { setShowDropdown(false); handleSignOut() }} className="flex items-center gap-3 px-3 py-2.5 text-sm text-red-600 hover:bg-red-50 rounded-xl w-full text-left transition-colors mt-1 cursor-pointer">
+                        <svg className="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg> Log Out
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -912,10 +916,11 @@ export default function Navbar() {
               </button>
             </div>
           </div>
-        )}
-      </div>
+        )
+        }
+      </div >
 
-      <div className="h-24 bg-[#F3F4F5]"></div>
+      <div className="h-16 bg-transparent"></div>
       <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} initialMode={authMode} />
     </>
   )

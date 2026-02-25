@@ -219,58 +219,60 @@ export default function PropertyDetail() {
     return `https://www.google.com/maps?q=${encodeURIComponent(address)}&z=17&output=embed`
   }
 
-  // Initialize Leaflet map for property location
+  // Initialize Maplibre GL map for property location
   useEffect(() => {
     if (typeof window === 'undefined' || !property || locationMapInstance.current) return
 
     const initMap = () => {
       if (!locationMapRef.current || locationMapInstance.current) return
 
-      import('leaflet').then((L) => {
-        if (!locationMapRef.current || locationMapInstance.current || locationMapRef.current._leaflet_id) return
+      import('maplibre-gl').then((mlglModule) => {
+        const mlgl = mlglModule.default || mlglModule;
+        import('maplibre-gl/dist/maplibre-gl.css').catch(() => { });
 
-        delete L.Icon.Default.prototype._getIconUrl
-        L.Icon.Default.mergeOptions({
-          iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
-          iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-          shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-        })
+        if (!locationMapRef.current || locationMapInstance.current) return
 
         const coords = extractCoordinates(property?.location_link)
         const lat = coords ? parseFloat(coords.lat) : 10.3157
         const lng = coords ? parseFloat(coords.lng) : 123.8854
 
-        const map = L.map(locationMapRef.current, {
-          zoomControl: true,
-          scrollWheelZoom: true,
-          dragging: true,
-          touchZoom: true,
-        }).setView([lat, lng], 16)
-
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '© OpenStreetMap contributors'
-        }).addTo(map)
-
-        const redIcon = new L.Icon({
-          iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
-          shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-          iconSize: [25, 41],
-          iconAnchor: [12, 41],
-          popupAnchor: [1, -34],
-          shadowSize: [41, 41]
+        const map = new mlgl.Map({
+          container: locationMapRef.current,
+          style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+          center: [lng, lat],
+          zoom: 15,
+          dragPan: true,
+          scrollZoom: true,
+          attributionControl: false
         })
 
-        L.marker([lat, lng], { icon: redIcon })
+        map.addControl(new mlgl.NavigationControl({ showCompass: false }), 'top-right')
+
+        const el = document.createElement('div')
+        el.innerHTML = `
+          <div class="relative w-12 h-12">
+              <div class="absolute bottom-0 left-1/2 -translate-x-1/2 w-8 h-8 flex items-center justify-center">
+                   <div class="w-3 h-1 bg-black/20 blur-[2px] rounded-full absolute bottom-0.5"></div>
+                   <svg class="w-8 h-8 text-rose-600 filter drop-shadow-md z-10" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                      <circle cx="12" cy="9" r="2.5" class="text-white" fill="currentColor" />
+                   </svg>
+              </div>
+          </div>
+        `
+
+        // Add property marker
+        new mlgl.Marker({ element: el.firstElementChild, anchor: 'bottom' })
+          .setLngLat([lng, lat])
+          .setPopup(new mlgl.Popup({ offset: 25 }).setHTML(`<b>${property.title || 'Property Location'}</b>`))
           .addTo(map)
-          .bindPopup(`<b>${property.title || 'Property Location'}</b>`)
-          .openPopup()
+          .togglePopup()
 
         locationMapInstance.current = map
         setMapLoading(false)
 
-        // Fix map rendering in containers that may not be visible initially
-        setTimeout(() => map.invalidateSize(), 300)
-      }).catch(err => console.error('Failed to load Leaflet for location map', err))
+        setTimeout(() => map.resize(), 300)
+      }).catch(err => console.error('Failed to load Maplibre for location map', err))
     }
 
     // Small delay to ensure DOM is ready
@@ -351,41 +353,57 @@ export default function PropertyDetail() {
 
       if (data.code === 'Ok' && data.routes.length > 0) {
         const route = data.routes[0]
-        const routeCoords = route.geometry.coordinates.map(c => [c[1], c[0]])
+        const routeCoords = route.geometry.coordinates; // Maplibre takes [lng, lat]
         const distance = (route.distance / 1000).toFixed(1)
         const duration = formatDuration(route.duration)
 
         setLocationRouteInfo({ distance, duration })
 
-        import('leaflet').then((L) => {
+        import('maplibre-gl').then((mlglModule) => {
+          const mlgl = mlglModule.default || mlglModule;
+
+          const map = locationMapInstance.current;
+
           // Clear old route lines
-          locationRouteLines.current.forEach(line => { if (line && line.remove) line.remove() })
-          locationRouteLines.current = []
+          if (map.getLayer('route-line')) map.removeLayer('route-line');
+          if (map.getSource('route-source')) map.removeSource('route-source');
 
           // Clear old user marker
           if (locationUserMarker.current) { locationUserMarker.current.remove(); locationUserMarker.current = null }
 
           // Draw route
-          const polyline = L.polyline(routeCoords, {
-            color: '#111827',
-            weight: 5,
-            opacity: 0.9,
-            lineJoin: 'round'
-          }).addTo(locationMapInstance.current)
-          locationRouteLines.current.push(polyline)
+          map.addSource('route-source', {
+            type: 'geojson',
+            data: {
+              type: 'Feature',
+              properties: {},
+              geometry: route.geometry
+            }
+          });
+          map.addLayer({
+            id: 'route-line',
+            type: 'line',
+            source: 'route-source',
+            layout: { 'line-join': 'round', 'line-cap': 'round' },
+            paint: { 'line-color': '#111827', 'line-width': 5, 'line-opacity': 0.9 }
+          });
 
           // Add user marker (blue dot)
-          const blueIcon = L.divIcon({
-            className: '',
-            html: `<div class="w-4 h-4 bg-blue-600 border-[3px] border-white rounded-full shadow-lg"></div>`,
-            iconSize: [16, 16],
-            iconAnchor: [8, 8]
-          })
-          const userMk = L.marker([fromLat, fromLng], { icon: blueIcon }).addTo(locationMapInstance.current)
+          const el = document.createElement('div')
+          el.innerHTML = `<div class="w-4 h-4 bg-blue-600 border-[3px] border-white rounded-full shadow-lg"></div>`
+
+          const userMk = new mlgl.Marker({ element: el })
+            .setLngLat([fromLng, fromLat])
+            .addTo(map)
+
           locationUserMarker.current = userMk
 
           // Fit bounds to show full route
-          locationMapInstance.current.fitBounds(polyline.getBounds(), { padding: [40, 40] })
+          const bounds = routeCoords.reduce(function (bounds, coord) {
+            return bounds.extend(coord);
+          }, new mlgl.LngLatBounds(routeCoords[0], routeCoords[0]));
+
+          map.fitBounds(bounds, { padding: 40 })
         })
       } else {
         setLocationRouteInfo(null)
@@ -398,8 +416,10 @@ export default function PropertyDetail() {
   }
 
   const clearLocationRoute = () => {
-    locationRouteLines.current.forEach(line => { if (line && line.remove) line.remove() })
-    locationRouteLines.current = []
+    if (locationMapInstance.current) {
+      if (locationMapInstance.current.getLayer('route-line')) locationMapInstance.current.removeLayer('route-line');
+      if (locationMapInstance.current.getSource('route-source')) locationMapInstance.current.removeSource('route-source');
+    }
     if (locationUserMarker.current) { locationUserMarker.current.remove(); locationUserMarker.current = null }
     setLocationFromAddress('')
     setLocationRouteInfo(null)
@@ -410,7 +430,7 @@ export default function PropertyDetail() {
       const coords = extractCoordinates(property?.location_link)
       const lat = coords ? parseFloat(coords.lat) : 10.3157
       const lng = coords ? parseFloat(coords.lng) : 123.8854
-      locationMapInstance.current.setView([lat, lng], 16, { animate: true })
+      locationMapInstance.current.flyTo({ center: [lng, lat], zoom: 15 })
     }
   }
 
@@ -624,7 +644,6 @@ export default function PropertyDetail() {
   return (
     <>
       <Head>
-        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossOrigin="" />
       </Head>
       <div className="min-h-[calc(100vh-64px)] bg-[#F3F4F5] px-4 pt-4 pb-0 font-sans">
         <div className="max-w-6xl mx-auto">
