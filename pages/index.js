@@ -516,7 +516,6 @@ export default function Home() {
           <img src="/home.png" alt="Abalay" className="splash-logo" />
           <div className="splash-brand">Abalay</div>
           <div className="splash-tagline">Find your perfect home</div>
-          <div className="splash-bar"></div>
         </div>
       )}
 

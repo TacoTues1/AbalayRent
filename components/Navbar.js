@@ -507,9 +507,9 @@ export default function Navbar() {
 
               {/* Left Side: Logo */}
               <div className="flex-1 flex items-center justify-start z-50">
-                <Link href="/" className="hidden lg:flex items-center gap-2.5 hover:opacity-80 transition-opacity">
-                  <img src="/home.png" alt="Abalay" className="w-10 h-10 object-contain" />
-                  <span className="text-[28px] text-black tracking-normal leading-none" style={{ fontFamily: '"Pacifico", cursive', marginTop: '-4px' }}>Abalay</span>
+                <Link href="/" className="flex items-center gap-2 lg:gap-2.5 hover:opacity-80 transition-opacity">
+                  <img src="/home.png" alt="Abalay" className="w-8 h-8 lg:w-10 lg:h-10 object-contain" />
+                  <span className="text-[22px] lg:text-[28px] text-black tracking-normal leading-none" style={{ fontFamily: '"Pacifico", cursive', marginTop: '-4px' }}>Abalay</span>
                 </Link>
               </div>
 
@@ -522,13 +522,7 @@ export default function Navbar() {
                 <Link href="/properties/allProperties" className={`nav-link text-sm font-semibold transition-colors ${isActive('/properties/allProperties') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}>Properties</Link>
               </div>
 
-              {/* Mobile Center Logo (Clickable) */}
-              <div className="absolute left-1/2 transform -translate-x-1/2 lg:hidden z-50 mt-1">
-                <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-                  <img src="/home.png" alt="Abalay" className="w-8 h-8 object-contain" />
-                  <span className="text-[22px] text-black tracking-normal" style={{ fontFamily: '"Pacifico", cursive', marginTop: '-2px' }}>Abalay</span>
-                </Link>
-              </div>
+
 
               {/* Right Side Sections */}
               <div className="flex-1 flex items-center justify-end gap-3 pointer-events-auto z-50">
@@ -540,7 +534,7 @@ export default function Navbar() {
 
                   <div className="w-px h-7 bg-gray-200"></div>
 
-                  <button onClick={() => router.push('/login')} className="text-[16px] font-medium text-[#64748B] hover:text-[#0F172A] transition-colors cursor-pointer px-2">Log in</button>
+                  <button onClick={() => router.push('/login')} className="text-[16px] font-medium text-[#64748B] hover:text-[#0F172A] transition-colors cursor-pointer px-2 whitespace-nowrap">Log in</button>
                   <button onClick={() => router.push('/register')} className="px-6 py-3 flex items-center gap-2 text-[15px] font-medium bg-[#0F172A] text-white hover:bg-[#1E293B] rounded-[99px] transition-all cursor-pointer shadow-md">
                     Register
                     <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

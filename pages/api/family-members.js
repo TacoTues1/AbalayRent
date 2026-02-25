@@ -171,6 +171,25 @@ export default async function handler(req, res) {
             return res.status(200).json({ results: filtered })
         }
 
+        // ─── LOOKUP MEMBERS (for identifying family request origins) ───
+        if (action === 'lookup_members') {
+            const { member_ids } = req.body
+            if (!member_ids || !member_ids.length) return res.status(200).json({ membersMap: {} })
+
+            const { data: fmData } = await supabaseAdmin
+                .from('family_members')
+                .select('member_id, parent_occupancy:tenant_occupancies!family_members_parent_occupancy_id_fkey(tenant:profiles!tenant_occupancies_tenant_id_fkey(first_name, last_name))')
+                .in('member_id', member_ids)
+
+            const map = {}
+            if (fmData) {
+                fmData.forEach(f => {
+                    map[f.member_id] = f.parent_occupancy?.tenant
+                })
+            }
+            return res.status(200).json({ membersMap: map })
+        }
+
         // ─── ADD FAMILY MEMBER ───
         if (action === 'add') {
             const { parent_occupancy_id, member_id, mother_id } = req.body

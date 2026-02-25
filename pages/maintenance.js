@@ -86,7 +86,34 @@ export default function MaintenancePage() {
       .order('created_at', { ascending: false })
 
     if (profile?.role === 'tenant') {
-      query = query.eq('tenant', session.user.id)
+      let tenantIds = [session.user.id]
+
+      const { data: myOcc } = await supabase
+        .from('tenant_occupancies')
+        .select('id, is_family_member')
+        .eq('tenant_id', session.user.id)
+        .eq('status', 'active')
+        .maybeSingle()
+
+      if (myOcc && !myOcc.is_family_member) {
+        const { data: fms } = await supabase
+          .from('family_members')
+          .select('member_id')
+          .eq('parent_occupancy_id', myOcc.id)
+        if (fms) {
+          tenantIds = [...tenantIds, ...fms.map(f => f.member_id)]
+        }
+      } else if (!myOcc) {
+        try {
+          const res = await fetch(`/api/family-members?member_id=${session.user.id}`)
+          const fmData = await res.json()
+          if (fmData && fmData.occupancy) {
+            tenantIds = [session.user.id] // family member fetches their own
+          }
+        } catch (e) { console.error('Error fetching family member requests', e) }
+      }
+
+      query = query.in('tenant', tenantIds)
     } else if (profile?.role === 'landlord') {
       const { data: myProps } = await supabase
         .from('properties')
@@ -104,7 +131,31 @@ export default function MaintenancePage() {
     }
 
     const { data } = await query
-    setRequests(data || [])
+
+    if (data && data.length > 0) {
+      const tenantIdsInRequests = [...new Set(data.map(r => r.tenant))]
+      let fmMap = {}
+
+      try {
+        const res = await fetch('/api/family-members', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'lookup_members', member_ids: tenantIdsInRequests })
+        })
+        const fData = await res.json()
+        fmMap = fData.membersMap || {}
+      } catch (e) { console.error('Error fetching members lookup', e) }
+
+      const enrichedRequests = data.map(req => ({
+        ...req,
+        is_family_member: !!fmMap[req.tenant],
+        primary_tenant_name: fmMap[req.tenant] ? `${fmMap[req.tenant].first_name} ${fmMap[req.tenant].last_name}` : null
+      }))
+
+      setRequests(enrichedRequests)
+    } else {
+      setRequests([])
+    }
     setLoading(false)
   }
 
@@ -117,10 +168,24 @@ export default function MaintenancePage() {
         .eq('status', 'active')
         .maybeSingle()
 
+      let prop = null
+
       if (occupancy && occupancy.property) {
-        setOccupiedProperty(occupancy.property)
-        setProperties([occupancy.property])
-        setFormData(prev => ({ ...prev, property_id: occupancy.property.id }))
+        prop = occupancy.property
+      } else {
+        try {
+          const res = await fetch(`/api/family-members?member_id=${session.user.id}`)
+          const fmData = await res.json()
+          if (fmData && fmData.occupancy && fmData.occupancy.property) {
+            prop = fmData.occupancy.property
+          }
+        } catch (e) { console.error('Error fetching family properties', e) }
+      }
+
+      if (prop) {
+        setOccupiedProperty(prop)
+        setProperties([prop])
+        setFormData(prev => ({ ...prev, property_id: prop.id }))
       } else {
         const { data: acceptedApps } = await supabase
           .from('applications')
@@ -655,9 +720,21 @@ export default function MaintenancePage() {
                           {req.properties?.title}
                         </span>
                         {profile?.role === 'landlord' && req.tenant_profile && (
-                          <span className="flex items-center gap-1">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-                            {req.tenant_profile.first_name} {req.tenant_profile.last_name}
+                          <span className="flex items-center gap-1 flex-wrap">
+                            <span className="flex items-center gap-1 text-gray-700">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                              {req.tenant_profile.first_name} {req.tenant_profile.last_name}
+                            </span>
+                            {req.is_family_member && (
+                              <span className="ml-0 sm:ml-1 px-2 py-0.5 bg-purple-50 text-purple-700 text-[10px] rounded border border-purple-200 uppercase font-bold">
+                                Family of {req.primary_tenant_name}
+                              </span>
+                            )}
+                          </span>
+                        )}
+                        {profile?.role === 'tenant' && req.tenant !== session?.user?.id && req.tenant_profile && (
+                          <span className="flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 text-[10px] rounded border border-blue-200 uppercase font-bold">
+                            {req.tenant_profile.first_name}'s Request
                           </span>
                         )}
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${req.priority === 'high' ? 'bg-red-50 text-red-700 border-red-100' :
@@ -829,7 +906,7 @@ export default function MaintenancePage() {
                 <div className="p-8 text-center bg-yellow-50 rounded-xl border border-yellow-100">
                   <h3 className="text-lg font-bold text-yellow-800 mb-2">No Active Lease</h3>
                   <p className="text-sm text-yellow-700 mb-4">You can only submit requests for properties you are currently renting.</p>
-                  <button onClick={() => router.push('/applications')} className="px-6 py-2 bg-black text-white rounded-lg font-bold text-sm cursor-pointer">View Applications</button>
+                  <button onClick={() => router.push('/dashboard')} className="px-6 py-2 bg-black text-white rounded-lg font-bold text-sm cursor-pointer">View Dashboard</button>
                 </div>
               ) : (
                 <form onSubmit={handleSubmit} className="space-y-5">
