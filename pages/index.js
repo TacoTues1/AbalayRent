@@ -519,7 +519,7 @@ export default function Home() {
         </div>
       )}
 
-      <div className="max-w-[1800px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-1">
+      <div className="flex-1 max-w-[1800px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-1">
 
         {/* All Properties Section - Fixed height container to prevent layout shift */}
         <div className="mb-2 pt-5">

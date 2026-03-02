@@ -84,7 +84,7 @@ async function getFamilyMembersForNotification(tenantId, propertyId) {
         }
 
         for (const fm of familyMembers) {
-            if (fm.member_id === tenantId) continue // Skip the tenant who already got notified
+            if (fm.member_id === tenantId) continue
             let memberEmail = null
             try {
                 const { data: userData } = await supabaseAdmin.auth.admin.getUserById(fm.member_id)
@@ -117,7 +117,6 @@ async function notifyFamilyMembers({ tenantId, propertyId, smsFn, emailFn }) {
             if (phone) {
                 try {
                     await smsFn(phone, member)
-                    console.log(`✅ Family SMS sent to ${phone} (${member.name})`)
                 } catch (err) {
                     console.error(`Family SMS failed for ${phone}:`, err.message)
                 }
@@ -127,7 +126,6 @@ async function notifyFamilyMembers({ tenantId, propertyId, smsFn, emailFn }) {
         if (emailFn && member.email) {
             try {
                 await emailFn(member.email, member)
-                console.log(`✅ Family email sent to ${member.email} (${member.name})`)
             } catch (err) {
                 console.error(`Family email failed for ${member.email}:`, err.message)
             }

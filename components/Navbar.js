@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { supabase } from '../lib/supabaseClient'
 import AuthModal from './AuthModal'
 import { showToast } from 'nextjs-toast-notify'
+import { goeyToast } from 'goey-toast'
 
 
 export default function Navbar() {
@@ -455,11 +456,11 @@ export default function Navbar() {
         })
       }
 
-      showToast.success("Signed out successfully", {
+      showToast.error("Sign out Successfully!", {
         duration: 4000,
         progress: true,
         position: "top-center",
-        transition: "bounceIn",
+        transition: "bounceInDown",
         icon: '',
         sound: true,
       });

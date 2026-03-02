@@ -68,6 +68,14 @@ export default function LandlordDashboard({ session, profile }) {
   const [endContractDate, setEndContractDate] = useState('')
   const [endContractReason, setEndContractReason] = useState('')
 
+  // Family Modal State
+  const [familyModal, setFamilyModal] = useState({
+    isOpen: false,
+    occupancy: null,
+    members: [],
+    loading: false
+  })
+
   // Renewal Confirmation Modal State
   const [renewalModal, setRenewalModal] = useState({
     isOpen: false,
@@ -853,7 +861,7 @@ export default function LandlordDashboard({ session, profile }) {
   }
 
   async function loadOccupancies() {
-    const { data } = await supabase.from('tenant_occupancies').select(`*, tenant:profiles!tenant_occupancies_tenant_id_fkey(id, first_name, middle_name, last_name, phone), property:properties(id, title, images, price)`).eq('landlord_id', session.user.id).eq('status', 'active')
+    const { data } = await supabase.from('tenant_occupancies').select(`*, tenant:profiles!tenant_occupancies_tenant_id_fkey(id, first_name, middle_name, last_name, email, phone, avatar_url), property:properties(id, title, images, price)`).eq('landlord_id', session.user.id).eq('status', 'active')
     setOccupancies(data || [])
   }
 
@@ -1232,6 +1240,28 @@ export default function LandlordDashboard({ session, profile }) {
     setEndContractReason('')
   }
 
+  async function openFamilyModal(occupancy) {
+    setFamilyModal({ isOpen: true, occupancy, members: [], loading: true })
+    try {
+      const res = await fetch(`/api/family-members?occupancy_id=${occupancy.id}`)
+      const data = await res.json()
+      if (res.ok) {
+        setFamilyModal(prev => ({ ...prev, members: data.members || [], loading: false }))
+      } else {
+        showToast.error(data.error || 'Failed to load family members', { duration: 3000, transition: "bounceIn" })
+        setFamilyModal(prev => ({ ...prev, loading: false }))
+      }
+    } catch (err) {
+      console.error(err)
+      showToast.error('An error occurred fetching family members', { duration: 3000, transition: "bounceIn" })
+      setFamilyModal(prev => ({ ...prev, loading: false }))
+    }
+  }
+
+  function closeFamilyModal() {
+    setFamilyModal({ isOpen: false, occupancy: null, members: [], loading: false })
+  }
+
   async function confirmEndContract() {
     const occupancy = endContractModal.occupancy
     if (!occupancy) return
@@ -1516,7 +1546,7 @@ export default function LandlordDashboard({ session, profile }) {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 xl:gap-8">
             {/* Left Col: Billing Schedule */}
             <div className="lg:col-span-6 xl:col-span-6 space-y-4">
-              <div className="bg-white rounded-2xl p-6 border border-gray-200/60 shadow-sm h-full">
+              <div className="bg-white rounded-2xl p-6 border border-gray-200/60 shadow-sm ">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
                   <div>
                     <h3 className="text-lg font-black text-gray-900 tracking-tight">Billing Schedule</h3>
@@ -1579,6 +1609,43 @@ export default function LandlordDashboard({ session, profile }) {
                         })}
                       </tbody>
                     </table>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl p-6 border border-gray-200/60 shadow-sm">
+                <div className="flex items-center justify-between mb-6">
+                  <div>
+                    <h3 className="text-lg font-black text-gray-900 tracking-tight">Active Properties</h3>
+                    <p className="text-sm font-medium text-gray-500 mt-0.5">{occupancies.filter(o => o.status === 'active').length} occupied units</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 -mr-2 my-scrollbar">
+                  {occupancies.filter(o => o.status === 'active').length === 0 ? (
+                    <div className="py-8 text-center bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
+                      <p className="text-gray-400 text-sm font-medium">No occupied properties</p>
+                    </div>
+                  ) : (
+                    occupancies.filter(o => o.status === 'active').map(occ => (
+                      <div key={occ.id} className="flex items-center gap-4 p-3 rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all group bg-white">
+                        <div className="w-12 h-12 rounded-xl bg-gray-100 overflow-hidden shrink-0 shadow-inner">
+                          <img src={occ.property?.images?.[0] || '/placeholder-property.jpg'} className="w-full h-full object-cover" alt="" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-sm text-gray-900 truncate group-hover:text-black transition-colors">{occ.property?.title}</p>
+                          <p className="text-xs font-medium text-gray-500 mt-0.5 truncate">{occ.tenant?.first_name} {occ.tenant?.last_name}</p>
+                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); openFamilyModal(occ) }}
+                          className="text-xs text-white font-bold text-blue-600 bg-blue-600 px-3 py-1.5 rounded-lg transition-all cursor-pointer">
+                          Show Family
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); openEndContractModal(occ) }}
+                          className="text-xs text-white font-bold text-red-600 bg-red-600 px-3 py-1.5 rounded-lg transition-all cursor-pointer">
+                          End
+                        </button>
+                      </div>
+                    ))
                   )}
                 </div>
               </div>
@@ -1692,40 +1759,6 @@ export default function LandlordDashboard({ session, profile }) {
                   </div>
                 )
               })()}
-
-              <div className="bg-white rounded-2xl p-6 border border-gray-200/60 shadow-sm">
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h3 className="text-lg font-black text-gray-900 tracking-tight">Active Properties</h3>
-                    <p className="text-sm font-medium text-gray-500 mt-0.5">{occupancies.filter(o => o.status === 'active').length} occupied units</p>
-                  </div>
-                </div>
-
-                <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 -mr-2 my-scrollbar">
-                  {occupancies.filter(o => o.status === 'active').length === 0 ? (
-                    <div className="py-8 text-center bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
-                      <p className="text-gray-400 text-sm font-medium">No occupied properties</p>
-                    </div>
-                  ) : (
-                    occupancies.filter(o => o.status === 'active').map(occ => (
-                      <div key={occ.id} className="flex items-center gap-4 p-3 rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all group bg-white">
-                        <div className="w-12 h-12 rounded-xl bg-gray-100 overflow-hidden shrink-0 shadow-inner">
-                          <img src={occ.property?.images?.[0] || '/placeholder-property.jpg'} className="w-full h-full object-cover" alt="" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-bold text-sm text-gray-900 truncate group-hover:text-black transition-colors">{occ.property?.title}</p>
-                          <p className="text-xs font-medium text-gray-500 mt-0.5 truncate">{occ.tenant?.first_name} {occ.tenant?.last_name}</p>
-                        </div>
-                        <button onClick={(e) => { e.stopPropagation(); openEndContractModal(occ) }}
-                          className="text-xs font-bold text-red-600 bg-red-50 hover:bg-red-600 hover:text-white px-3 py-1.5 rounded-lg transition-all cursor-pointer opacity-0 group-hover:opacity-100 shrink-0">
-                          End
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
             </div>
           </div>
         </div>
@@ -2401,6 +2434,113 @@ export default function LandlordDashboard({ session, profile }) {
                   </svg>
                   Yes, Send Bill
                 </button>
+              </div>
+            </div>
+          </div>
+        )
+      }
+
+      {/* Family Modal Side Panel */}
+      {
+        familyModal.isOpen && (
+          <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm transition-opacity duration-300">
+            {/* Clickable overlay to close */}
+            <div className="absolute inset-0 cursor-pointer" onClick={closeFamilyModal}></div>
+
+            {/* Slide-over panel */}
+            <div className="relative w-full max-w-md bg-white h-full shadow-2xl flex flex-col transform transition-transform duration-300 overflow-hidden animate-in slide-in-from-right">
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100 bg-gray-50/80 backdrop-blur-md">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-blue-100 flex flex-col items-center justify-center text-blue-600 shadow-sm border border-blue-200">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-black text-gray-900 tracking-tight">Family Details</h2>
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest">{familyModal.occupancy?.property?.title}</p>
+                  </div>
+                </div>
+                <button onClick={closeFamilyModal} className="p-2 text-gray-400 hover:text-gray-900 hover:bg-white rounded-full transition-all cursor-pointer shadow-sm border border-transparent hover:border-gray-200">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto p-6 bg-white my-scrollbar space-y-6">
+
+                {/* Primary Tenant Info */}
+                <div>
+                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 pl-1">Primary Tenant</h3>
+                  <div className="flex items-center gap-4 p-4 rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100/50 shadow-sm">
+                    <img
+                      src={familyModal.occupancy?.tenant?.avatar_url || 'https://www.gravatar.com/avatar/00000000000000000000000000000000?d=mp&f=y'}
+                      alt="Primary Tenant"
+                      className="w-14 h-14 rounded-full border-2 border-white shadow-md object-cover flex-shrink-0"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-base font-black text-gray-900 tracking-tight truncate">
+                        {familyModal.occupancy?.tenant?.first_name} {familyModal.occupancy?.tenant?.last_name}
+                      </p>
+                      <div className="flex items-center gap-1.5 mt-1 text-sm text-gray-600 font-medium">
+                        <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                        <span className="truncate">{familyModal.occupancy?.tenant?.email || 'No email provided'}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-0.5 text-sm text-gray-600 font-medium">
+                        <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" /></svg>
+                        <span className="truncate">{familyModal.occupancy?.tenant?.phone || 'No phone provided'}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Family Members List */}
+                <div>
+                  <div className="flex items-center justify-between mb-3 pl-1">
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Family Members ({familyModal.members.length})</h3>
+                  </div>
+
+                  {familyModal.loading ? (
+                    <div className="flex flex-col items-center justify-center py-12 px-4 rounded-2xl bg-gray-50 border border-dashed border-gray-200">
+                      <svg className="w-8 h-8 text-blue-500 animate-spin mb-3" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      <p className="text-sm font-bold text-gray-500">Loading members...</p>
+                    </div>
+                  ) : familyModal.members.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-12 px-4 rounded-2xl bg-gray-50 border border-dashed border-gray-200">
+                      <div className="w-12 h-12 bg-white rounded-full shadow-sm flex items-center justify-center text-gray-400 mb-3">
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                      </div>
+                      <p className="text-sm font-bold text-gray-900 pb-1">No family members</p>
+                      <p className="text-xs text-gray-500 text-center max-w-[200px]">The primary tenant hasn't added anyone yet.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {familyModal.members.map((member) => (
+                        <div key={member.id} className="flex items-center gap-4 p-4 rounded-2xl bg-white border border-gray-100 shadow-sm hover:border-gray-300 hover:shadow-md transition-all group">
+                          <img
+                            src={member.member_profile?.avatar_url || 'https://www.gravatar.com/avatar/00000000000000000000000000000000?d=mp&f=y'}
+                            alt={member.member_profile?.first_name}
+                            className="w-12 h-12 rounded-full border border-gray-100 bg-gray-50 object-cover flex-shrink-0"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-bold text-gray-900 tracking-tight truncate group-hover:text-blue-600 transition-colors">
+                              {member.member_profile?.first_name} {member.member_profile?.last_name}
+                            </p>
+                            <div className="flex items-center gap-1.5 mt-1 text-xs text-gray-500 font-medium">
+                              <svg className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                              <span className="truncate">{member.member_profile?.email || 'No email provided'}</span>
+                            </div>
+                            {member.member_profile?.phone && (
+                              <div className="flex items-center gap-1.5 mt-0.5 text-xs text-gray-500 font-medium">
+                                <svg className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" /></svg>
+                                <span className="truncate">{member.member_profile?.phone}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

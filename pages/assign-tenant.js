@@ -249,23 +249,43 @@ export default function AssignTenantPage() {
             })
         }).catch(err => console.error('Move-in notification error:', err))
 
-        // Auto-bill if not already paid
-        if (!alreadyPaid) {
-            const dueDate = new Date(startDate)
-            try {
-                const { error: billError } = await supabase.from('payment_requests').insert({
-                    landlord: session.user.id, tenant: booking.tenant, property_id: selectedPropertyId, occupancy_id: occupancyId,
-                    rent_amount: rentAmount, security_deposit_amount: securityDepositAmount, advance_amount: advanceAmount,
-                    water_bill: 0, electrical_bill: 0, other_bills: 0,
-                    bills_description: 'Move-in Payment (Rent + Advance + Security Deposit)',
-                    due_date: dueDate.toISOString(), status: 'pending', is_move_in_payment: true
-                })
-                if (!billError) {
-                    const totalAmount = rentAmount + advanceAmount + securityDepositAmount
-                    await createNotification({ recipient: booking.tenant, actor: session.user.id, type: 'payment_request', message: `Move-in payment: ₱${Number(totalAmount).toLocaleString()} Total. Due: ${dueDate.toLocaleDateString('en-US')}`, link: '/payments' })
-                }
-            } catch (err) { console.error('Auto-bill exception:', err) }
+        // Auto-bill 
+        const dueDate = new Date(startDate)
+        if (alreadyPaid) {
+            // If already paid, set the first bill for the *next* month
+            dueDate.setMonth(dueDate.getMonth() + 1)
         }
+
+        try {
+            const { error: billError } = await supabase.from('payment_requests').insert({
+                landlord: session.user.id,
+                tenant: booking.tenant,
+                property_id: selectedPropertyId,
+                occupancy_id: occupancyId,
+                rent_amount: rentAmount,
+                security_deposit_amount: alreadyPaid ? 0 : securityDepositAmount,
+                advance_amount: alreadyPaid ? 0 : advanceAmount,
+                water_bill: 0,
+                electrical_bill: 0,
+                other_bills: 0,
+                bills_description: alreadyPaid ? 'Monthly Rent Payment' : 'Move-in Payment (Rent + Advance + Security Deposit)',
+                due_date: dueDate.toISOString(),
+                status: 'pending',
+                is_move_in_payment: !alreadyPaid
+            })
+            if (!billError) {
+                const totalAmount = rentAmount + (alreadyPaid ? 0 : advanceAmount + securityDepositAmount)
+                await createNotification({
+                    recipient: booking.tenant,
+                    actor: session.user.id,
+                    type: 'payment_request',
+                    message: alreadyPaid
+                        ? `Next rent payment: ₱${Number(rentAmount).toLocaleString()}. Due: ${dueDate.toLocaleDateString('en-US')}`
+                        : `Move-in payment: ₱${Number(totalAmount).toLocaleString()} Total. Due: ${dueDate.toLocaleDateString('en-US')}`,
+                    link: '/payments'
+                })
+            }
+        } catch (err) { console.error('Auto-bill exception:', err) }
 
         toast('success', alreadyPaid ? 'Tenant assigned successfully!' : 'Tenant assigned! Move-in payment bill sent.')
         setTimeout(() => router.push('/bookings'), 1500)
@@ -543,14 +563,14 @@ export default function AssignTenantPage() {
                 <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm">
                     <div className="flex items-center justify-between">
                         <div>
-                            <p className="text-xs font-bold text-gray-900">Tenant already paid?</p>
-                            <p className="text-[10px] text-gray-500 mt-0.5">Skip auto-billing if payment was received offline.</p>
+                            <p className="text-xs font-bold text-gray-900">Tenant already paid move-in fee?</p>
+                            <p className="text-[10px] text-gray-500 mt-0.5">If active, the first generated bill will be for next month's rent instead.</p>
                         </div>
                         <button type="button" onClick={() => setAlreadyPaid(!alreadyPaid)} className={`w-11 h-6 rounded-full transition-all duration-200 cursor-pointer ${alreadyPaid ? 'bg-green-500' : 'bg-gray-300'}`}>
                             <div className={`w-5 h-5 rounded-full bg-white shadow transition-transform ${alreadyPaid ? 'translate-x-5' : 'translate-x-0.5'}`} />
                         </button>
                     </div>
-                    {alreadyPaid && <p className="text-[10px] text-green-600 font-bold mt-2 flex items-center gap-1"><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg> No move-in bill will be generated</p>}
+                    {alreadyPaid && <p className="text-[10px] text-green-600 font-bold mt-2 flex items-center gap-1"><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg> First bill will be generated for next month</p>}
                 </div>
 
                 {/* Placeholder for modal moved to root */}

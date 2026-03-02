@@ -485,11 +485,20 @@ export default function PaymentsPage() {
       setShowFormModal(false);
       loadPaymentRequests();
 
-      showToast.success(`${billTypeLabel} request sent!`, { duration: 4000, transition: "bounceIn" });
+      showToast.success(`${billTypeLabel} request sent!`,{ 
+        duration: 4000, 
+        progress: true,
+        position: "top-center",
+        transition: "bounceInDown" 
+      });
 
     } catch (error) {
       console.error('Error creating payment request:', error)
-      showToast.error('Failed to send request', { duration: 4000, transition: "bounceIn" });
+      showToast.error('Failed to send request', { 
+        duration: 4000, progress: true,
+        position: "top-center",
+        transition: "bounceInDown" 
+      });
     }
   }
 
@@ -596,9 +605,6 @@ export default function PaymentsPage() {
           }
         }
       }
-
-      console.log('Occupancy ID for calculation:', occupancyId);
-
       if (occupancyId) {
         try {
           let occupancy = null;
@@ -622,7 +628,6 @@ export default function PaymentsPage() {
               .eq('id', occupancyId)
               .single();
             occupancy = occData;
-            console.log('Occupancy query result - data:', JSON.stringify(occData), 'error:', occError);
           }
 
           if (occupancy) {
@@ -631,26 +636,17 @@ export default function PaymentsPage() {
             endDate = occupancy.contract_end_date ? new Date(occupancy.contract_end_date) : null;
             startDate = occupancy.start_date ? new Date(occupancy.start_date) : null;
 
-            console.log('Parsed dates - start:', startDate, 'end:', endDate);
-
             if (endDate && startDate) {
-              // SIMPLIFIED: Calculate total months in contract by comparing start and end dates
-              // Contract Feb 3 to Apr 3 = 2 months (Feb-Mar, Mar-Apr)
               const startYear = startDate.getFullYear();
               const startMonth = startDate.getMonth();
               const endYear = endDate.getFullYear();
               const endMonth = endDate.getMonth();
 
-              // Total months in the contract period
               const totalContractMonths = (endYear - startYear) * 12 + (endMonth - startMonth);
 
-              // ADJUSTMENT: If Security Deposit covers payment for the last month,
-              // we should not allow paying for that last month in advance via cash.
-              // Check if there is a security deposit in the request or occupancy
               const depositAmount = parseFloat(request.security_deposit_amount || occupancy?.security_deposit || 0);
               let adjustedTotalKey = totalContractMonths;
 
-              // If deposit is sufficient to cover one month rent, effectively the last month is "pre-paid" by deposit
               if (rentPerMonth > 0 && depositAmount >= (rentPerMonth * 0.9)) { // Allow small difference
                 adjustedTotalKey = Math.max(1, totalContractMonths - 1);
               }
@@ -683,10 +679,10 @@ export default function PaymentsPage() {
                 limit = Math.max(0, maxContractValue + securityDeposit + utilities + advance - credit);
               }
             } else {
-              console.log('Missing dates - startDate or endDate is null');
+              console.error('Missing date - startDate or endDate is null',err);
             }
           } else {
-            console.log('No occupancy data returned');
+            console.error('No occupancy data returned',err);
           }
         } catch (err) {
           console.error('Error fetching occupancy:', err);
@@ -704,19 +700,13 @@ export default function PaymentsPage() {
       // Set minimum payment (total bill minus credit)
       let toPay = Math.max(0, total - credit);
 
-      // FIX: For Renewal bills (which have advance_amount), minimum payment should be the full renewal amount (Rent + Advance)
-      // Assuming credit can still apply, but we want to default the input to the full amount needed.
-      if (request.advance_amount && parseFloat(request.advance_amount) > 0) {
-        // For renewal, explicitly require the rent + advance sum if possible, or at least default to it
-        // The user wants "minimum need to pay" to be the total. 
-        // Actually, if we set minimumPayment to 'total', it forces the user to pay that much. 
+      if (request.advance_amount && parseFloat(request.advance_amount) > 0) { 
         toPay = Math.max(0, total - credit);
       }
 
       setMinimumPayment(toPay);
       setIsBelowMinimum(false);
 
-      // Ensure default is the FULL amount for renewals, or the calc amount otherwise
       setCustomAmount(Math.min(toPay, limit === Infinity ? toPay : limit).toFixed(2));
 
       setShowPaymentModal(true)
@@ -738,13 +728,11 @@ export default function PaymentsPage() {
         parseFloat(selectedBill.other_bills || 0)
       );
 
-      // One-time charges (security deposit + utilities) - these don't count toward months
       const oneTimeCharges = securityDeposit + utilities;
 
-      // Calculate rent portion only (payment minus one-time charges)
       const rentPortion = Math.max(0, amountNum - oneTimeCharges);
 
-      // How many months of rent does this cover?
+
       const rentForCalc = currentBillRent > 0 ? currentBillRent : monthlyRent;
       const monthsCoveredByRent = rentForCalc > 0 ? Math.ceil(rentPortion / rentForCalc) : 1;
 
@@ -813,10 +801,8 @@ export default function PaymentsPage() {
     }
     setIsBelowMinimum(false);
 
-    // One-time charges (security deposit + utilities) - these don't count toward months
     const oneTimeCharges = securityDeposit + utilities;
 
-    // Calculate rent portion only (payment minus one-time charges)
     const rentPortion = Math.max(0, amountNum - oneTimeCharges);
 
     // How many months of rent does this cover?

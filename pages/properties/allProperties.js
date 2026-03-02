@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabaseClient'
 import { useRouter } from 'next/router'
 import Footer from '../../components/Footer'
 import AuthModal from '../../components/AuthModal'
+import { showToast } from 'nextjs-toast-notify'
 import Lottie from "lottie-react"
 import loadingAnimation from "../../assets/loading.json"
 import {
@@ -46,9 +47,21 @@ const extractCoordinates = (link) => {
   const placeMatch = link.match(/place\/(-?\d+\.\d+),(-?\d+\.\d+)/);
   const match = atMatch || qMatch || placeMatch;
   if (match) {
-    return { lat: match[1], lng: match[2] };
+    return {
+      lat: parseFloat(match[1]),
+      lng: parseFloat(match[2])
+    };
   }
   return null;
+};
+
+// Helper: Add slight deterministic jitter to overlapping map coordinates
+const jitterCoordinate = (coord, index) => {
+  if (index === 0) return coord;
+  // Creates a spiral jitter pattern based on the index
+  const radius = 0.00015 * Math.ceil(index / 8);
+  const angle = index * (Math.PI / 4);
+  return coord + (Math.sin(angle) * radius);
 };
 
 // --- Coverage Circle Component ---
@@ -164,6 +177,7 @@ export default function AllProperties() {
 
   // --- Property Stats (ratings, favorite counts) ---
   const [propertyStats, setPropertyStats] = useState({})
+  const [statsLoaded, setStatsLoaded] = useState(false)
 
   // --- Featured Properties (Guest Favorites, Top Rated) ---
   const [guestFavorites, setGuestFavorites] = useState([])
@@ -235,13 +249,13 @@ export default function AllProperties() {
 
   // Combined search/filter effect with debounce to prevent double loading
   useEffect(() => {
-    if (!router.isReady) return
+    if (!router.isReady || !statsLoaded) return
 
     const delayDebounceFn = setTimeout(() => {
       loadProperties()
     }, 300)
     return () => clearTimeout(delayDebounceFn)
-  }, [searchQuery, selectedAmenities, priceRange, minRating, filterMostFavorite, sortBy, router.isReady, propertyStats, filterNearMe, userLocation])
+  }, [searchQuery, selectedAmenities, priceRange, minRating, filterMostFavorite, sortBy, router.isReady, statsLoaded, filterNearMe, userLocation])
 
   // Disable body scroll when mobile filters are open
   useEffect(() => {
@@ -271,17 +285,21 @@ export default function AllProperties() {
   }
 
   async function loadPropertyStats() {
-    const { data } = await supabase.from('property_stats').select('*')
-    if (data) {
-      const statsMap = {}
-      data.forEach(stat => {
-        statsMap[stat.property_id] = {
-          favorite_count: stat.favorite_count || 0,
-          avg_rating: stat.avg_rating || 0,
-          review_count: stat.review_count || 0
-        }
-      })
-      setPropertyStats(statsMap)
+    try {
+      const { data } = await supabase.from('property_stats').select('*')
+      if (data) {
+        const statsMap = {}
+        data.forEach(stat => {
+          statsMap[stat.property_id] = {
+            favorite_count: stat.favorite_count || 0,
+            avg_rating: stat.avg_rating || 0,
+            review_count: stat.review_count || 0
+          }
+        })
+        setPropertyStats(statsMap)
+      }
+    } finally {
+      setStatsLoaded(true)
     }
   }
 
@@ -326,8 +344,14 @@ export default function AllProperties() {
   async function toggleFavorite(e, propertyId) {
     e.stopPropagation()
     if (!session) {
-      setAuthMode('signin')
-      setShowAuthModal(true)
+      showToast.warning("Please Login First", {
+        duration: 4000,
+        progress: true,
+        position: "top-center",
+        transition: "bounceIn",
+        icon: '',
+        sound: true,
+      });
       return
     }
     const isFavorite = favorites.includes(propertyId)
@@ -1046,38 +1070,57 @@ export default function AllProperties() {
                   )}
 
                   {/* Property Markers */}
-                  {properties.map(property => {
-                    const coords = extractCoordinates(property.location_link);
-                    if (!coords) return null;
-                    const lat = parseFloat(coords.lat);
-                    const lng = parseFloat(coords.lng);
-                    const isSelected = comparisonList.some(p => p.id === property.id);
-                    return (
-                      <MapMarker key={property.id} longitude={lng} latitude={lat}>
-                        <MarkerContent>
-                          <div
-                            onClick={(e) => { e.stopPropagation(); router.push(`/properties/${property.id}`) }}
-                            className={`px-3 py-1.5 rounded-full font-bold text-xs shadow-lg whitespace-nowrap cursor-pointer hover:scale-110 transition-all border-2 ${isSelected ? 'bg-black text-white border-white' : 'bg-white text-black border-gray-200 hover:bg-emerald-500 hover:text-white hover:border-emerald-600'}`}
-                          >
-                            ₱{Number(property.price).toLocaleString()}
-                          </div>
-                        </MarkerContent>
-                        <MarkerPopup closeButton={true} className="p-0 overflow-hidden w-48 rounded-xl border-gray-200 shadow-xl">
-                          <div className="text-left cursor-pointer bg-white" onClick={() => router.push(`/properties/${property.id}`)}>
-                            <img src={getPropertyImages(property)[0]} alt={property.title} className="w-full h-28 object-cover" />
-                            <div className="p-3">
-                              <h4 className="font-bold text-sm line-clamp-1 mb-0.5 text-gray-900">{property.title}</h4>
-                              <p className="text-[10px] text-gray-500 mb-2 truncate">{property.city}</p>
-                              <div className="flex justify-between items-end">
-                                <p className="font-black text-emerald-600 drop-shadow-sm text-sm">₱{Number(property.price).toLocaleString()}</p>
-                                <span className="text-[8px] uppercase tracking-wider font-bold text-gray-400">/mo</span>
+                  {(() => {
+                    // Group properties by rounded coordinates to find exact overlaps
+                    const coordGroups = {};
+                    properties.forEach(property => {
+                      const coords = extractCoordinates(property.location_link);
+                      if (!coords) return;
+                      // Round slightly to catch extremely close markers
+                      const key = `${coords.lat.toFixed(5)},${coords.lng.toFixed(5)}`;
+                      if (!coordGroups[key]) coordGroups[key] = [];
+                      coordGroups[key].push(property);
+                    });
+
+                    return Object.values(coordGroups).flatMap(group => {
+                      return group.map((property, idx) => {
+                        const coords = extractCoordinates(property.location_link);
+                        // Apply jitter to any properties after the first one at this location
+                        const lat = jitterCoordinate(coords.lat, idx);
+                        const lng = jitterCoordinate(coords.lng, idx);
+
+                        const isSelected = comparisonList.some(p => p.id === property.id);
+                        return (
+                          <MapMarker key={property.id} longitude={lng} latitude={lat}>
+                            <MarkerContent>
+                              <div
+                                onClick={(e) => { e.stopPropagation(); router.push(`/properties/${property.id}`) }}
+                                className={`px-3 py-1.5 rounded-full font-bold text-xs shadow-lg whitespace-nowrap cursor-pointer hover:scale-110 transition-all border-2 relative ${isSelected ? 'bg-black text-white border-white z-50' : `bg-white text-black border-gray-200 hover:bg-emerald-500 hover:text-white hover:border-emerald-600 ${idx > 0 ? 'z-40' : 'z-30'}`}`}
+                              >
+                                ₱{Number(property.price).toLocaleString()}
+                                {idx > 0 && (
+                                  <div className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500 border border-white"></div>
+                                )}
                               </div>
-                            </div>
-                          </div>
-                        </MarkerPopup>
-                      </MapMarker>
-                    );
-                  })}
+                            </MarkerContent>
+                            <MarkerPopup closeButton={true} className={`p-0 overflow-hidden w-48 rounded-xl border-gray-200 shadow-xl z-50`}>
+                              <div className="text-left cursor-pointer bg-white" onClick={() => router.push(`/properties/${property.id}`)}>
+                                <img src={getPropertyImages(property)[0]} alt={property.title} className="w-full h-28 object-cover" />
+                                <div className="p-3">
+                                  <h4 className="font-bold text-sm line-clamp-1 mb-0.5 text-gray-900">{property.title}</h4>
+                                  <p className="text-[10px] text-gray-500 mb-2 truncate">{property.city}</p>
+                                  <div className="flex justify-between items-end">
+                                    <p className="font-black text-emerald-600 drop-shadow-sm text-sm">₱{Number(property.price).toLocaleString()}</p>
+                                    <span className="text-[8px] uppercase tracking-wider font-bold text-gray-400">/mo</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </MarkerPopup>
+                          </MapMarker>
+                        );
+                      });
+                    });
+                  })()}
                 </Map>
               </div>
             ) : (

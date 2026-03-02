@@ -1834,8 +1834,8 @@ export default function TenantDashboard({ session, profile }) {
                       {/* Footer Note */}
                       <div className="px-6 py-5 bg-white border-t border-gray-100">
                         <p className="text-[13px] font-medium text-[#64748b] text-center leading-[1.6]">
-                          Family members will have access to payments and maintenance for this property.
-                          They cannot end the contract.
+                          Note: Family members will have access to payments and maintenance for this property.
+                          They cannot end the contract, renew contract.
                         </p>
                       </div>
                     </div>

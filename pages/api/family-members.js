@@ -154,23 +154,44 @@ export default async function handler(req, res) {
             const { query, exclude_ids } = req.body
             if (!query || query.trim().length < 2) return res.status(400).json({ error: 'Query too short' })
 
-            const searchTerm = `%${query.trim()}%`
+            const terms = query.trim().split(/\s+/).filter(Boolean)
+
+            // Limit terms to avoid extremely long queries
+            const safeTerms = terms.slice(0, 5)
+
+            // Construct OR string with all terms for first_name, last_name, or email
+            const orFilters = safeTerms.flatMap(term => [
+                `first_name.ilike.%${term}%`,
+                `last_name.ilike.%${term}%`,
+                `email.ilike.%${term}%`
+            ])
+
             let dbQuery = supabaseAdmin
                 .from('profiles')
                 .select('id, first_name, middle_name, last_name, email, phone, avatar_url, role')
                 .eq('role', 'tenant')
                 .eq('is_deleted', false)
-                .or(`first_name.ilike.${searchTerm},last_name.ilike.${searchTerm},email.ilike.${searchTerm}`)
-                .limit(10)
+                .or(orFilters.join(','))
+                .limit(50) // Fetch broadly, filter accurately in-memory
 
             const { data, error } = await dbQuery
             if (error) return res.status(500).json({ error: error.message })
 
-            // Filter out excluded IDs (the mother + existing members)
+            // Filter in-memory to ensure all typed terms match either the full name or email
             const excludeSet = new Set(exclude_ids || [])
-            const filtered = (data || []).filter(u => !excludeSet.has(u.id))
+            const results = (data || [])
+                .filter(u => {
+                    if (excludeSet.has(u.id)) return false
+                    const fullName = `${u.first_name || ''} ${u.middle_name || ''} ${u.last_name || ''}`.toLowerCase()
+                    const email = (u.email || '').toLowerCase()
 
-            return res.status(200).json({ results: filtered })
+                    // All search terms must be found in either fullName or email
+                    const lowerTerms = terms.map(t => t.toLowerCase())
+                    return lowerTerms.every(term => fullName.includes(term) || email.includes(term))
+                })
+                .slice(0, 10) // Only return top 10
+
+            return res.status(200).json({ results })
         }
 
         // ─── LOOKUP MEMBERS (for identifying family request origins) ───

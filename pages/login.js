@@ -3,8 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { useRouter } from 'next/router'
 import Link from 'next/link'
 import { showToast } from 'nextjs-toast-notify'
-// import Footer from '../components/Footer'
-// import { createClient } from '@supabase/supabase-js'
+import { goeyToast } from 'goey-toast'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -109,21 +108,23 @@ export default function Login() {
         localStorage.removeItem('rememberedEmail')
       }
 
-      showToast.success("Login successful!", {
+     showToast.success(`Login Successful!`, {
         duration: 4000,
         progress: true,
         position: "top-center",
-        transition: "popUp",
+        transition: "bounceIn",
+        icon: '',
         sound: true,
       });
       const redirectUrl = router.query.redirect || '/dashboard'
       router.push(redirectUrl)
     } catch (error) {
-      showToast.error("Wrong Password or Email!", {
+      showToast.error("Login Failed, Please Try again!", {
         duration: 4000,
         progress: true,
         position: "top-center",
-        transition: "fadeIn",
+        transition: "bounceInDown",
+        icon: '',
         sound: true,
       });
     } finally {
@@ -440,5 +441,6 @@ export default function Login() {
         </div>
       </div>
     </div>
+
   )
 }

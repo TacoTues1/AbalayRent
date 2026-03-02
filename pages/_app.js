@@ -5,7 +5,8 @@ import NotificationToast from '../components/NotificationToast'
 import Meta from '../components/Meta'
 import { Analytics } from "@vercel/analytics/next"
 import { SpeedInsights } from "@vercel/speed-insights/next"
-// Removed 'react-hot-toast' imports
+import { GoeyToaster } from 'goey-toast'
+import 'goey-toast/styles.css'
 import { useRouter } from 'next/router'
 
 function MyApp({ Component, pageProps }) {
@@ -18,7 +19,7 @@ function MyApp({ Component, pageProps }) {
 
       {!hideNavbarPaths.includes(router.pathname) && <Navbar />}
       <NotificationToast />
-
+      <GoeyToaster position="top-right" richColors />
       <Component {...pageProps} supabase={supabase} />
       <Analytics />
       <SpeedInsights />
