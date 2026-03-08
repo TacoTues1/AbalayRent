@@ -72,7 +72,7 @@ export default async function handler(req, res) {
         <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 500px; margin: 0 auto; padding: 40px 20px;">
           <div style="text-align: center; margin-bottom: 30px;">
             <h1 style="color: #1a1a1a; font-size: 24px; margin: 0;">Abalay</h1>
-            <p style="color: #666; margin-top: 5px;">Landlord Registration</p>
+            <p style="color: #666; margin-top: 5px;">Email Verification</p>
           </div>
           <div style="background: #f8f8f8; border-radius: 16px; padding: 30px; text-align: center;">
             <p style="color: #333; font-size: 16px; margin: 0 0 20px;">Your verification code is:</p>

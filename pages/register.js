@@ -23,6 +23,7 @@ export default function Register() {
   const [mounted, setMounted] = useState(false)
   const [currentSlide, setCurrentSlide] = useState(0)
   const isVerifyingRef = useRef(false) // Prevent double-triggering auto-verification
+  const [useBrevoFallback, setUseBrevoFallback] = useState(false) // Brevo fallback when Supabase email rate limit exceeded
   const router = useRouter()
 
   const heroImages = [
@@ -158,6 +159,25 @@ export default function Register() {
         if (error.message.includes('already registered')) {
           throw new Error('This email is already registered. Please sign in instead.')
         }
+        // Rate limit exceeded -> use Brevo fallback
+        if (error.message.toLowerCase().includes('rate') || error.message.toLowerCase().includes('limit') || error.message.toLowerCase().includes('exceeded')) {
+          setUseBrevoFallback(true)
+          const res = await fetch('/api/verify-email-otp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'send', email })
+          })
+          const d = await res.json()
+          if (!res.ok) {
+            showToast.error(d.error || 'Failed to send verification code', { duration: 4000, progress: true, position: 'top-right', transition: 'bounceIn', icon: '', sound: true })
+            setLoading(false)
+            return
+          }
+          setShowOtpInput(true)
+          showToast.success("Verification code sent to your email! (via backup)", { duration: 4000, progress: true, position: 'top-right', transition: 'bounceIn', icon: '', sound: true })
+          setLoading(false)
+          return
+        }
         throw error
       }
 
@@ -189,57 +209,89 @@ export default function Register() {
     }
   }
 
+  // Shared function to finalize registration after OTP verification
+  const finalizeRegistration = async (user) => {
+    if (!user) {
+      showToast.error('Registration failed. Please try again.', { duration: 4000, progress: true, position: 'top-right', transition: 'bounceIn', icon: '', sound: true })
+      return
+    }
+
+    // Create Profile
+    const { data: existingProfile } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('id', user.id)
+      .maybeSingle()
+
+    if (!existingProfile) {
+      const { error: profileError } = await supabase.from('profiles').insert({
+        id: user.id,
+        first_name: firstName,
+        middle_name: middleName || 'N/A',
+        last_name: lastName,
+        role: 'tenant',
+        email: email,
+        birthday: birthday,
+        gender: gender
+      })
+
+      // Ignore duplicate key errors if profile was created by a trigger
+      if (profileError && profileError.code !== '23505') {
+        throw new Error('Email verified but profile setup failed. Please contact support.')
+      }
+    }
+
+    showToast.success("Email verified successfully! Redirecting...", {
+      duration: 4000,
+      progress: true,
+      position: "top-right",
+      transition: "bounceIn",
+      icon: '',
+      sound: true,
+    });
+
+    setTimeout(() => {
+      router.push('/dashboard')
+    }, 1000)
+  }
+
   // Auto-verification function (no event parameter)
   const handleAutoVerifyOtp = async () => {
     setLoading(true)
 
     try {
-      const { data, error } = await supabase.auth.verifyOtp({
-        email,
-        token: otp,
-        type: 'signup'
-      })
-
-      if (error) throw error
-
-      if (data.user) {
-        // Create Profile (Logic from AuthModal.js)
-        const { data: existingProfile, error: checkError } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('id', data.user.id)
-          .maybeSingle()
-
-        if (!existingProfile) {
-          const { error: profileError } = await supabase.from('profiles').insert({
-            id: data.user.id,
-            first_name: firstName,
-            middle_name: middleName || 'N/A',
-            last_name: lastName,
-            role: 'tenant',
-            email: email,
-            birthday: birthday,
-            gender: gender
-          })
-
-          // Ignore duplicate key errors if profile was created by a trigger
-          if (profileError && profileError.code !== '23505') {
-            throw new Error('Email verified but profile setup failed. Please contact support.')
-          }
+      if (useBrevoFallback) {
+        // Verify with our custom Brevo API
+        const res = await fetch('/api/verify-email-otp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'verify', email, code: otp })
+        })
+        const d = await res.json()
+        if (!res.ok) {
+          showToast.error(d.error || 'Invalid verification code', { duration: 4000, progress: true, position: 'top-right', transition: 'bounceIn', icon: '', sound: true })
+          setOtp('')
+          isVerifyingRef.current = false
+          setLoading(false)
+          return
         }
+        // Email verified via Brevo - try to create user with Supabase
+        const { data: signUpData } = await supabase.auth.signUp({
+          email, password,
+          options: { data: { first_name: firstName, middle_name: middleName || 'N/A', last_name: lastName, birthday, gender } }
+        })
+        // Even if rate limit hits again, email is verified via Brevo
+        await finalizeRegistration(signUpData?.user)
+      } else {
+        // Standard Supabase OTP verification
+        const { data, error } = await supabase.auth.verifyOtp({
+          email,
+          token: otp,
+          type: 'signup'
+        })
 
-        showToast.success("Email verified successfully! Redirecting...", {
-          duration: 4000,
-          progress: true,
-          position: "top-right",
-          transition: "bounceIn",
-          icon: '',
-          sound: true,
-        });
-
-        setTimeout(() => {
-          router.push('/dashboard')
-        }, 1000)
+        if (error) throw error
+        if (data.user) await finalizeRegistration(data.user)
       }
     } catch (error) {
       showToast.error("Invalid verification code. Please try again.", {
@@ -265,52 +317,38 @@ export default function Register() {
     setLoading(true)
 
     try {
-      const { data, error } = await supabase.auth.verifyOtp({
-        email,
-        token: otp,
-        type: 'signup'
-      })
-
-      if (error) throw error
-
-      if (data.user) {
-        // Create Profile (Logic from AuthModal.js)
-        const { data: existingProfile, error: checkError } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('id', data.user.id)
-          .maybeSingle()
-
-        if (!existingProfile) {
-          const { error: profileError } = await supabase.from('profiles').insert({
-            id: data.user.id,
-            first_name: firstName,
-            middle_name: middleName || 'N/A',
-            last_name: lastName,
-            role: 'tenant',
-            email: email,
-            birthday: birthday,
-            gender: gender
-          })
-
-          // Ignore duplicate key errors if profile was created by a trigger
-          if (profileError && profileError.code !== '23505') {
-            throw new Error('Email verified but profile setup failed. Please contact support.')
-          }
+      if (useBrevoFallback) {
+        // Verify with our custom Brevo API
+        const res = await fetch('/api/verify-email-otp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'verify', email, code: otp })
+        })
+        const d = await res.json()
+        if (!res.ok) {
+          showToast.error(d.error || 'Invalid verification code', { duration: 4000, progress: true, position: 'top-right', transition: 'bounceIn', icon: '', sound: true })
+          setOtp('')
+          isVerifyingRef.current = false
+          setLoading(false)
+          return
         }
+        // Email verified via Brevo - try to create user with Supabase
+        const { data: signUpData } = await supabase.auth.signUp({
+          email, password,
+          options: { data: { first_name: firstName, middle_name: middleName || 'N/A', last_name: lastName, birthday, gender } }
+        })
+        // Even if rate limit hits again, email is verified via Brevo
+        await finalizeRegistration(signUpData?.user)
+      } else {
+        // Standard Supabase OTP verification
+        const { data, error } = await supabase.auth.verifyOtp({
+          email,
+          token: otp,
+          type: 'signup'
+        })
 
-        showToast.success("Email verified successfully! Redirecting...", {
-          duration: 4000,
-          progress: true,
-          position: "top-right",
-          transition: "bounceIn",
-          icon: '',
-          sound: true,
-        });
-
-        setTimeout(() => {
-          router.push('/dashboard')
-        }, 1000)
+        if (error) throw error
+        if (data.user) await finalizeRegistration(data.user)
       }
     } catch (error) {
       showToast.error("Invalid verification code. Please try again.", {
@@ -331,22 +369,67 @@ export default function Register() {
   // Resend OTP
   const handleResendOtp = async () => {
     setLoading(true)
+    setOtp('')
+    isVerifyingRef.current = false
     try {
-      const { error } = await supabase.auth.resend({
-        type: 'signup',
-        email: email
-      })
-      if (error) throw error
-      showToast.success("Verification code resent! Check your email.", {
-        duration: 4000,
-        progress: true,
-        position: "top-right",
-        transition: "bounceIn",
-        icon: '',
-        sound: true,
-      });
+      if (useBrevoFallback) {
+        // Resend via Brevo
+        const res = await fetch('/api/verify-email-otp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'send', email })
+        })
+        const d = await res.json()
+        if (!res.ok) throw new Error(d.error || 'Failed to resend code')
+        showToast.success("Verification code resent! Check your email. (via backup)", {
+          duration: 4000,
+          progress: true,
+          position: "top-right",
+          transition: "bounceIn",
+          icon: '',
+          sound: true,
+        });
+      } else {
+        // Try Supabase resend first
+        const { error } = await supabase.auth.resend({
+          type: 'signup',
+          email: email
+        })
+        if (error) {
+          // If Supabase resend also hits rate limit, fall back to Brevo
+          if (error.message.toLowerCase().includes('rate') || error.message.toLowerCase().includes('limit') || error.message.toLowerCase().includes('exceeded')) {
+            setUseBrevoFallback(true)
+            const res = await fetch('/api/verify-email-otp', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'send', email })
+            })
+            const d = await res.json()
+            if (!res.ok) throw new Error(d.error || 'Failed to send code')
+            showToast.success("Verification code resent! Check your email. (via backup)", {
+              duration: 4000,
+              progress: true,
+              position: "top-right",
+              transition: "bounceIn",
+              icon: '',
+              sound: true,
+            });
+          } else {
+            throw error
+          }
+        } else {
+          showToast.success("Verification code resent! Check your email.", {
+            duration: 4000,
+            progress: true,
+            position: "top-right",
+            transition: "bounceIn",
+            icon: '',
+            sound: true,
+          });
+        }
+      }
     } catch (error) {
-      showToast.error("Resend failed, Please Try again!", {
+      showToast.error(error.message || "Resend failed, Please Try again!", {
         duration: 4000,
         progress: true,
         position: "top-right",

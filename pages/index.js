@@ -173,7 +173,7 @@ export default function Home() {
     }
   }
 
-  // Real-time search with debounce
+  // Elastic search with debounce - fuzzy matching, relevance scoring, multi-field search
   useEffect(() => {
     if (!searchQuery.trim()) {
       setSearchResults([])
@@ -184,23 +184,19 @@ export default function Home() {
     const debounceTimer = setTimeout(async () => {
       setIsSearching(true)
       try {
-        const { data, error } = await supabase
-          .from('properties')
-          .select('id, title, city, price, images, status')
-          .eq('is_deleted', false)
-          .or(`title.ilike.%${searchQuery}%,city.ilike.%${searchQuery}%,address.ilike.%${searchQuery}%`)
-          .limit(6)
+        const response = await fetch(`/api/elastic-search?q=${encodeURIComponent(searchQuery)}&limit=6`)
+        const data = await response.json()
 
-        if (data && !error) {
-          setSearchResults(data)
+        if (response.ok && data.results) {
+          setSearchResults(data.results)
           setShowSearchDropdown(true)
         }
       } catch (err) {
-        console.error('Search error:', err)
+        console.error('Elastic search error:', err)
       } finally {
         setIsSearching(false)
       }
-    }, 300) // 300ms debounce
+    }, 250) // 250ms debounce for snappy elastic feel
 
     return () => clearTimeout(debounceTimer)
   }, [searchQuery])
@@ -283,6 +279,38 @@ export default function Home() {
 
   async function loadFeaturedProperties(expanded = false) {
     setLoading(true)
+
+    // Use Elastic Search API when there's a search query for fuzzy matching
+    if (searchQuery) {
+      try {
+        const response = await fetch(`/api/elastic-search?q=${encodeURIComponent(searchQuery)}&limit=50&minScore=5`)
+        const searchData = await response.json()
+
+        if (response.ok && searchData.results) {
+          let results = searchData.results
+
+          // Apply additional filters client-side
+          if (priceRange.min) results = results.filter(p => p.price >= parseInt(priceRange.min))
+          if (priceRange.max) results = results.filter(p => p.price <= parseInt(priceRange.max))
+          if (selectedAmenities.length > 0) {
+            results = results.filter(p => p.amenities && selectedAmenities.every(a => p.amenities.some(pa => pa.toLowerCase().includes(a.toLowerCase()))))
+          }
+
+          // Apply sort only if non-default (relevance sort is default with search)
+          if (sortBy === 'oldest') results.sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+          else if (sortBy === 'price_low') results.sort((a, b) => a.price - b.price)
+          else if (sortBy === 'price_high') results.sort((a, b) => b.price - a.price)
+
+          setProperties(results)
+          setLoading(false)
+          return
+        }
+      } catch (err) {
+        console.error('Elastic search error, falling back:', err)
+      }
+    }
+
+    // Standard Supabase query (no search or elastic search failed)
     let query = supabase
       .from('properties')
       .select(`
@@ -290,9 +318,6 @@ export default function Home() {
         landlord_profile:profiles!properties_landlord_fkey(id, first_name, middle_name, last_name, role)
       `)
 
-    if (searchQuery) {
-      query = query.or(`title.ilike.%${searchQuery}%,address.ilike.%${searchQuery}%,city.ilike.%${searchQuery}%`)
-    }
     if (priceRange.min) {
       query = query.gte('price', parseInt(priceRange.min))
     }
@@ -311,9 +336,6 @@ export default function Home() {
     if (selectedAmenities.length > 0) {
       query = query.contains('amenities', selectedAmenities)
     }
-
-    // We fetch a bit more than 8 to allow for the "See More" functionality if needed,
-    // but the carousel handles the slicing.
 
     const { data, error } = await query
     setProperties(data || [])
@@ -568,7 +590,7 @@ export default function Home() {
                 </div>
                 <input
                   type="text"
-                  placeholder="Search properties, cities..."
+                  placeholder="Smart search properties, cities..."
                   className="w-full bg-white border border-gray-200 rounded-full focus:ring-2 focus:ring-black/20 focus:border-gray-400 font-medium pl-11 pr-10 py-3 text-sm transition-all duration-300 hover:border-gray-300 hover:shadow-md focus:shadow-md placeholder:text-gray-400 shadow-sm"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -649,11 +671,17 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* Search Dropdown - Results (when query typed) */}
+                {/* Search Dropdown - Elastic Results (when query typed) */}
                 {showSearchDropdown && searchQuery.trim() && searchResults.length > 0 && (
                   <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden z-50 animate-fadeInUp" style={{ animationDuration: '0.2s' }}>
                     <div className="p-2">
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">Search Results</p>
+                      <div className="flex items-center justify-between px-2 mb-2">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Search Results</p>
+                        <p className="text-[9px] font-medium text-gray-300 flex items-center gap-1">
+                          <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                          Smart Search
+                        </p>
+                      </div>
                       {searchResults.map((property) => (
                         <div
                           key={property.id}
@@ -681,9 +709,32 @@ export default function Home() {
                               <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
                               <span className="font-bold text-gray-900">₱{Number(property.price).toLocaleString()}/mo</span>
                             </div>
+                            {/* Matched fields indicator */}
+                            {property._matchedFields && property._matchedFields.length > 0 && (
+                              <div className="flex items-center gap-1 mt-0.5">
+                                {property._matchedFields.slice(0, 3).map((field) => (
+                                  <span key={field} className="text-[8px] px-1 py-px rounded bg-blue-50 text-blue-500 font-medium capitalize">
+                                    {field === 'property_type' ? 'type' : field === 'building' ? 'building' : field}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                          <div className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${property.status === 'available' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                            {property.status}
+                          <div className="flex flex-col items-end gap-1">
+                            <div className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${property.status === 'available' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                              {property.status}
+                            </div>
+                            {/* Relevance indicator */}
+                            {property._score && (
+                              <div className="flex items-center gap-0.5">
+                                {[...Array(Math.min(3, Math.ceil(property._score / 150)))].map((_, i) => (
+                                  <div key={i} className="w-1 h-1 rounded-full bg-emerald-400" />
+                                ))}
+                                {[...Array(Math.max(0, 3 - Math.ceil(property._score / 150)))].map((_, i) => (
+                                  <div key={i} className="w-1 h-1 rounded-full bg-gray-200" />
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -704,8 +755,11 @@ export default function Home() {
 
                 {/* No results message */}
                 {showSearchDropdown && searchQuery.trim() && searchResults.length === 0 && !isSearching && (
-                  <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden z-50 p-4 text-center animate-fadeInUp" style={{ animationDuration: '0.2s' }}>
-                    <p className="text-sm font-medium text-gray-500">No properties found for "{searchQuery}"</p>
+                  <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden z-50 p-4 animate-fadeInUp" style={{ animationDuration: '0.2s' }}>
+                    <div className="text-center">
+                      <p className="text-sm font-medium text-gray-500">No properties found for "{searchQuery}"</p>
+                      <p className="text-[11px] text-gray-400 mt-1">Try different keywords or check spelling</p>
+                    </div>
                   </div>
                 )}
               </div>

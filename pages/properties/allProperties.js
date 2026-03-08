@@ -374,27 +374,59 @@ export default function AllProperties() {
 
   async function loadProperties() {
     setLoading(true)
-    let query = supabase.from('properties').select('*').eq('is_deleted', false)
 
+    let filteredData = []
+
+    // Use Elastic Search API when there's a text query for fuzzy/relevance-ranked results
     if (searchQuery.trim()) {
-      query = query.or(`title.ilike.%${searchQuery}%,city.ilike.%${searchQuery}%,address.ilike.%${searchQuery}%`)
+      try {
+        const response = await fetch(`/api/elastic-search?q=${encodeURIComponent(searchQuery)}&limit=50&minScore=5`)
+        const searchData = await response.json()
+
+        if (response.ok && searchData.results) {
+          filteredData = searchData.results
+        }
+      } catch (err) {
+        console.error('Elastic search error, falling back to basic search:', err)
+        // Fallback to basic search if elastic search API fails
+        const { data } = await supabase.from('properties').select('*').eq('is_deleted', false)
+          .or(`title.ilike.%${searchQuery}%,city.ilike.%${searchQuery}%,address.ilike.%${searchQuery}%`)
+        filteredData = data || []
+      }
+    } else {
+      // No text query - use standard Supabase query
+      let query = supabase.from('properties').select('*').eq('is_deleted', false)
+
+      if (sortBy === 'newest') query = query.order('created_at', { ascending: false })
+      else if (sortBy === 'oldest') query = query.order('created_at', { ascending: true })
+      else if (sortBy === 'price_low') query = query.order('price', { ascending: true })
+      else if (sortBy === 'price_high') query = query.order('price', { ascending: false })
+
+      const { data, error } = await query
+      if (error) {
+        console.error('Error loading properties:', error)
+        setLoading(false)
+        return
+      }
+      filteredData = data || []
     }
-    if (priceRange.min) query = query.gte('price', parseInt(priceRange.min))
-    if (priceRange.max) query = query.lte('price', parseInt(priceRange.max))
 
-    if (sortBy === 'newest') query = query.order('created_at', { ascending: false })
-    else if (sortBy === 'oldest') query = query.order('created_at', { ascending: true })
-    else if (sortBy === 'price_low') query = query.order('price', { ascending: true })
-    else if (sortBy === 'price_high') query = query.order('price', { ascending: false })
-
-    const { data, error } = await query
-    if (error) {
-      console.error('Error loading properties:', error)
-      setLoading(false)
-      return
+    // Apply price range filter
+    if (priceRange.min) {
+      filteredData = filteredData.filter(p => p.price >= parseInt(priceRange.min))
+    }
+    if (priceRange.max) {
+      filteredData = filteredData.filter(p => p.price <= parseInt(priceRange.max))
     }
 
-    let filteredData = data || []
+    // Apply sort if we used elastic search (which has its own relevance sort)
+    // Only re-sort if user has a specific sort preference AND there's a search query
+    if (searchQuery.trim() && sortBy !== 'newest') {
+      if (sortBy === 'oldest') filteredData.sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+      else if (sortBy === 'price_low') filteredData.sort((a, b) => a.price - b.price)
+      else if (sortBy === 'price_high') filteredData.sort((a, b) => b.price - a.price)
+      // 'newest' with search query keeps relevance sort from elastic search
+    }
 
     // 1. Amenity Filter
     if (selectedAmenities.length > 0) {
