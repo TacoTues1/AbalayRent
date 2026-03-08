@@ -50,6 +50,7 @@
     "autoprefixer": "latest",
     "postcss": "latest",
     "rimraf": "^6.1.2",
+    "supabase": "^2.77.0",
     "tailwindcss": "latest"
   }
 }

@@ -2,6 +2,7 @@ import '../styles/globals.css'
 import { supabase } from '../lib/supabaseClient'
 import Navbar from '../components/Navbar'
 import NotificationToast from '../components/NotificationToast'
+import CookieConsent from '../components/CookieConsent'
 import Meta from '../components/Meta'
 import { Analytics } from "@vercel/analytics/next"
 import { SpeedInsights } from "@vercel/speed-insights/next"
@@ -21,6 +22,7 @@ function MyApp({ Component, pageProps }) {
       <NotificationToast />
       <GoeyToaster position="top-right" richColors />
       <Component {...pageProps} supabase={supabase} />
+      <CookieConsent />
       <Analytics />
       <SpeedInsights />
     </>

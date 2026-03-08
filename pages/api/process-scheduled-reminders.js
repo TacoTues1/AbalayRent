@@ -1,6 +1,6 @@
 // pages/api/process-scheduled-reminders.js
 // Processes any due reminders from the scheduled_reminders queue
-// Called automatically when any user visits the site
+// Called automatically by Supabase pg_cron every 5 minutes, or by Navbar on user activity
 
 import { createClient } from '@supabase/supabase-js'
 import { sendNotificationEmail } from '../../lib/email'
@@ -21,7 +21,21 @@ function formatPhoneNumber(phone) {
     return '+' + clean;
 }
 
+// Increase timeout for Vercel serverless
+export const config = {
+    maxDuration: 30,
+};
+
 export default async function handler(req, res) {
+    // === CRON AUTH: Allow both client-side calls and Supabase pg_cron calls ===
+    const cronSecret = req.headers['x-cron-secret'] || req.query.cron_secret;
+    const isCronCall = cronSecret === process.env.CRON_SECRET;
+    const isClientCall = req.headers.referer || req.headers.origin;
+
+    if (!isCronCall && !isClientCall) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
     const results = { processed: 0, messages: 0, bookings: 0, errors: 0 }
 
     try {

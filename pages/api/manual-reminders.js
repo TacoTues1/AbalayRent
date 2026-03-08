@@ -18,7 +18,22 @@ function formatPhoneNumber(phone) {
   return '+' + clean;
 }
 
+// Increase timeout for Vercel serverless (cron jobs can take longer)
+export const config = {
+  maxDuration: 60, // 60 seconds max (Vercel Pro) or 10 seconds (Hobby)
+};
+
 export default async function handler(req, res) {
+  // === CRON AUTH: Allow both client-side calls and Supabase pg_cron calls ===
+  const cronSecret = req.headers['x-cron-secret'] || req.query.cron_secret;
+  const isCronCall = cronSecret === process.env.CRON_SECRET;
+  const isClientCall = req.headers.referer || req.headers.origin; // Client-side fetch has referer
+
+  // If neither a valid cron call nor a client-side call, reject
+  if (!isCronCall && !isClientCall) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
   const results = { bookings_processed: 0, messages_processed: 0, rent_reminders_sent: 0, wifi_reminders_sent: 0, electricity_reminders_sent: 0, water_reminders_sent: 0, errors: 0, skipped: null }
 
   try {

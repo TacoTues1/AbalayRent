@@ -157,8 +157,7 @@ export default function LandlordDashboard({ session, profile }) {
         setStatsLoaded(true)
       })
     }
-    // Check for reminders (only sends at 8:00 AM, once per day)
-    fetch('/api/manual-reminders').catch(err => console.error("Reminder check failed", err));
+    // Reminders are now handled automatically by Supabase pg_cron
   }, [profile])
 
   // Reload monthly income when selected month/year changes
