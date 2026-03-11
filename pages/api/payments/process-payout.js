@@ -7,8 +7,8 @@ const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.
  * 
  * Flow:
  * 1. Tenant pays via PayMongo (GCash/Maya) → money goes to system's PayMongo account
- * 2. System verifies payment and deducts 1% platform fee
- * 3. System sends 99% to landlord's GCash/Maya via PayMongo Payout API
+ * 2. System verifies payment
+ * 3. System sends full amount to landlord's GCash/Maya via PayMongo Payout API
  * 
  * PayMongo Payout API: https://developers.paymongo.com/reference/create-a-payout
  */
@@ -132,7 +132,7 @@ export default async function handler(req, res) {
             recipient: payout.landlord_id,
             actor: payout.tenant_id,
             type: 'payout_received',
-            message: `₱${payout.payout_amount.toLocaleString()} has been sent to your ${payoutChannel === 'gcash' ? 'GCash' : 'Maya'} (${payout.payout_destination}). Platform fee: ₱${payout.platform_fee.toLocaleString()}.`,
+            message: `₱${payout.payout_amount.toLocaleString()} has been sent to your ${payoutChannel === 'gcash' ? 'GCash' : 'Maya'} (${payout.payout_destination}).`,
             link: '/payments',
             data: { payout_id: payoutId }
         });

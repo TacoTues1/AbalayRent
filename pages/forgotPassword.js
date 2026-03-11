@@ -16,12 +16,24 @@ export default function ForgotPassword() {
 
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        // Redirect user to this page after they click the email link
-        // You will need to create 'pages/update-password.js' to handle the new password input
         redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'https://abalay.vercel.app'}/updatePassword`,
       })
 
-      if (error) throw error
+      if (error) {
+        // Rate limit exceeded -> use Brevo fallback
+        if (error.message.toLowerCase().includes('rate') || error.message.toLowerCase().includes('limit') || error.message.toLowerCase().includes('exceeded')) {
+          const res = await fetch('/api/reset-password-brevo', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+          });
+          const data = await res.json();
+          
+          if (!res.ok) throw new Error(data.error || 'Failed to send link via backup');
+        } else {
+          throw error;
+        }
+      }
 
       showToast.success("Password reset link sent! Please check your email.", {
         duration: 4000,
@@ -31,9 +43,6 @@ export default function ForgotPassword() {
         icon: '',
         sound: true,
       });
-
-      // Optional: Redirect back to login after a delay
-      // setTimeout(() => router.push('/login'), 3000)
 
     } catch (error) {
       showToast.error(error.message, {

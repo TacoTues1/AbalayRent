@@ -590,7 +590,7 @@ export default function Home() {
                 </div>
                 <input
                   type="text"
-                  placeholder="Smart search properties, cities..."
+                  placeholder="Search properties, cities..."
                   className="w-full bg-white border border-gray-200 rounded-full focus:ring-2 focus:ring-black/20 focus:border-gray-400 font-medium pl-11 pr-10 py-3 text-sm transition-all duration-300 hover:border-gray-300 hover:shadow-md focus:shadow-md placeholder:text-gray-400 shadow-sm"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -677,10 +677,10 @@ export default function Home() {
                     <div className="p-2">
                       <div className="flex items-center justify-between px-2 mb-2">
                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Search Results</p>
-                        <p className="text-[9px] font-medium text-gray-300 flex items-center gap-1">
+                        {/* <p className="text-[9px] font-medium text-gray-300 flex items-center gap-1">
                           <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                           Smart Search
-                        </p>
+                        </p> */}
                       </div>
                       {searchResults.map((property) => (
                         <div
@@ -818,7 +818,7 @@ export default function Home() {
                           style={{ animationDelay: `${idx * 0.1}s` }}
                           onClick={() => router.push(`/properties/${property.id}`)}
                         >
-                          <div className="relative aspect-[4/3] overflow-hidden bg-gray-100">
+                          <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-2xl">
                             <img src={images[currentIndex]} alt={property.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
 
                             {/* Action Buttons (Restored Design) */}
@@ -939,7 +939,7 @@ export default function Home() {
                           className={`group bg-white rounded-2xl shadow-sm border overflow-hidden flex flex-col cursor-pointer h-full card-hover ${isSelectedForCompare ? 'ring-2 ring-gray-900 border-gray-900' : 'border-gray-100 hover:border-gray-300'}`}
                           onClick={() => router.push(`/properties/${item.id}`)}
                         >
-                          <div className="relative aspect-[4/3] overflow-hidden bg-gray-100">
+                          <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-2xl">
                             <img src={images[currentIndex]} alt={item.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
 
                             {/* Action Buttons */}
@@ -1065,7 +1065,7 @@ export default function Home() {
                           className={`group bg-white rounded-2xl shadow-sm border overflow-hidden flex flex-col cursor-pointer h-full card-hover ${isSelectedForCompare ? 'ring-2 ring-gray-900 border-gray-900' : 'border-gray-100 hover:border-gray-300'}`}
                           onClick={() => router.push(`/properties/${item.id}`)}
                         >
-                          <div className="relative aspect-[4/3] overflow-hidden bg-gray-100">
+                          <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-2xl">
                             <img src={images[currentIndex]} alt={item.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
 
                             {/* Action Buttons */}

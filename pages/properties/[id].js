@@ -29,6 +29,8 @@ export default function PropertyDetail() {
   const [timeSlots, setTimeSlots] = useState([])
   const [showBookingOptions, setShowBookingOptions] = useState(false)
   const [selectedSlotId, setSelectedSlotId] = useState('')
+  const [selectedBookingDate, setSelectedBookingDate] = useState(null) // Track selected date separately
+  const [bookingStep, setBookingStep] = useState(1) // 1 = pick date, 2 = pick time
   const [termsAccepted, setTermsAccepted] = useState(false)
   const [bookingNote, setBookingNote] = useState('')
   const [showTermsModal, setShowTermsModal] = useState(false)
@@ -88,6 +90,7 @@ export default function PropertyDetail() {
 
   useEffect(() => {
     if (id) {
+      window.scrollTo(0, 0)
       loadProperty()
       loadReviews()
       loadPropertyStats()
@@ -489,6 +492,8 @@ export default function PropertyDetail() {
     setShowBookingOptions(false)
     setBookingNote('')
     setTermsAccepted(false)
+    setBookingStep(1)
+    setSelectedBookingDate(null)
   }
 
   // Triggered when confirming the booking
@@ -1149,7 +1154,7 @@ export default function PropertyDetail() {
                               </button>
                             </div>
 
-                            {/* Date/Time Selection - Airbnb Calendar Style */}
+                            {/* Date/Time Selection - Step-by-Step Wizard */}
                             <div>
                               {timeSlots.length > 0 ? (() => {
                                 // --- Build calendar data ---
@@ -1170,17 +1175,10 @@ export default function PropertyDetail() {
                                   return 'PM2'
                                 }
 
-                                // Current calendar state (use first slot month as default)
-                                const firstSlotDate = new Date(timeSlots[0].start_time)
                                 const today = new Date()
                                 today.setHours(0, 0, 0, 0)
 
-                                // We'll use inline state via a self-invoking pattern with selectedDate tracking
-                                // Since we can't add state here, we derive the selected date from selectedSlotId
                                 const selectedSlot = timeSlots.find(s => s.id === selectedSlotId)
-                                const selectedDateKey = selectedSlot
-                                  ? `${new Date(selectedSlot.start_time).getFullYear()}-${String(new Date(selectedSlot.start_time).getMonth() + 1).padStart(2, '0')}-${String(new Date(selectedSlot.start_time).getDate()).padStart(2, '0')}`
-                                  : null
 
                                 // Determine which months have slots
                                 const slotDates = Object.keys(slotsByDate)
@@ -1188,133 +1186,173 @@ export default function PropertyDetail() {
 
                                 return (
                                   <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                                    {/* Time Period Selector (top bar like check-in/checkout) */}
-                                    <div className="grid grid-cols-4 border-b border-gray-200">
-                                      {[
-                                        { key: 'AM1', label: 'AM 1', sub: '6–10 AM' },
-                                        { key: 'AM2', label: 'AM 2', sub: '10–12 PM' },
-                                        { key: 'PM1', label: 'PM 1', sub: '12–3 PM' },
-                                        { key: 'PM2', label: 'PM 2', sub: '3–6 PM' },
-                                      ].map((period, idx) => {
-                                        // Check if the selected date has a slot in this period
-                                        const dateSlots = selectedDateKey ? (slotsByDate[selectedDateKey] || []) : []
-                                        const periodSlot = dateSlots.find(s => classifySlot(s) === period.key)
-                                        const isAvailable = !!periodSlot
-                                        const isActive = selectedSlot && periodSlot && periodSlot.id === selectedSlot.id
 
-                                        return (
+                                    {/* ===== STEP 1: DATE PICKER (Calendar) ===== */}
+                                    {bookingStep === 1 && (
+                                      <>
+                                        <div className="px-3 py-2.5 border-b border-gray-100 bg-gray-50/50">                                          <p className="text-xs font-bold text-gray-900">Select a Date</p>
+                                        </div>
+
+                                        {/* Calendar Months */}
+                                        <div className="p-3 max-h-[280px] overflow-y-auto">
+                                          {allMonths.map(monthKey => {
+                                            const [yearStr, monStr] = monthKey.split('-')
+                                            const year = parseInt(yearStr)
+                                            const month = parseInt(monStr) - 1
+                                            const firstDay = new Date(year, month, 1)
+                                            const daysInMonth = new Date(year, month + 1, 0).getDate()
+                                            const startDow = firstDay.getDay()
+
+                                            const monthLabel = firstDay.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+
+                                            const cells = []
+                                            for (let i = 0; i < startDow; i++) cells.push(null)
+                                            for (let d = 1; d <= daysInMonth; d++) cells.push(d)
+
+                                            return (
+                                              <div key={monthKey} className="mb-4 last:mb-0">
+                                                <div className="flex items-center justify-center mb-2.5">
+                                                  <h4 className="text-xs font-black text-gray-900 tracking-tight">{monthLabel}</h4>
+                                                </div>
+
+                                                <div className="grid grid-cols-7 gap-0 mb-1">
+                                                  {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+                                                    <div key={i} className="text-center text-[9px] font-bold text-gray-400 uppercase py-1">{d}</div>
+                                                  ))}
+                                                </div>
+
+                                                <div className="grid grid-cols-7 gap-0">
+                                                  {cells.map((day, i) => {
+                                                    if (day === null) return <div key={`empty-${i}`} className="aspect-square"></div>
+
+                                                    const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+                                                    const hasSlots = !!slotsByDate[dateKey]
+                                                    const dateObj = new Date(year, month, day)
+                                                    const isPast = dateObj < today
+                                                    const isDisabled = !hasSlots || isPast
+                                                    const isToday = dateObj.getTime() === today.getTime()
+                                                    const isSelected = selectedBookingDate === dateKey
+
+                                                    return (
+                                                      <button
+                                                        key={dateKey}
+                                                        type="button"
+                                                        disabled={isDisabled}
+                                                        onClick={() => {
+                                                          // Select this date and move to step 2
+                                                          setSelectedBookingDate(dateKey)
+                                                          const daySlots = slotsByDate[dateKey] || []
+                                                          if (daySlots.length > 0) setSelectedSlotId(daySlots[0].id)
+                                                          setBookingStep(2)
+                                                        }}
+                                                        className={`aspect-square flex items-center justify-center text-xs rounded-full transition-all relative
+                                                        ${isSelected
+                                                            ? 'bg-black text-white font-black shadow-lg'
+                                                            : isDisabled
+                                                              ? 'text-gray-300 cursor-not-allowed'
+                                                              : 'text-gray-800 font-bold hover:bg-gray-100 cursor-pointer'
+                                                          }
+                                                        ${isToday && !isSelected ? 'ring-1 ring-black ring-offset-1' : ''}
+                                                      `}
+                                                      >
+                                                        {day}
+                                                        {hasSlots && !isPast && !isSelected && (
+                                                          <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 bg-black rounded-full"></span>
+                                                        )}
+                                                      </button>
+                                                    )
+                                                  })}
+                                                </div>
+                                              </div>
+                                            )
+                                          })}
+                                        </div>
+                                      </>
+                                    )}
+
+                                    {/* ===== STEP 2: TIME SLOT PICKER ===== */}
+                                    {bookingStep === 2 && selectedBookingDate && (
+                                      <>
+                                        {/* Back to date selection */}
+                                        <div className="px-3 py-2.5 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                                          <div>
+                                            <p className="text-xs font-bold text-gray-900">Select a Time</p>
+                                          </div>
                                           <button
-                                            key={period.key}
                                             type="button"
-                                            disabled={!isAvailable}
-                                            onClick={() => { if (periodSlot) setSelectedSlotId(periodSlot.id) }}
-                                            className={`py-2.5 px-1 text-center transition-all relative cursor-pointer disabled:cursor-not-allowed
-                                            ${idx < 3 ? 'border-r border-gray-200' : ''}
-                                            ${isActive ? 'bg-gray-50' : ''}
-                                            ${!isAvailable ? 'opacity-40' : 'hover:bg-gray-50'}
-                                          `}
+                                            onClick={() => setBookingStep(1)}
+                                            className="text-[10px] font-bold text-gray-500 hover:text-black flex items-center gap-1 cursor-pointer transition-colors"
                                           >
-                                            <p className={`text-[9px] font-bold uppercase tracking-widest ${isActive ? 'text-black' : isAvailable ? 'text-gray-400' : 'text-gray-300'}`}>{period.label}</p>
-                                            <p className={`text-[10px] font-medium mt-0.5 ${isActive ? 'text-black font-bold' : isAvailable ? 'text-gray-600' : 'text-gray-300 line-through'}`}>
-                                              {isAvailable ? period.sub : 'N/A'}
-                                            </p>
-                                            {isActive && <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-black rounded-full"></div>}
+                                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                                            Change Date
                                           </button>
-                                        )
-                                      })}
-                                    </div>
+                                        </div>
 
-                                    {/* Calendar Months */}
-                                    <div className="p-3 max-h-[280px] overflow-y-auto">
-                                      {allMonths.map(monthKey => {
-                                        const [yearStr, monStr] = monthKey.split('-')
-                                        const year = parseInt(yearStr)
-                                        const month = parseInt(monStr) - 1
-                                        const firstDay = new Date(year, month, 1)
-                                        const daysInMonth = new Date(year, month + 1, 0).getDate()
-                                        const startDow = firstDay.getDay() // 0=Sun
+                                        {/* Selected Date Summary */}
+                                        <div className="px-3 py-2.5 border-b border-gray-100 flex items-center gap-3">
+                                          <div className="w-10 h-10 bg-black rounded-lg flex flex-col items-center justify-center text-white flex-shrink-0">
+                                            <span className="text-sm font-black leading-none">{new Date(selectedBookingDate + 'T00:00:00').getDate()}</span>
+                                            <span className="text-[7px] font-bold uppercase">{new Date(selectedBookingDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short' })}</span>
+                                          </div>
+                                          <div>
+                                            <p className="text-xs font-bold text-gray-900">
+                                              {new Date(selectedBookingDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                                            </p>
+                                            <p className="text-[10px] text-gray-500">{(slotsByDate[selectedBookingDate] || []).length} time slot{(slotsByDate[selectedBookingDate] || []).length !== 1 ? 's' : ''} available</p>
+                                          </div>
+                                        </div>
 
-                                        const monthLabel = firstDay.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+                                        {/* Time Period Buttons */}
+                                        <div className="grid grid-cols-4 border-b border-gray-200">
+                                          {[
+                                            { key: 'AM1', label: 'AM 1', sub: '6–10 AM' },
+                                            { key: 'AM2', label: 'AM 2', sub: '10–12 PM' },
+                                            { key: 'PM1', label: 'PM 1', sub: '12–3 PM' },
+                                            { key: 'PM2', label: 'PM 2', sub: '3–6 PM' },
+                                          ].map((period, idx) => {
+                                            const dateSlots = slotsByDate[selectedBookingDate] || []
+                                            const periodSlot = dateSlots.find(s => classifySlot(s) === period.key)
+                                            const isAvailable = !!periodSlot
+                                            const isActive = selectedSlot && periodSlot && periodSlot.id === selectedSlot.id
 
-                                        // Build day cells
-                                        const cells = []
-                                        // Empty cells before first day
-                                        for (let i = 0; i < startDow; i++) cells.push(null)
-                                        for (let d = 1; d <= daysInMonth; d++) cells.push(d)
+                                            return (
+                                              <button
+                                                key={period.key}
+                                                type="button"
+                                                disabled={!isAvailable}
+                                                onClick={() => { if (periodSlot) setSelectedSlotId(periodSlot.id) }}
+                                                className={`py-3 px-1 text-center transition-all relative cursor-pointer disabled:cursor-not-allowed
+                                                ${idx < 3 ? 'border-r border-gray-200' : ''}
+                                                ${isActive ? 'bg-gray-50' : ''}
+                                                ${!isAvailable ? 'opacity-40' : 'hover:bg-gray-50'}
+                                              `}
+                                              >
+                                                <p className={`text-[9px] font-bold uppercase tracking-widest ${isActive ? 'text-black' : isAvailable ? 'text-gray-400' : 'text-gray-300'}`}>{period.label}</p>
+                                                <p className={`text-[10px] font-medium mt-0.5 ${isActive ? 'text-black font-bold' : isAvailable ? 'text-gray-600' : 'text-gray-300 line-through'}`}>
+                                                  {isAvailable ? period.sub : 'N/A'}
+                                                </p>
+                                                {isActive && <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-black rounded-full"></div>}
+                                              </button>
+                                            )
+                                          })}
+                                        </div>
 
-                                        return (
-                                          <div key={monthKey} className="mb-4 last:mb-0">
-                                            {/* Month Header */}
-                                            <div className="flex items-center justify-center mb-2.5">
-                                              <h4 className="text-xs font-black text-gray-900 tracking-tight">{monthLabel}</h4>
+                                        {/* Selected Time Info */}
+                                        {selectedSlot && (
+                                          <div className="px-3 py-2.5 bg-gray-50/50 flex items-center justify-between">
+                                            <div>
+                                              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Selected Time</p>
+                                              <p className="text-xs font-bold text-gray-900">
+                                                {new Date(selectedSlot.start_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} – {new Date(selectedSlot.end_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                                              </p>
                                             </div>
-
-                                            {/* Day headers */}
-                                            <div className="grid grid-cols-7 gap-0 mb-1">
-                                              {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
-                                                <div key={i} className="text-center text-[9px] font-bold text-gray-400 uppercase py-1">{d}</div>
-                                              ))}
-                                            </div>
-
-                                            {/* Day grid */}
-                                            <div className="grid grid-cols-7 gap-0">
-                                              {cells.map((day, i) => {
-                                                if (day === null) return <div key={`empty-${i}`} className="aspect-square"></div>
-
-                                                const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-                                                const hasSlots = !!slotsByDate[dateKey]
-                                                const dateObj = new Date(year, month, day)
-                                                const isPast = dateObj < today
-                                                const isDisabled = !hasSlots || isPast
-                                                const isSelectedDate = selectedDateKey === dateKey
-
-                                                // Check if this is today
-                                                const isToday = dateObj.getTime() === today.getTime()
-
-                                                return (
-                                                  <button
-                                                    key={dateKey}
-                                                    type="button"
-                                                    disabled={isDisabled}
-                                                    onClick={() => {
-                                                      // Select first available slot of this date
-                                                      const daySlots = slotsByDate[dateKey] || []
-                                                      if (daySlots.length > 0) setSelectedSlotId(daySlots[0].id)
-                                                    }}
-                                                    className={`aspect-square flex items-center justify-center text-xs rounded-full transition-all relative
-                                                    ${isSelectedDate
-                                                        ? 'bg-black text-white font-black shadow-lg'
-                                                        : isDisabled
-                                                          ? 'text-gray-300 cursor-not-allowed'
-                                                          : 'text-gray-800 font-bold hover:bg-gray-100 cursor-pointer'
-                                                      }
-                                                    ${isToday && !isSelectedDate ? 'ring-1 ring-black ring-offset-1' : ''}
-                                                  `}
-                                                  >
-                                                    {day}
-                                                    {hasSlots && !isPast && !isSelectedDate && (
-                                                      <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 bg-black rounded-full"></span>
-                                                    )}
-                                                  </button>
-                                                )
-                                              })}
+                                            <div className="flex items-center gap-1 text-green-600">
+                                              <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                                              <span className="text-[10px] font-bold">Available</span>
                                             </div>
                                           </div>
-                                        )
-                                      })}
-                                    </div>
-
-                                    {/* Selected Info */}
-                                    {selectedSlot && (
-                                      <div className="border-t border-gray-100 px-3 py-2.5 bg-gray-50/50 flex items-center justify-between">
-                                        <div>
-                                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Selected</p>
-                                          <p className="text-xs font-bold text-gray-900">
-                                            {new Date(selectedSlot.start_time).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} • {new Date(selectedSlot.start_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} – {new Date(selectedSlot.end_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-                                          </p>
-                                        </div>
-                                        <button type="button" onClick={() => setSelectedSlotId('')} className="text-[10px] font-bold text-gray-400 hover:text-black cursor-pointer">Clear</button>
-                                      </div>
+                                        )}
+                                      </>
                                     )}
                                   </div>
                                 )

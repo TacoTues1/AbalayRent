@@ -275,6 +275,55 @@ export default function BookingsPage() {
       return new Date(b.booking_date || 0) - new Date(a.booking_date || 0);
     });
 
+    // --- AUTO-CANCEL PAST PENDING BOOKINGS ---
+    const now = new Date()
+    const pastPendingBookings = finalBookings.filter(b =>
+      ['pending', 'pending_approval'].includes((b.status || '').toLowerCase()) &&
+      b.booking_date &&
+      new Date(b.booking_date) < now
+    )
+
+    if (pastPendingBookings.length > 0) {
+      const pastIds = pastPendingBookings.map(b => b.id)
+
+      // Update status to cancelled in the DB
+      await supabase
+        .from('bookings')
+        .update({ status: 'cancelled' })
+        .in('id', pastIds)
+
+      // Free up their time slots
+      const slotIds = pastPendingBookings
+        .map(b => b.time_slot_id)
+        .filter(Boolean)
+      if (slotIds.length > 0) {
+        await supabase
+          .from('available_time_slots')
+          .update({ is_booked: false })
+          .in('id', slotIds)
+      }
+
+      // Send notifications to tenants about auto-cancellation
+      for (const booking of pastPendingBookings) {
+        try {
+          await createNotification({
+            recipient: booking.tenant,
+            actor: booking.tenant, // system action
+            type: 'booking_auto_cancelled',
+            message: `Your viewing for "${booking.property?.title || 'a property'}" was auto-cancelled because the scheduled date has passed. Please book a new viewing schedule.`,
+            link: '/bookings'
+          })
+        } catch (err) {
+          console.error('Auto-cancel notification error:', err)
+        }
+      }
+
+      // Update local data to reflect the cancellation
+      finalBookings = finalBookings.map(b =>
+        pastIds.includes(b.id) ? { ...b, status: 'cancelled' } : b
+      )
+    }
+
     setBookings(finalBookings)
     setLoading(false)
   }
@@ -1067,7 +1116,7 @@ export default function BookingsPage() {
                       )}
 
                       {/* TENANT ACTIONS - Hide all buttons for completed status */}
-                      {roleLower !== 'landlord' && !isPast && statusLower !== 'completed' && (
+                      {roleLower !== 'landlord' && statusLower !== 'completed' && (!isPast || ['rejected', 'cancelled'].includes(statusLower)) && (
                         <div className="flex gap-2 w-full md:w-auto">
 
                           {/* Case 1: Ready to Book (Accepted Application) */}

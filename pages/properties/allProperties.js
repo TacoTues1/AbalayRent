@@ -122,9 +122,15 @@ function MapCoverageCircle({ center }) {
     }
 
     return () => {
-      if (map.getLayer(layerIdFill)) map.removeLayer(layerIdFill);
-      if (map.getLayer(layerIdLine)) map.removeLayer(layerIdLine);
-      if (map.getSource(sourceId)) map.removeSource(sourceId);
+      try {
+        if (map && map.getStyle()) {
+          if (map.getLayer(layerIdFill)) map.removeLayer(layerIdFill);
+          if (map.getLayer(layerIdLine)) map.removeLayer(layerIdLine);
+          if (map.getSource(sourceId)) map.removeSource(sourceId);
+        }
+      } catch (e) {
+        // Suppress MapLibre unmount errors
+      }
     }
   }, [map, isLoaded, center]);
 
@@ -137,6 +143,24 @@ function MapCoverageCircle({ center }) {
     });
   }, [map, isLoaded, center]);
 
+  return null;
+}
+
+// --- Fly-to-Philippines Animation Component ---
+function FlyToPhilippines() {
+  const { map, isLoaded } = useMap();
+  useEffect(() => {
+    if (!isLoaded || !map) return;
+    const timer = setTimeout(() => {
+      map.flyTo({
+        center: [122.0, 12.5],
+        zoom: 4.5,
+        duration: 2000,
+        essential: true,
+      });
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [map, isLoaded]);
   return null;
 }
 
@@ -749,7 +773,7 @@ export default function AllProperties() {
         onClick={() => router.push(`/properties/${property.id}`)}
       >
         {/* Image Slider */}
-        <div className="relative aspect-[4/3] overflow-hidden bg-gray-100">
+        <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-2xl">
           <img
             src={images[currentIndex]}
             alt={property.title}
@@ -950,14 +974,14 @@ export default function AllProperties() {
             <div className="flex bg-gray-100 p-1.5 rounded-xl w-full">
               <button
                 onClick={() => setShowMapView(false)}
-                className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${!showMapView ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer ${!showMapView ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
                 Grid
               </button>
               <button
                 onClick={() => setShowMapView(true)}
-                className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${showMapView ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer ${showMapView ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
                 Map
@@ -1029,14 +1053,14 @@ export default function AllProperties() {
               <div className="flex bg-gray-100 p-1.5 rounded-xl">
                 <button
                   onClick={() => setShowMapView(false)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${!showMapView ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer ${!showMapView ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
                   Grid
                 </button>
                 <button
                   onClick={() => setShowMapView(true)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${showMapView ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer ${showMapView ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
                   Map
@@ -1076,15 +1100,16 @@ export default function AllProperties() {
             ) : showMapView ? (
               <div className="w-full h-[70vh] min-h-[500px] rounded-3xl overflow-hidden border border-gray-200 shadow-sm relative z-0">
                 <Map
-                  initialViewState={{
-                    longitude: userLocation ? userLocation.longitude : (properties.length > 0 && extractCoordinates(properties[0].location_link) ? parseFloat(extractCoordinates(properties[0].location_link).lng) : 121.0),
-                    latitude: userLocation ? userLocation.latitude : (properties.length > 0 && extractCoordinates(properties[0].location_link) ? parseFloat(extractCoordinates(properties[0].location_link).lat) : 14.5),
-                    zoom: filterNearMe ? 14 : 11
-                  }}
+                  key={filterNearMe ? 'nearme' : 'default'}
+                  center={userLocation ? [userLocation.longitude, userLocation.latitude] : [122.0, 12.5]}
+                  zoom={filterNearMe ? 14 : 0}
                   mapStyle="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
                   className="w-full h-full"
                 >
                   <MapControls position="top-right" showLocate={true} showZoom={true} />
+
+                  {/* Fly-to-Philippines animation when not using Find Near Me */}
+                  {!filterNearMe && <FlyToPhilippines />}
 
                   {/* Coverage Circle */}
                   <MapCoverageCircle center={filterNearMe ? userLocation : null} />

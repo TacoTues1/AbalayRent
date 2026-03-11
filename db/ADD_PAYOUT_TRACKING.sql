@@ -2,7 +2,6 @@
 -- ADD PAYOUT TRACKING TABLE
 -- ============================================
 -- Tracks payouts from system to landlords
--- and platform revenue (1% fee)
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS public.payouts (
@@ -14,8 +13,8 @@ CREATE TABLE IF NOT EXISTS public.payouts (
   
   -- Amounts
   total_amount numeric(12,2) NOT NULL,          -- Total tenant paid
-  platform_fee numeric(12,2) NOT NULL DEFAULT 0, -- 1% system revenue
-  payout_amount numeric(12,2) NOT NULL,          -- 99% sent to landlord
+  platform_fee numeric(12,2) NOT NULL DEFAULT 0,
+  payout_amount numeric(12,2) NOT NULL,          -- Full amount sent to landlord
   
   -- Landlord payout details
   payout_method text,           -- 'gcash' or 'maya' (what tenant used)
@@ -36,4 +35,4 @@ CREATE INDEX IF NOT EXISTS idx_payouts_landlord ON public.payouts(landlord_id);
 CREATE INDEX IF NOT EXISTS idx_payouts_status ON public.payouts(status);
 CREATE INDEX IF NOT EXISTS idx_payouts_payment_request ON public.payouts(payment_request_id);
 
-COMMENT ON TABLE public.payouts IS 'Tracks system-to-landlord payouts. System keeps 1% fee, sends 99% to landlord via their GCash/Maya.';
+COMMENT ON TABLE public.payouts IS 'Tracks system-to-landlord payouts. Full amount is sent to landlord via their GCash/Maya.';

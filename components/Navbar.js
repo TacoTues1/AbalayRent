@@ -449,7 +449,6 @@ export default function Navbar() {
     }
   }
 
-  // Toggle read/unread status for a notification
   async function toggleNotifReadStatus(e, notif) {
     e.stopPropagation()
     const newStatus = !notif.read
@@ -458,7 +457,6 @@ export default function Navbar() {
     loadUnreadCount(session.user.id)
   }
 
-  // Delete a notification from dropdown
   async function deleteNotifFromDropdown(e, notifId) {
     e.stopPropagation()
     await supabase.from('notifications').delete().eq('id', notifId)
@@ -479,16 +477,12 @@ export default function Navbar() {
 
   async function handleSignOut() {
     try {
-      // 1. Sign out from Supabase
+
       await supabase.auth.signOut({ scope: 'global' })
 
-      // 2. Clear local state
       setSession(null)
       setProfile(null)
 
-      // 3. FORCE CLEAR LOCAL STORAGE
-      // Supabase v2 uses keys like "sb-<project-id>-auth-token"
-      // We manually clear anything starting with "sb-" or "supabase" to be safe
       if (typeof window !== 'undefined') {
         Object.keys(localStorage).forEach((key) => {
           if (key.startsWith('sb-') && key.endsWith('-auth-token')) {
@@ -500,7 +494,7 @@ export default function Navbar() {
         })
       }
 
-      showToast.error("Sign out Successfully!", {
+      showToast.success("Sign out Successfully!", {
         duration: 4000,
         progress: true,
         position: "top-center",
@@ -654,7 +648,7 @@ export default function Navbar() {
                     )}
                   </Link>
                   <Link href="/maintenance" className={`nav-link text-sm font-semibold transition-colors relative group ${isActive('/maintenance') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
-                    Maintenance
+                    Tenants Maintenance
                     {maintenanceCount > 0 && (
                       <span className="absolute top-0 right-0 transform translate-x-3 -translate-y-2 bg-[#FF4B60] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center shadow-sm">
                         {maintenanceCount > 9 ? '9+' : maintenanceCount}

@@ -80,7 +80,7 @@ const systemFlows = {
             { id: 'pay_manual', label: 'Landlord\nConfirms', type: 'process', x: 70, y: 1440, icon: '👍' },
             { id: 'pay_auto', label: 'Auto-Verified\n(Webhook/API)', type: 'process', x: 420, y: 1440, icon: '⚡' },
             { id: 'pay_done', label: 'Bill Marked\nas Paid', type: 'process', x: 250, y: 1540, icon: '✅' },
-            { id: 'pay_payout', label: 'Auto Payout\n99% → Landlord\n1% Platform Fee', type: 'process', x: 250, y: 1640, icon: '💸' },
+            { id: 'pay_payout', label: 'Auto Payout\n100% → Landlord', type: 'process', x: 250, y: 1640, icon: '💸' },
             { id: 'pay_end', label: 'Payment\nComplete', type: 'end', x: 250, y: 1750, icon: '✅' },
 
             // === MAINTENANCE FLOW ===
@@ -312,7 +312,7 @@ const systemFlows = {
             { id: 'landlord_confirm', label: 'Landlord Confirms\nPayment', type: 'process', x: 150, y: 570, icon: '👍' },
             { id: 'auto_confirm', label: 'Auto-Confirmed\nby Gateway', type: 'process', x: 550, y: 570, icon: '⚡' },
             { id: 'paid', label: 'Bill Marked as Paid', type: 'process', x: 350, y: 660, icon: '✅' },
-            { id: 'payout', label: 'Auto Payout\n99% → Landlord\n1% Platform Fee', type: 'process', x: 350, y: 750, icon: '💸' },
+            { id: 'payout', label: 'Auto Payout\n100% → Landlord', type: 'process', x: 350, y: 750, icon: '💸' },
             { id: 'notify', label: 'Email + SMS + In-App\nNotifications Sent', type: 'end', x: 350, y: 840, icon: '🔔' },
         ],
         edges: [
@@ -838,7 +838,7 @@ export default function FlowchartPage() {
                             },
                             {
                                 icon: '💰', title: 'Payment Processing',
-                                items: ['PayMongo (GCash, Maya, QR PH, Card)', 'Stripe (Credit Card)', 'PayPal (Online)', 'Cash + QR Code (manual)', 'Auto payout (1% platform fee)', 'Family member payments']
+                                items: ['PayMongo (GCash, Maya, QR PH, Card)', 'Stripe (Credit Card)', 'PayPal (Online)', 'Cash + QR Code (manual)', 'Auto payout', 'Family member payments']
                             },
                             {
                                 icon: '🔔', title: 'Notifications',

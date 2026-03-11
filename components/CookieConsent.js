@@ -113,12 +113,12 @@ export default function CookieConsent() {
 
                     {/* Buttons */}
                     <div className="cc-buttons">
-                        <button
+                        {/* <button
                             onClick={() => setShowPreferences(!showPreferences)}
                             className="cc-btn cc-btn-secondary"
                         >
                             {showPreferences ? 'Hide Preferences' : 'Customize'}
-                        </button>
+                        </button> */}
 
                         {showPreferences ? (
                             <button onClick={() => handleClose('custom')} className="cc-btn cc-btn-primary">

@@ -22,18 +22,32 @@ function formatPhoneNumber(phone) {
 
 // Helper: Get family members for a tenant's occupancy on a property
 // Returns array of { id, phone, email, name } for each family member
-async function getFamilyMembersForNotification(tenantId, propertyId) {
-    if (!tenantId || !propertyId) return []
+async function getFamilyMembersForNotification(tenantId, propertyId, occupancyId = null) {
+    if ((!tenantId || !propertyId) && !occupancyId) return []
     try {
-        // Find the primary occupancy for this tenant on this property
-        const { data: primaryOcc } = await supabaseAdmin
-            .from('tenant_occupancies')
-            .select('id, is_family_member, parent_occupancy_id')
-            .eq('tenant_id', tenantId)
-            .eq('property_id', propertyId)
-            .in('status', ['active', 'pending_end'])
-            .limit(1)
-            .maybeSingle()
+        let primaryOcc = null
+
+        if (occupancyId) {
+            // If we have exact occupancy ID, fetch it directly regardless of status
+            const { data } = await supabaseAdmin
+                .from('tenant_occupancies')
+                .select('id, is_family_member, parent_occupancy_id')
+                .eq('id', occupancyId)
+                .single()
+            primaryOcc = data
+        } else {
+            // Find the primary occupancy for this tenant on this property
+            const { data } = await supabaseAdmin
+                .from('tenant_occupancies')
+                .select('id, is_family_member, parent_occupancy_id')
+                .eq('tenant_id', tenantId)
+                .eq('property_id', propertyId)
+                .in('status', ['active', 'pending_end', 'ended'])
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle()
+            primaryOcc = data
+        }
 
         if (!primaryOcc) return []
 
@@ -106,8 +120,8 @@ async function getFamilyMembersForNotification(tenantId, propertyId) {
 }
 
 // Helper: Send same SMS and email to all family members
-async function notifyFamilyMembers({ tenantId, propertyId, smsFn, emailFn }) {
-    const members = await getFamilyMembersForNotification(tenantId, propertyId)
+async function notifyFamilyMembers({ tenantId, propertyId, occupancyId = null, smsFn, emailFn }) {
+    const members = await getFamilyMembersForNotification(tenantId, propertyId, occupancyId)
     if (members.length === 0) return
 
     for (const member of members) {
@@ -574,6 +588,7 @@ export default async function handler(req, res) {
                 await notifyFamilyMembers({
                     tenantId: request.tenant,
                     propertyId: request.property_id,
+                    // Note: PayMongo flow doesn't give us occupancy ID directly, so it relies on tenant/property
                     smsFn: async (memberPhone) => {
                         await sendPaymentConfirmedNotification(memberPhone, {
                             propertyTitle,
@@ -700,6 +715,7 @@ export default async function handler(req, res) {
                     await notifyFamilyMembers({
                         tenantId: occForFamily.tenant_id,
                         propertyId: occForFamily.property_id,
+                        occupancyId: recordId, // Pass the explicit exact occupancy ID
                         smsFn: async (memberPhone) => {
                             await sendMoveInNotification(memberPhone, {
                                 propertyName: propertyTitle || 'Property',
@@ -813,6 +829,7 @@ export default async function handler(req, res) {
                     await notifyFamilyMembers({
                         tenantId,
                         propertyId: occForFamily.property_id,
+                        occupancyId: recordId, // Pass the explicit exact occupancy ID
                         smsFn: async (memberPhone) => {
                             await sendRenewalStatus(memberPhone, {
                                 propertyTitle: propertyTitle || 'Property',
@@ -995,6 +1012,7 @@ export default async function handler(req, res) {
                     await notifyFamilyMembers({
                         tenantId,
                         propertyId: occForFamily.property_id,
+                        occupancyId: recordId, // Pass explicit occupancy ID to ensure we find "ended" ones
                         smsFn: async (memberPhone) => {
                             await sendEndContractNotification(memberPhone, {
                                 propertyName: propertyTitle || 'Property',

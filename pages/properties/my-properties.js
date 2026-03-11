@@ -235,7 +235,7 @@ export default function MyProperties() {
                                     onClick={() => router.push(`/properties/${property.id}`)}
                                 >
                                     {/* Image Slider */}
-                                    <div className="relative aspect-[4/3] overflow-hidden bg-gray-100">
+                                    <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-2xl">
                                         <img
                                             src={images[currentIndex]}
                                             alt={property.title}

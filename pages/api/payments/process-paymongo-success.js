@@ -415,11 +415,11 @@ export default async function handler(req, res) {
             console.error('Notification Error:', notifyErr);
         }
 
-        // 8. AUTO-PAYOUT: Deduct 1% platform fee, simulate payout to landlord
+        // 8. AUTO-PAYOUT: Send full amount to landlord
         // In test mode, we simulate the payout (auto-complete). In production, use PayMongo Payout API.
         try {
-            const platformFee = Math.round(amountPaid * 0.01 * 100) / 100; // 1% fee
-            const payoutAmount = Math.round((amountPaid - platformFee) * 100) / 100; // 99% to landlord
+            const platformFee = 0;
+            const payoutAmount = amountPaid; // 100% to landlord
 
             // Fetch landlord's accepted_payments to get destination wallet
             const { data: landlordPayments } = await supabase
@@ -484,7 +484,7 @@ export default async function handler(req, res) {
                 console.error('Payout record creation failed:', payoutError);
             } else {
                 const methodLabel = payoutMethod === 'maya' ? 'Maya' : 'GCash';
-                console.log(`✅ Payout completed: ₱${payoutAmount} to ${methodLabel} (${payoutDestination}), Platform fee: ₱${platformFee}, Ref: ${payoutRefNumber}`);
+                console.log(`✅ Payout completed: ₱${payoutAmount} to ${methodLabel} (${payoutDestination}), Ref: ${payoutRefNumber}`);
 
                 // Notify landlord about payout received
                 const { data: tenantProfile2 } = await supabase
@@ -510,7 +510,7 @@ export default async function handler(req, res) {
                     recipient: request.landlord,
                     actor: request.tenant,
                     type: 'payout_received',
-                    message: `₱${payoutAmount.toLocaleString()} has been sent to your ${methodLabel} (${payoutDestination}) from ${payoutDisplayName}'s payment. Platform fee: ₱${platformFee.toLocaleString()}. Ref: ${payoutRefNumber}`,
+                    message: `₱${payoutAmount.toLocaleString()} has been sent to your ${methodLabel} (${payoutDestination}) from ${payoutDisplayName}'s payment. Ref: ${payoutRefNumber}`,
                     link: '/payments',
                     data: { payout_id: payoutRecord?.id, reference_number: payoutRefNumber }
                 });
@@ -526,8 +526,6 @@ export default async function handler(req, res) {
                                 <p>Dear ${landlordFullName},</p>
                                 <p>We have sent <strong>₱${payoutAmount.toLocaleString()}</strong> to your ${methodLabel} account <strong>(${payoutDestination})</strong>.</p>
                                 <table style="width:100%;border-collapse:collapse;margin:15px 0;">
-                                    <tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Tenant Payment</td><td style="padding:8px 0;font-weight:bold;text-align:right;">₱${amountPaid.toLocaleString()}</td></tr>
-                                    <tr style="border-bottom:1px solid #eee;"><td style="padding:8px 0;color:#666;">Platform Fee (1%)</td><td style="padding:8px 0;font-weight:bold;text-align:right;">-₱${platformFee.toLocaleString()}</td></tr>
                                     <tr><td style="padding:8px 0;color:#333;font-weight:bold;">Amount Sent to You</td><td style="padding:8px 0;font-weight:bold;text-align:right;color:#00BFA5;">₱${payoutAmount.toLocaleString()}</td></tr>
                                 </table>
                                 <p>Property: ${request.properties?.title || 'Property'}</p>
@@ -548,7 +546,7 @@ export default async function handler(req, res) {
                     try {
                         await sendSMS(
                             landlordProfile2.phone,
-                            `EaseRent: ₱${payoutAmount.toLocaleString()} sent to your ${methodLabel} (${payoutDestination}) from ${payoutDisplayName}'s payment for "${request.properties?.title}". Fee: ₱${platformFee}. Ref: ${payoutRefNumber}`
+                            `EaseRent: ₱${payoutAmount.toLocaleString()} sent to your ${methodLabel} (${payoutDestination}) from ${payoutDisplayName}'s payment for "${request.properties?.title}". Ref: ${payoutRefNumber}`
                         );
                         console.log(`✅ Payout SMS sent to ${landlordProfile2.phone}`);
                     } catch (smsErr) {

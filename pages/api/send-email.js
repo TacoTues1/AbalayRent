@@ -31,12 +31,12 @@ export default async function handler(req, res) {
 
       // 2. Get Tenant Email
       const { data: tenantEmail } = await supabaseAdmin.rpc('get_user_email', { user_id: occupancy.tenant_id })
-      
+
       if (!tenantEmail) {
         return res.status(400).json({ success: false, error: 'Tenant email not found' })
       }
 
-      // 3. Send Email
+      // 3. Send Email to Primary Tenant
       const emailLib = await import('../../lib/email')
       if (emailLib.sendEndContractEmail) {
         const result = await emailLib.sendEndContractEmail({
@@ -46,8 +46,43 @@ export default async function handler(req, res) {
           endDate: new Date(),
           customMessage: customMessage
         })
-        
+
         if (!result.success) throw new Error(result.error)
+
+        // 4. Also send email to all family members
+        try {
+          const { data: familyMembers } = await supabaseAdmin
+            .from('family_members')
+            .select('member_id, member_profile:profiles!family_members_member_id_fkey(first_name, last_name)')
+            .eq('parent_occupancy_id', occupancyId)
+
+          if (familyMembers && familyMembers.length > 0) {
+            console.log(`[End Contract] Sending email to ${familyMembers.length} family member(s)`)
+
+            for (const fm of familyMembers) {
+              try {
+                // Get family member email
+                const { data: fmEmail } = await supabaseAdmin.rpc('get_user_email', { user_id: fm.member_id })
+
+                if (fmEmail) {
+                  await emailLib.sendEndContractEmail({
+                    to: fmEmail,
+                    tenantName: fm.member_profile?.first_name || 'Family Member',
+                    propertyTitle: occupancy.property?.title || 'Property',
+                    endDate: new Date(),
+                    customMessage: customMessage
+                  })
+                  console.log(`[End Contract] ✅ Email sent to family member: ${fm.member_profile?.first_name} (${fmEmail})`)
+                }
+              } catch (fmErr) {
+                console.error(`[End Contract] ❌ Failed to email family member ${fm.member_id}:`, fmErr)
+              }
+            }
+          }
+        } catch (fmFetchErr) {
+          console.error('[End Contract] Error fetching family members:', fmFetchErr)
+        }
+
         return res.status(200).json({ success: true })
       }
     }
@@ -106,12 +141,12 @@ export default async function handler(req, res) {
 
       // TYPE: VIEWING APPROVAL (Default)
       const timeSlotLabel = (() => {
-      const date = new Date(booking.booking_date)
-      const hour = date.getHours()
-      if (hour === 8) return 'Morning (8:00 AM - 11:00 AM)'
-      if (hour === 13) return 'Afternoon (1:00 PM - 5:30 PM)'
-      return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-    })()
+        const date = new Date(booking.booking_date)
+        const hour = date.getHours()
+        if (hour === 8) return 'Morning (8:00 AM - 11:00 AM)'
+        if (hour === 13) return 'Afternoon (1:00 PM - 5:30 PM)'
+        return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+      })()
       const { sendViewingApprovalEmail } = await import('../../lib/email')
       const result = await sendViewingApprovalEmail({
         to: tenantEmail,
@@ -123,7 +158,7 @@ export default async function handler(req, res) {
         landlordName,
         landlordPhone
       })
-      
+
       if (!result.success) throw new Error(result.error)
       return res.status(200).json({ success: true })
     }

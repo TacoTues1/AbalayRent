@@ -323,24 +323,33 @@ export default function AssignTenantPage() {
                     {availableProperties.length === 0 && (
                         <p className="text-sm text-gray-400 text-center py-8">No available properties found.</p>
                     )}
-                    {availableProperties.map(p => (
-                        <div
-                            key={p.id}
-                            onClick={() => setSelectedPropertyId(p.id)}
-                            className={`p-3 rounded-xl border-2 cursor-pointer transition-all ${selectedPropertyId === p.id
-                                ? 'border-black bg-black/5 shadow-sm'
+                    {availableProperties.map(p => {
+                    const isRequestedProperty = booking?.property_id === p.id
+                    return (
+                    <div
+                        key={p.id}
+                        onClick={() => setSelectedPropertyId(p.id)}
+                        className={`p-3 rounded-xl border-2 cursor-pointer transition-all ${selectedPropertyId === p.id
+                            ? 'border-black bg-black/5 shadow-sm'
+                            : isRequestedProperty
+                                ? 'border-green-300 bg-green-50/30 hover:border-green-400'
                                 : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                                }`}
-                        >
-                            <div className="flex items-center justify-between">
-                                <div>
+                            }`}
+                    >
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <div className="flex items-center gap-2">
                                     <p className="font-bold text-sm text-gray-900">{p.title}</p>
-                                    <p className="text-xs text-gray-500">₱{Number(p.price).toLocaleString()}/mo</p>
+                                    {isRequestedProperty && (
+                                        <span className="px-1.5 py-0.5 bg-green-100 text-green-700 text-[9px] font-bold uppercase tracking-wider rounded border border-green-200">Requested</span>
+                                    )}
                                 </div>
-                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${selectedPropertyId === p.id ? 'border-black' : 'border-gray-300'}`}>
-                                    {selectedPropertyId === p.id && <div className="w-2.5 h-2.5 rounded-full bg-black" />}
-                                </div>
+                                <p className="text-xs text-gray-500">₱{Number(p.price).toLocaleString()}/mo</p>
                             </div>
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${selectedPropertyId === p.id ? 'border-black' : 'border-gray-300'}`}>
+                                {selectedPropertyId === p.id && <div className="w-2.5 h-2.5 rounded-full bg-black" />}
+                            </div>
+                        </div>
                             {selectedPropertyId === p.id && (
                                 <div className="mt-2 flex flex-wrap gap-1">
                                     {p.has_security_deposit !== false && <span className="text-[10px] bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full font-medium">Deposit: ₱{Number(p.security_deposit_amount || p.price).toLocaleString()}</span>}
@@ -351,8 +360,8 @@ export default function AssignTenantPage() {
                                     {(p.amenities || []).includes('Free WiFi') && <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Free WiFi</span>}
                                 </div>
                             )}
-                        </div>
-                    ))}
+                    </div>
+                    )})}
                 </div>
             </div>
         </div>

@@ -122,6 +122,7 @@ export default function LandlordDashboard({ session, profile }) {
   const [sendingStatement, setSendingStatement] = useState(false)
   const [chartFilter, setChartFilter] = useState('all') // 'all', 'water', 'other'
   const [totalIncome, setTotalIncome] = useState(0)
+  const [activePanel, setActivePanel] = useState('metrics')
 
   const router = useRouter()
 
@@ -1465,299 +1466,417 @@ export default function LandlordDashboard({ session, profile }) {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col scroll-smooth">
-      <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10 flex-1 w-full">
+      <div className="max-w-[1800px] mx-auto px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6 lg:py-8 relative z-10 flex-1 w-full">
 
-        {/* HEADER */}
-        <div className="mb-6">
-          <div className="bg-gradient-to-r from-gray-900 to-black rounded-2xl p-6 sm:p-8 text-white relative overflow-hidden shadow-lg shadow-black/5 border border-gray-800">
-            {/* Decorative background shapes */}
-            <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl"></div>
-            <div className="absolute bottom-0 left-10 w-48 h-48 bg-white/5 rounded-full translate-y-1/2 -translate-x-1/2 blur-xl"></div>
+        <div className="flex flex-col lg:flex-row gap-4 sm:gap-6 lg:gap-8 pb-24 items-start">
 
-            <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-              <div>
-                <p className="text-white/70 text-sm font-medium mb-1">Welcome back,</p>
-                <h1 className="text-3xl sm:text-4xl font-black tracking-tight">{profile?.first_name} {profile?.last_name}</h1>
+          {/* LEFT COLUMN */}
+          <div className="lg:w-72 flex-shrink-0 w-full flex flex-col gap-4 sm:gap-6 lg:sticky lg:top-8 z-10">
+
+            {/* HEADER */}
+            <div className="bg-white rounded-xl sm:rounded-2xl p-4 sm:p-6 lg:p-7 text-black relative overflow-hidden shadow-sm border border-gray-200">
+              {/* Decorative background shapes */}
+              <div className="absolute top-0 right-0 w-40 sm:w-64 h-40 sm:h-64 bg-gray-50 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl"></div>
+              <div className="absolute bottom-0 left-10 w-32 sm:w-48 h-32 sm:h-48 bg-gray-50 rounded-full translate-y-1/2 -translate-x-1/2 blur-xl"></div>
+
+              <div className="relative z-10 flex flex-col gap-3 sm:gap-5">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
+                    <p className="text-gray-500 text-xs sm:text-sm font-medium">Welcome,</p>
+                    <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 text-[10px] font-bold uppercase tracking-wider border border-blue-100">Landlord</span>
+                  </div>
+                  <h1 className="text-xl sm:text-2xl lg:text-3xl font-black tracking-tight text-gray-900 leading-tight">{profile?.first_name} {profile?.last_name}</h1>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <button onClick={openEmailModal} className="flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3 bg-gray-100 hover:bg-gray-200 border border-gray-200 text-black backdrop-blur-md rounded-xl text-xs sm:text-sm font-bold cursor-pointer transition-all">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                    Email Tenant
+                  </button>
+                  {/* <button onClick={() => router.push('/properties/new')} className="flex items-center justify-center gap-2 px-5 py-3 bg-black text-white hover:bg-gray-800 rounded-xl text-sm font-bold cursor-pointer transition-all shadow-md">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                    Add Rent
+                  </button> */}
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                <button onClick={openEmailModal} className="flex items-center gap-2 px-5 py-2.5 bg-white/10 hover:bg-white/20 border border-white/10 text-white backdrop-blur-md rounded-xl text-sm font-bold cursor-pointer transition-all">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
-                  Message
-                </button>
-                <button onClick={() => router.push('/properties/new')} className="flex items-center gap-2 px-5 py-2.5 bg-white text-black hover:bg-gray-100 rounded-xl text-sm font-bold cursor-pointer transition-all shadow-lg">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-                  Add Rent
-                </button>
-              </div>
+            </div>
+
+            {/* LEFT PANEL: Navigation Sidebar */}
+            <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200/60 shadow-sm p-3 sm:p-5 relative">
+              <h3 className="text-[10px] sm:text-xs font-black text-gray-400 uppercase tracking-wider mb-3 sm:mb-5 px-2">Landlord Dashboard Menu</h3>
+              <div className="flex flex-row flex-wrap lg:flex-col lg:flex-nowrap gap-1.5 sm:gap-2.5">
+              <button onClick={() => setActivePanel('metrics')} className={`w-auto lg:w-full text-left px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 sm:gap-3 cursor-pointer ${activePanel === 'metrics' ? 'bg-black text-white shadow-md' : 'text-gray-600 hover:bg-gray-50'}`}>
+                <svg className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
+                <span className="hidden sm:inline">Manage your Apartment</span>
+                <span className="sm:hidden">Manage</span>
+              </button>
+              <button onClick={() => setActivePanel('billing')} className={`w-auto lg:w-full text-left px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 sm:gap-3 cursor-pointer ${activePanel === 'billing' ? 'bg-black text-white shadow-md' : 'text-gray-600 hover:bg-gray-50'}`}>
+                <svg className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                <span className="hidden sm:inline">Billing Schedule</span>
+                <span className="sm:hidden">Billing</span>
+              </button>
+              <button onClick={() => setActivePanel('properties')} className={`w-auto lg:w-full text-left px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 sm:gap-3 cursor-pointer ${activePanel === 'properties' ? 'bg-black text-white shadow-md' : 'text-gray-600 hover:bg-gray-50'}`}>
+                <svg className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
+                <span className="hidden sm:inline">Active Properties</span>
+                <span className="sm:hidden">Active</span>
+              </button>
+              <button onClick={() => setActivePanel('actions')} className={`w-auto lg:w-full text-left px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 sm:gap-3 cursor-pointer ${activePanel === 'actions' ? 'bg-black text-white shadow-md' : 'text-gray-600 hover:bg-gray-50'}`}>
+                <svg className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+                <span className="hidden sm:inline">Action Center</span>
+                <span className="sm:hidden">Actions</span>
+              </button>
+              <button onClick={() => setActivePanel('scheduled')} className={`w-auto lg:w-full text-left px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 sm:gap-3 cursor-pointer ${activePanel === 'scheduled' ? 'bg-black text-white shadow-md' : 'text-gray-600 hover:bg-gray-50'}`}>
+                <svg className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2v2m-6 0h6" /></svg>
+                <span className="hidden sm:inline">Scheduled Today</span>
+                <span className="sm:hidden">Scheduled</span>
+              </button>
             </div>
           </div>
         </div>
 
-        <div className="space-y-8 pb-24">
+          {/* RIGHT PANEL: Dynamic Content */}
+          <div key={activePanel} className="flex-1 min-w-0 w-full animate-in fade-in slide-in-from-right-8 duration-500">
 
-          {/* KEY METRICS */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-            <div className="bg-white rounded-2xl p-6 border border-gray-200/60 shadow-sm hover:-translate-y-1 transition-transform duration-300">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
-                </div>
-              </div>
-              <h3 className="text-3xl font-black text-gray-900 tracking-tight"><CountUpAnimation target={statsLoaded ? properties.length : 0} /></h3>
-              <p className="text-sm font-medium text-gray-500 mt-1">Properties Managed</p>
-            </div>
-
-            <div className="bg-white rounded-2xl p-6 border border-gray-200/60 shadow-sm hover:-translate-y-1 transition-transform duration-300">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                </div>
-                <span className="bg-emerald-50 text-emerald-700 text-xs font-bold px-2 py-1 rounded-lg">
-                  {properties.length > 0 ? Math.round((occupancies.length / properties.length) * 100) : 0}% Occ
-                </span>
-              </div>
-              <h3 className="text-3xl font-black text-gray-900 tracking-tight"><CountUpAnimation target={statsLoaded ? occupancies.length : 0} /></h3>
-              <p className="text-sm font-medium text-gray-500 mt-1">Active Tenants</p>
-            </div>
-
-            <div className="bg-white rounded-2xl p-6 border border-gray-200/60 shadow-sm hover:-translate-y-1 transition-transform duration-300">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 rounded-2xl bg-violet-50 flex items-center justify-center text-violet-600">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                </div>
-              </div>
-              <h3 className="text-3xl font-black text-gray-900 tracking-tight truncate"><CountUpAnimation target={statsLoaded ? totalIncome : 0} decimals={2} prefix="₱" /></h3>
-              <p className="text-sm font-medium text-gray-500 mt-1">Total Income</p>
-            </div>
-
-            <div className="bg-white rounded-2xl p-6 border border-gray-200/60 shadow-sm hover:-translate-y-1 transition-transform duration-300">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-600">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
-                </div>
-              </div>
-              <h3 className="text-3xl font-black text-gray-900 tracking-tight"><CountUpAnimation target={statsLoaded ? (pendingEndRequests.length + pendingRenewalRequests.length + dashboardTasks.payments.length + dashboardTasks.maintenance.length) : 0} /></h3>
-              <p className="text-sm font-medium text-gray-500 mt-1">Pending Tasks</p>
-            </div>
-          </div>
-
-          {/* MAIN GRID */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 xl:gap-8">
-            {/* Left Col: Billing Schedule */}
-            <div className="lg:col-span-6 xl:col-span-6 space-y-4">
-              <div className="bg-white rounded-2xl p-6 border border-gray-200/60 shadow-sm ">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-                  <div>
-                    <h3 className="text-lg font-black text-gray-900 tracking-tight">Billing Schedule</h3>
-                    <p className="text-sm font-medium text-gray-500">Upcoming automated payments & reminders</p>
+            {/* MANAGE YOUR APARTMENT / METRICS */}
+            {activePanel === 'metrics' && (
+              <div className="space-y-6 mb-8">
+              <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-4 gap-2.5 sm:gap-4 md:gap-6">
+                <div className="bg-white rounded-xl sm:rounded-2xl p-3 sm:p-4 md:p-6 border border-gray-200/60 shadow-sm hover:-translate-y-1 transition-transform duration-300">
+                  <div className="flex items-center justify-between mb-2 sm:mb-4">
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 rounded-xl sm:rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600">
+                      <svg className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                    </div>
                   </div>
+                  <h3 className="text-xl sm:text-2xl md:text-3xl font-black text-gray-900 tracking-tight"><CountUpAnimation target={statsLoaded ? properties.length : 0} /></h3>
+                  <p className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mt-0.5 sm:mt-1">Properties Managed</p>
                 </div>
 
-                <div className="overflow-x-auto">
-                  {billingSchedule.length === 0 ? (
-                    <div className="text-center py-12 px-4 rounded-2xl bg-gray-50/50 border border-dashed border-gray-200">
-                      <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center mx-auto mb-3 shadow-sm text-gray-400">
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                      </div>
-                      <p className="text-gray-900 font-bold text-sm">No upcoming bills</p>
-                      <p className="text-gray-500 text-sm mt-1">Everything is up to date.</p>
+                <div className="bg-white rounded-xl sm:rounded-2xl p-3 sm:p-4 md:p-6 border border-gray-200/60 shadow-sm hover:-translate-y-1 transition-transform duration-300">
+                  <div className="flex items-center justify-between mb-2 sm:mb-4">
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 rounded-xl sm:rounded-2xl bg-emerald-50 flex items-center justify-center text-emerald-600">
+                      <svg className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                    </div>
+                    <span className="bg-emerald-50 text-emerald-700 text-[10px] sm:text-xs font-bold px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-md sm:rounded-lg">
+                      {properties.length > 0 ? Math.round((occupancies.length / properties.length) * 100) : 0}% Occ
+                    </span>
+                  </div>
+                  <h3 className="text-xl sm:text-2xl md:text-3xl font-black text-gray-900 tracking-tight"><CountUpAnimation target={statsLoaded ? occupancies.length : 0} /></h3>
+                  <p className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mt-0.5 sm:mt-1">Active Tenants</p>
+                </div>
+
+                <div className="bg-white rounded-xl sm:rounded-2xl p-3 sm:p-4 md:p-6 border border-gray-200/60 shadow-sm hover:-translate-y-1 transition-transform duration-300">
+                  <div className="flex items-center justify-between mb-2 sm:mb-4">
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 rounded-xl sm:rounded-2xl bg-violet-50 flex items-center justify-center text-violet-600">
+                      <svg className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    </div>
+                  </div>
+                  <h3 className="text-xl sm:text-2xl md:text-3xl font-black text-gray-900 tracking-tight truncate"><CountUpAnimation target={statsLoaded ? totalIncome : 0} decimals={2} prefix="₱" /></h3>
+                  <p className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mt-0.5 sm:mt-1">Total Income</p>
+                </div>
+
+                <div className="bg-white rounded-xl sm:rounded-2xl p-3 sm:p-4 md:p-6 border border-gray-200/60 shadow-sm hover:-translate-y-1 transition-transform duration-300">
+                  <div className="flex items-center justify-between mb-2 sm:mb-4">
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 rounded-xl sm:rounded-2xl bg-amber-50 flex items-center justify-center text-amber-600">
+                      <svg className="w-4 h-4 sm:w-5 sm:h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+                    </div>
+                  </div>
+                  <h3 className="text-xl sm:text-2xl md:text-3xl font-black text-gray-900 tracking-tight"><CountUpAnimation target={statsLoaded ? (pendingEndRequests.length + pendingRenewalRequests.length + dashboardTasks.payments.length + dashboardTasks.maintenance.length) : 0} /></h3>
+                  <p className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mt-0.5 sm:mt-1">Pending Tasks</p>
+                </div>
+              </div>
+
+                {/* PROPERTIES GRID */}
+                <div className="bg-white rounded-xl sm:rounded-2xl p-4 sm:p-6 border border-gray-200/60 shadow-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 mb-4 sm:mb-6">
+                    <div>
+                      <h3 className="text-base sm:text-lg font-black text-gray-900 tracking-tight">Your Apartments</h3>
+                      <p className="text-xs sm:text-sm font-medium text-gray-500 mt-0.5">Manage all your uploaded properties here</p>
+                    </div>
+                    <button
+                        onClick={() => router.push('/properties/new')}
+                        className="w-full sm:w-auto px-4 sm:px-5 py-2 sm:py-2.5 bg-black text-white text-xs sm:text-sm font-bold rounded-xl cursor-pointer hover:bg-gray-800 transition-all shadow-sm"
+                    >
+                        + Add New Apartment
+                    </button>
+                  </div>
+
+                  {properties.length === 0 ? (
+                    <div className="text-center py-12 bg-gray-50/50 border border-dashed border-gray-200 rounded-2xl">
+                        <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center mx-auto mb-3 shadow-sm text-gray-400">
+                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                        </div>
+                      <p className="text-gray-900 font-bold text-sm">No apartments</p>
+                      <p className="text-gray-500 text-sm mt-1">You haven't uploaded any apartments yet.</p>
                     </div>
                   ) : (
-                    <table className="w-full text-left">
-                      <thead className="text-[11px] text-gray-400 uppercase tracking-widest font-bold border-b border-gray-100">
-                        <tr>
-                          <th className="py-4 pl-2">Tenant & Property</th>
-                          <th className="py-4">Auto-Send</th>
-                          <th className="py-4">Due Date</th>
-                          <th className="py-4">Status</th>
-                          <th className="py-4 text-right pr-2">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="text-sm divide-y divide-gray-50">
-                        {billingSchedule.slice(0, 8).map(item => {
-                          const autoSendDate = new Date(item.nextDueDate);
-                          autoSendDate.setDate(autoSendDate.getDate() - 3);
-                          return (
-                            <tr key={item.id} className="hover:bg-gray-50/50 transition-colors group">
-                              <td className="py-4 pl-2">
-                                <p className="font-bold text-gray-900 group-hover:text-black transition-colors">{item.tenantName}</p>
-                                <p className="text-xs font-medium text-gray-500 mt-0.5">{item.propertyTitle}</p>
-                              </td>
-                              <td className="py-4 text-gray-500 font-medium text-xs">
-                                <span className="inline-flex items-center gap-1.5">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
-                                  {autoSendDate.toLocaleDateString()}
-                                </span>
-                              </td>
-                              <td className="py-4 text-gray-900 text-xs font-bold">{item.nextDueDate.toLocaleDateString()}</td>
-                              <td className="py-4">
-                                <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider ${item.status === 'Overdue' ? 'bg-red-50 text-red-600 border border-red-100' : item.status === 'Confirming' ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-emerald-50 text-emerald-600 border border-emerald-100'}`}>
-                                  {item.status}
-                                </span>
-                              </td>
-                              <td className="py-4 text-right pr-2">
-                                {item.status !== 'Contract Ending' && item.status !== 'Confirming' && (
-                                  <button onClick={() => openAdvanceBillModal(item.tenantId, item.tenantName, item.propertyTitle, item.propertyPrice)} disabled={sendingBillId === item.tenantId}
-                                    className="text-[11px] font-bold bg-black text-white px-4 py-2 rounded-xl hover:bg-gray-800 transition-all disabled:opacity-50 cursor-pointer shadow-sm">
-                                    Send Now
-                                  </button>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4 md:gap-6">
+                      {properties.map(property => {
+                        const imgs = (property.images && Array.isArray(property.images) && property.images.length > 0) ? property.images : ['/placeholder-property.jpg']
+                        const currentIndex = currentImageIndex[property.id] || 0
+                        return (
+                          <div key={property.id} onClick={() => router.push(`/properties/${property.id}`)} className="group bg-white rounded-xl sm:rounded-2xl shadow-sm border border-gray-100 overflow-hidden cursor-pointer flex flex-col hover:shadow-lg transition-all">
+                            <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-xl sm:rounded-2xl">
+                                <img src={imgs[currentIndex]} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" alt="" />
+                                <div className="absolute top-3 left-3 z-10 flex flex-col gap-1 items-start">
+                                    <span className={`px-2 py-1 text-[10px] uppercase font-bold tracking-wider rounded-lg shadow-sm backdrop-blur-md ${property.status === 'available' ? 'bg-white text-black' : property.status === 'occupied' ? 'bg-black text-white' : 'bg-gray-200 text-gray-600'}`}>
+                                        {property.status}
+                                    </span>
+                                </div>
+                                <div className="absolute bottom-0 left-0 right-0 p-3 sm:p-4 bg-gradient-to-t from-black/80 via-black/40 to-transparent">
+                                    <p className="text-white font-black text-base sm:text-xl leading-none">₱{Number(property.price).toLocaleString()}</p>
+                                    <p className="text-white/80 text-[10px] font-bold uppercase tracking-wider mt-1">per month</p>
+                                </div>
+                                {imgs.length > 1 && (
+                                    <div className="absolute bottom-4 right-4 flex gap-1 z-10">
+                                        {imgs.map((_, idx) => (
+                                            <div key={idx} className={`h-1.5 rounded-full shadow-sm transition-all ${idx === currentIndex ? 'w-4 bg-white' : 'w-1.5 bg-white/50'}`} />
+                                        ))}
+                                    </div>
                                 )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              </div>
-
-              <div className="bg-white rounded-2xl p-6 border border-gray-200/60 shadow-sm">
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h3 className="text-lg font-black text-gray-900 tracking-tight">Active Properties</h3>
-                    <p className="text-sm font-medium text-gray-500 mt-0.5">{occupancies.filter(o => o.status === 'active').length} occupied units</p>
-                  </div>
-                </div>
-
-                <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 -mr-2 my-scrollbar">
-                  {occupancies.filter(o => o.status === 'active').length === 0 ? (
-                    <div className="py-8 text-center bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
-                      <p className="text-gray-400 text-sm font-medium">No occupied properties</p>
-                    </div>
-                  ) : (
-                    occupancies.filter(o => o.status === 'active').map(occ => (
-                      <div key={occ.id} className="flex items-center gap-4 p-3 rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all group bg-white">
-                        <div className="w-12 h-12 rounded-xl bg-gray-100 overflow-hidden shrink-0 shadow-inner">
-                          <img src={occ.property?.images?.[0] || '/placeholder-property.jpg'} className="w-full h-full object-cover" alt="" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-bold text-sm text-gray-900 truncate group-hover:text-black transition-colors">{occ.property?.title}</p>
-                          <p className="text-xs font-medium text-gray-500 mt-0.5 truncate">{occ.tenant?.first_name} {occ.tenant?.last_name}</p>
-                        </div>
-                        <button onClick={(e) => { e.stopPropagation(); openFamilyModal(occ) }}
-                          className="text-xs text-white font-bold text-blue-600 bg-blue-600 px-3 py-1.5 rounded-lg transition-all cursor-pointer">
-                          Show Family
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); openEndContractModal(occ) }}
-                          className="text-xs text-white font-bold text-red-600 bg-red-600 px-3 py-1.5 rounded-lg transition-all cursor-pointer">
-                          End
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Right Col: Action Center, Occupied Properties & Scheduled Today */}
-            <div className="lg:col-span-6 xl:col-span-6 space-y-6">
-
-              {/* ACTION CENTER */}
-              <div className="bg-white rounded-2xl p-6 border border-gray-200/60 shadow-sm">
-                <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div>
-                    <h3 className="text-lg font-black text-gray-900 tracking-tight flex items-center gap-2">
-                      Action Center
-                      {(pendingEndRequests.length + pendingRenewalRequests.length + dashboardTasks.payments.length + dashboardTasks.maintenance.length) > 0 && (
-                        <span className="flex h-2.5 w-2.5 relative">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
-                        </span>
-                      )}
-                    </h3>
-                  </div>
-                </div>
-
-                {(pendingEndRequests.length + pendingRenewalRequests.length + dashboardTasks.payments.length + dashboardTasks.maintenance.length) > 0 ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
-                    {pendingEndRequests.map(req => (
-                      <div key={req.id} className="p-3 bg-white rounded-xl border border-gray-200 hover:border-orange-300 hover:shadow-sm transition-all cursor-pointer group flex items-center justify-between" onClick={() => openEndConfirmation('approve', req.id)}>
-                        <div className="overflow-hidden pr-2">
-                          <span className="inline-block px-2 py-0.5 bg-orange-100 text-orange-700 text-[10px] font-bold uppercase tracking-wider rounded-md mb-1">Move-Out</span>
-                          <h4 className="font-bold text-sm text-gray-900 group-hover:text-orange-700 transition-colors truncate">{req.property?.title}</h4>
-                        </div>
-                        <svg className="w-4 h-4 text-orange-400 group-hover:text-orange-600 transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                      </div>
-                    ))}
-
-                    {pendingRenewalRequests.map(req => (
-                      <div key={req.id} className="p-3 bg-white rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-sm transition-all cursor-pointer group flex items-center justify-between" onClick={() => openRenewalModal(req, 'approve')}>
-                        <div className="overflow-hidden pr-2">
-                          <span className="inline-block px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold uppercase tracking-wider rounded-md mb-1">Renewal</span>
-                          <h4 className="font-bold text-sm text-gray-900 group-hover:text-blue-700 transition-colors truncate">{req.property?.title}</h4>
-                        </div>
-                        <svg className="w-4 h-4 text-blue-400 group-hover:text-blue-600 transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                      </div>
-                    ))}
-
-                    {dashboardTasks.maintenance.length > 0 && (
-                      <button onClick={() => router.push('/maintenance')} className="w-full text-left p-3 bg-white rounded-xl border border-gray-200 hover:border-rose-300 hover:shadow-sm transition-all cursor-pointer group flex items-center justify-between">
-                        <div>
-                          <span className="inline-block px-2 py-0.5 bg-rose-100 text-rose-700 text-[10px] font-bold uppercase tracking-wider rounded-md mb-1">Maintenance</span>
-                          <h4 className="font-bold text-sm text-gray-900 group-hover:text-rose-700 transition-colors">{dashboardTasks.maintenance.length} Pending</h4>
-                        </div>
-                        <svg className="w-4 h-4 text-rose-400 group-hover:text-rose-600 group-hover:translate-x-1 transition-all shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
-                      </button>
-                    )}
-
-                    {dashboardTasks.payments.length > 0 && (
-                      <button onClick={() => router.push('/payments')} className="w-full text-left p-3 bg-white rounded-xl border border-gray-200 hover:border-emerald-300 hover:shadow-sm transition-all cursor-pointer group flex items-center justify-between">
-                        <div>
-                          <span className="inline-block px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold uppercase tracking-wider rounded-md mb-1">Payments</span>
-                          <h4 className="font-bold text-sm text-gray-900 group-hover:text-emerald-700 transition-colors">{dashboardTasks.payments.length} Pending Bills</h4>
-                        </div>
-                        <svg className="w-4 h-4 text-emerald-400 group-hover:text-emerald-600 group-hover:translate-x-1 transition-all shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  <div className="py-8 text-center bg-gray-50/50 rounded-xl border border-dashed border-gray-200">
-                    <p className="text-gray-400 text-sm font-medium">All caught up! No pending tasks.</p>
-                  </div>
-                )}
-              </div>
-              {/* Scheduled Today (Conditionally Rendered) */}
-              {(() => {
-                const todayStr = new Date().toISOString().split('T')[0]
-                const scheduledToday = occupancies.filter(o => {
-                  if (!o.start_date) return false
-                  return new Date(o.start_date).toISOString().split('T')[0] === todayStr
-                })
-                return (
-                  <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-6 text-white shadow-md shadow-blue-900/10">
-                    <div className="flex items-start justify-between mb-4">
-                      <div>
-                        <h3 className="font-black text-lg">Booking Scheduled Today</h3>
-                        <p className="text-blue-100 text-sm mt-1">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p>
-                      </div>
-                      <button onClick={() => router.push('/bookings')} className="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-colors backdrop-blur-sm cursor-pointer">
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                      </button>
-                    </div>
-
-                    {scheduledToday.length === 0 ? (
-                      <div className="py-6 text-center bg-white/5 rounded-xl border border-white/10 backdrop-blur-sm">
-                        <p className="text-blue-100 text-sm font-medium">No Booking scheduled today.</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {scheduledToday.map(occ => (
-                          <div key={occ.id} className="flex items-center gap-3 p-3 rounded-xl bg-white/10 border border-white/10 backdrop-blur-sm">
-                            <div className="w-10 h-10 rounded-full bg-white text-blue-700 font-bold flex items-center justify-center text-sm shadow-sm">
-                              {occ.tenant?.first_name?.charAt(0)}{occ.tenant?.last_name?.charAt(0)}
                             </div>
-                            <div>
-                              <p className="font-bold text-sm truncate">{occ.tenant?.first_name} {occ.tenant?.last_name}</p>
-                              <p className="text-xs text-blue-100 mt-0.5 truncate">{occ.property?.title}</p>
+                            <div className="p-3 sm:p-5 flex-1 flex flex-col">
+                                <h3 className="text-sm sm:text-base font-black text-gray-900 truncate mb-1 sm:mb-1.5">{property.title}</h3>
+                                <div className="flex items-center gap-1.5 text-gray-500 mb-4">
+                                    <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                                    <p className="text-xs font-medium truncate">{property.city}, {property.address}</p>
+                                </div>
+                                <div className="flex items-center gap-4 mt-auto pt-4 border-t border-gray-100/80 text-gray-400">
+                                    <div className="flex items-center gap-1.5"><svg className="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 24 24"><path d="M7 13c1.66 0 3-1.34 3-3S8.66 7 7 7s-3 1.34-3 3 1.34 3 3 3zm12-6h-8v7H3V5H1v15h2v-3h18v3h2v-9c0-2.21-1.79-4-4-4z" /></svg> <span className="text-sm font-bold text-gray-700">{property.bedrooms}</span></div>
+                                    <div className="flex items-center gap-1.5"><svg className="w-4 h-4 text-gray-400" fill="currentColor" viewBox="0 0 24 24"><path d="M21 10H7V7c0-1.103.897-2 2-2s2 .897 2 2h2c0-2.206-1.794-4-4-4S5 4.794 5 7v3H3a1 1 0 0 0-1 1v2c0 2.606 1.674 4.823 4 5.65V22h2v-3h8v3h2v-3.35c2.326-.827 4-3.044 4-5.65v-2a1 1 0 0 0-1-1z" /></svg> <span className="text-sm font-bold text-gray-700">{property.bathrooms}</span></div>
+                                    <div className="flex items-center gap-1.5 ml-auto"><span className="text-xs font-bold text-gray-500">{property.area_sqft} sqm</span></div>
+                                </div>
                             </div>
                           </div>
-                        ))}
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            )}
+
+            {/* MAIN GRID */}
+            <div className="flex flex-col gap-6 xl:gap-8">
+              {/* BILLING SCHEDULE */}
+              {activePanel === 'billing' && (
+                <div className="bg-white rounded-xl sm:rounded-2xl p-3 sm:p-4 md:p-6 border border-gray-200/60 shadow-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 mb-4 sm:mb-6">
+                    <div>
+                      <h3 className="text-base sm:text-lg font-black text-gray-900 tracking-tight">Billing Schedule</h3>
+                      <p className="text-xs sm:text-sm font-medium text-gray-500">Upcoming automated payments & reminders</p>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto -mx-3 sm:mx-0 px-3 sm:px-0">
+                    {billingSchedule.length === 0 ? (
+                      <div className="text-center py-12 px-4 rounded-2xl bg-gray-50/50 border border-dashed border-gray-200">
+                        <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center mx-auto mb-3 shadow-sm text-gray-400">
+                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        </div>
+                        <p className="text-gray-900 font-bold text-sm">No upcoming bills</p>
+                        <p className="text-gray-500 text-sm mt-1">Everything is up to date.</p>
                       </div>
+                    ) : (
+                      <table className="w-full text-left">
+                        <thead className="text-[11px] text-gray-400 uppercase tracking-widest font-bold border-b border-gray-100">
+                          <tr>
+                            <th className="py-4 pl-2">Tenant & Property</th>
+                            <th className="py-4">Auto-Send</th>
+                            <th className="py-4">Due Date</th>
+                            <th className="py-4">Status</th>
+                            <th className="py-4 text-right pr-2">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="text-sm divide-y divide-gray-50">
+                          {billingSchedule.slice(0, 8).map(item => {
+                            const autoSendDate = new Date(item.nextDueDate);
+                            autoSendDate.setDate(autoSendDate.getDate() - 3);
+                            return (
+                              <tr key={item.id} className="hover:bg-gray-50/50 transition-colors group">
+                                <td className="py-4 pl-2">
+                                  <p className="font-bold text-gray-900 group-hover:text-black transition-colors">{item.tenantName}</p>
+                                  <p className="text-xs font-medium text-gray-500 mt-0.5">{item.propertyTitle}</p>
+                                </td>
+                                <td className="py-4 text-gray-500 font-medium text-xs">
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                                    {autoSendDate.toLocaleDateString()}
+                                  </span>
+                                </td>
+                                <td className="py-4 text-gray-900 text-xs font-bold">{item.nextDueDate.toLocaleDateString()}</td>
+                                <td className="py-4">
+                                  <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider ${item.status === 'Overdue' ? 'bg-red-50 text-red-600 border border-red-100' : item.status === 'Confirming' ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-emerald-50 text-emerald-600 border border-emerald-100'}`}>
+                                    {item.status}
+                                  </span>
+                                </td>
+                                <td className="py-4 text-right pr-2">
+                                  {item.status !== 'Contract Ending' && item.status !== 'Confirming' && (
+                                    <button onClick={() => openAdvanceBillModal(item.tenantId, item.tenantName, item.propertyTitle, item.propertyPrice)} disabled={sendingBillId === item.tenantId}
+                                      className="text-[11px] font-bold bg-black text-white px-4 py-2 rounded-xl hover:bg-gray-800 transition-all disabled:opacity-50 cursor-pointer shadow-sm">
+                                      Send Now
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     )}
                   </div>
-                )
-              })()}
+                </div>
+              )}
+
+              {/* ACTIVE PROPERTIES */}
+              {activePanel === 'properties' && (
+                <div className="bg-white rounded-xl sm:rounded-2xl p-3 sm:p-4 md:p-6 border border-gray-200/60 shadow-sm">
+                  <div className="flex items-center justify-between mb-4 sm:mb-6">
+                    <div>
+                      <h3 className="text-base sm:text-lg font-black text-gray-900 tracking-tight">Active Properties</h3>
+                      <p className="text-xs sm:text-sm font-medium text-gray-500 mt-0.5">{occupancies.filter(o => o.status === 'active').length} occupied units</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 -mr-2 my-scrollbar">
+                    {occupancies.filter(o => o.status === 'active').length === 0 ? (
+                      <div className="py-8 text-center bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
+                        <p className="text-gray-400 text-sm font-medium">No occupied properties</p>
+                      </div>
+                    ) : (
+                      occupancies.filter(o => o.status === 'active').map(occ => (
+                        <div key={occ.id} className="flex items-center gap-4 p-3 rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all group bg-white">
+                          <div className="w-12 h-12 rounded-xl bg-gray-100 overflow-hidden shrink-0 shadow-inner">
+                            <img src={occ.property?.images?.[0] || '/placeholder-property.jpg'} className="w-full h-full object-cover" alt="" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-sm text-gray-900 truncate group-hover:text-black transition-colors">{occ.property?.title}</p>
+                            <p className="text-xs font-medium text-gray-500 mt-0.5 truncate">{occ.tenant?.first_name} {occ.tenant?.last_name}</p>
+                          </div>
+                          <button onClick={(e) => { e.stopPropagation(); openFamilyModal(occ) }}
+                            className="text-xs text-white font-bold text-blue-600 bg-blue-600 px-3 py-1.5 rounded-lg transition-all cursor-pointer">
+                            Show Family
+                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); openEndContractModal(occ) }}
+                            className="text-xs text-white font-bold text-red-600 bg-red-600 px-3 py-1.5 rounded-lg transition-all cursor-pointer">
+                            End
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ACTION CENTER */}
+              {activePanel === 'actions' && (
+                <div className="bg-white rounded-xl sm:rounded-2xl p-3 sm:p-4 md:p-6 border border-gray-200/60 shadow-sm">
+                  <div className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+                    <div>
+                      <h3 className="text-base sm:text-lg font-black text-gray-900 tracking-tight flex items-center gap-2">
+                        Action Center
+                        {(pendingEndRequests.length + pendingRenewalRequests.length + dashboardTasks.payments.length + dashboardTasks.maintenance.length) > 0 && (
+                          <span className="flex h-2.5 w-2.5 relative">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                          </span>
+                        )}
+                      </h3>
+                    </div>
+                  </div>
+
+                  {(pendingEndRequests.length + pendingRenewalRequests.length + dashboardTasks.payments.length + dashboardTasks.maintenance.length) > 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
+                      {pendingEndRequests.map(req => (
+                        <div key={req.id} className="p-3 bg-white rounded-xl border border-gray-200 hover:border-orange-300 hover:shadow-sm transition-all cursor-pointer group flex items-center justify-between" onClick={() => openEndConfirmation('approve', req.id)}>
+                          <div className="overflow-hidden pr-2">
+                            <span className="inline-block px-2 py-0.5 bg-orange-100 text-orange-700 text-[10px] font-bold uppercase tracking-wider rounded-md mb-1">Move-Out</span>
+                            <h4 className="font-bold text-sm text-gray-900 group-hover:text-orange-700 transition-colors truncate">{req.property?.title}</h4>
+                          </div>
+                          <svg className="w-4 h-4 text-orange-400 group-hover:text-orange-600 transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                        </div>
+                      ))}
+
+                      {pendingRenewalRequests.map(req => (
+                        <div key={req.id} className="p-3 bg-white rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-sm transition-all cursor-pointer group flex items-center justify-between" onClick={() => openRenewalModal(req, 'approve')}>
+                          <div className="overflow-hidden pr-2">
+                            <span className="inline-block px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold uppercase tracking-wider rounded-md mb-1">Renewal</span>
+                            <h4 className="font-bold text-sm text-gray-900 group-hover:text-blue-700 transition-colors truncate">{req.property?.title}</h4>
+                          </div>
+                          <svg className="w-4 h-4 text-blue-400 group-hover:text-blue-600 transition-colors shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                        </div>
+                      ))}
+
+                      {dashboardTasks.maintenance.length > 0 && (
+                        <button onClick={() => router.push('/maintenance')} className="w-full text-left p-3 bg-white rounded-xl border border-gray-200 hover:border-rose-300 hover:shadow-sm transition-all cursor-pointer group flex items-center justify-between">
+                          <div>
+                            <span className="inline-block px-2 py-0.5 bg-rose-100 text-rose-700 text-[10px] font-bold uppercase tracking-wider rounded-md mb-1">Maintenance</span>
+                            <h4 className="font-bold text-sm text-gray-900 group-hover:text-rose-700 transition-colors">{dashboardTasks.maintenance.length} Pending</h4>
+                          </div>
+                          <svg className="w-4 h-4 text-rose-400 group-hover:text-rose-600 group-hover:translate-x-1 transition-all shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
+                        </button>
+                      )}
+
+                      {dashboardTasks.payments.length > 0 && (
+                        <button onClick={() => router.push('/payments')} className="w-full text-left p-3 bg-white rounded-xl border border-gray-200 hover:border-emerald-300 hover:shadow-sm transition-all cursor-pointer group flex items-center justify-between">
+                          <div>
+                            <span className="inline-block px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-bold uppercase tracking-wider rounded-md mb-1">Payments</span>
+                            <h4 className="font-bold text-sm text-gray-900 group-hover:text-emerald-700 transition-colors">{dashboardTasks.payments.length} Pending Bills</h4>
+                          </div>
+                          <svg className="w-4 h-4 text-emerald-400 group-hover:text-emerald-600 group-hover:translate-x-1 transition-all shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="py-8 text-center bg-gray-50/50 rounded-xl border border-dashed border-gray-200">
+                      <p className="text-gray-400 text-sm font-medium">All caught up! No pending tasks.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* SCHEDULED TODAY */}
+              {activePanel === 'scheduled' && (
+                (() => {
+                  const todayStr = new Date().toISOString().split('T')[0]
+                  const scheduledToday = occupancies.filter(o => {
+                    if (!o.start_date) return false
+                    return new Date(o.start_date).toISOString().split('T')[0] === todayStr
+                  })
+                  return (
+                    <div className="bg-white rounded-xl sm:rounded-2xl p-3 sm:p-4 md:p-6 text-gray-900 shadow-md shadow-black/10 border border-gray-200">
+                      <div className="flex items-start justify-between mb-3 sm:mb-4">
+                        <div>
+                          <h3 className="font-black text-gray-900 text-base sm:text-lg">Booking Scheduled Today</h3>
+                          <p className="text-gray-500 text-sm mt-1">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p>
+                        </div>
+                        <button onClick={() => router.push('/bookings')} className="p-2 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors cursor-pointer">
+                          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                        </button>
+                      </div>
+
+                      {scheduledToday.length === 0 ? (
+                        <div className="py-6 text-center bg-gray-50 rounded-xl border border-gray-200">
+                          <p className="text-gray-500 text-sm font-medium">No Booking scheduled today.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {scheduledToday.map(occ => (
+                            <div key={occ.id} className="flex items-center gap-3 p-3 rounded-xl bg-gray-50 border border-gray-200">
+                              <div className="w-10 h-10 rounded-full bg-white text-blue-700 font-bold flex items-center justify-center text-sm shadow-sm">
+                                {occ.tenant?.first_name?.charAt(0)}{occ.tenant?.last_name?.charAt(0)}
+                              </div>
+                              <div>
+                                <p className="font-bold text-sm text-gray-900 truncate">{occ.tenant?.first_name} {occ.tenant?.last_name}</p>
+                                <p className="text-xs text-gray-500 mt-0.5 truncate">{occ.property?.title}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()
+              )}
             </div>
           </div>
         </div>
@@ -2033,26 +2152,26 @@ export default function LandlordDashboard({ session, profile }) {
       {
         renewalModal.isOpen && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-            <div className="bg-white rounded-3xl shadow-2xl max-w-3xl w-full p-8 border border-gray-100 relative">
-              <button onClick={closeRenewalModal} className="absolute top-6 right-6 text-gray-400 hover:text-gray-900 transition-colors w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-100 cursor-pointer">
+            <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl max-w-3xl w-full p-4 sm:p-6 md:p-8 border border-gray-100 relative max-h-[90vh] overflow-y-auto">
+              <button onClick={closeRenewalModal} className="absolute top-3 right-3 sm:top-6 sm:right-6 text-gray-400 hover:text-gray-900 transition-colors w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-full hover:bg-gray-100 cursor-pointer">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
 
-              <div className="flex flex-col items-start gap-6">
-                <div className="flex items-center gap-4 w-full">
-                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${renewalModal.action === 'approve' ? 'bg-amber-100 text-amber-600' : 'bg-red-100 text-red-600'}`}>
-                    <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="flex flex-col items-start gap-4 sm:gap-6">
+                <div className="flex items-center gap-3 sm:gap-4 w-full pr-8 sm:pr-0">
+                  <div className={`w-10 h-10 sm:w-14 sm:h-14 rounded-xl sm:rounded-2xl flex-shrink-0 flex items-center justify-center ${renewalModal.action === 'approve' ? 'bg-amber-100 text-amber-600' : 'bg-red-100 text-red-600'}`}>
+                    <svg className="w-5 h-5 sm:w-8 sm:h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       {renewalModal.action === 'approve' ?
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /> :
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                       }
                     </svg>
                   </div>
-                  <div>
-                    <h3 className="text-2xl font-black text-gray-900 tracking-tight">
+                  <div className="min-w-0">
+                    <h3 className="text-lg sm:text-xl md:text-2xl font-black text-gray-900 tracking-tight">
                       {renewalModal.action === 'approve' ? 'Approve Contract Renewal' : 'Reject Renewal Request'}
                     </h3>
-                    <p className="text-gray-500 font-medium">Review pending renewal requests</p>
+                    <p className="text-xs sm:text-sm text-gray-500 font-medium">Review pending renewal requests</p>
                   </div>
                 </div>
 
@@ -2155,7 +2274,7 @@ export default function LandlordDashboard({ session, profile }) {
                   </div>
                 )}
 
-                <div className="flex gap-4 pt-4 border-t border-gray-100 w-full mt-2">
+                <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 pt-4 border-t border-gray-100 w-full mt-2">
                   <button
                     onClick={() => {
                       if (renewalModal.action === 'approve') {
@@ -2164,7 +2283,7 @@ export default function LandlordDashboard({ session, profile }) {
                         setRenewalModal(prev => ({ ...prev, action: 'approve' }));
                       }
                     }}
-                    className={`flex-1 px-6 py-4 font-bold rounded-xl cursor-pointer transition-all border-2 ${renewalModal.action === 'approve'
+                    className={`sm:flex-1 px-4 sm:px-6 py-3 sm:py-4 text-sm font-bold rounded-xl cursor-pointer transition-all border-2 ${renewalModal.action === 'approve'
                       ? 'border-transparent text-red-600 bg-red-50 hover:bg-red-100'
                       : 'border-gray-100 text-gray-700 hover:border-gray-300 bg-white'
                       }`}
@@ -2174,7 +2293,7 @@ export default function LandlordDashboard({ session, profile }) {
                   <button
                     onClick={confirmRenewalRequest}
                     disabled={processingRenewal}
-                    className={`flex-[2] px-6 py-4 text-white font-bold rounded-xl shadow-xl transition-all flex items-center justify-center gap-3 transform active:scale-95 ${processingRenewal ? 'cursor-not-allowed opacity-75' : 'cursor-pointer hover:-translate-y-1'} ${renewalModal.action === 'approve' ? 'bg-black hover:bg-gray-800' : 'bg-red-600 hover:bg-red-700'}`}
+                    className={`sm:flex-[2] px-4 sm:px-6 py-3 sm:py-4 text-sm text-white font-bold rounded-xl shadow-xl transition-all flex items-center justify-center gap-2 sm:gap-3 transform active:scale-95 ${processingRenewal ? 'cursor-not-allowed opacity-75' : 'cursor-pointer hover:-translate-y-1'} ${renewalModal.action === 'approve' ? 'bg-black hover:bg-gray-800' : 'bg-red-600 hover:bg-red-700'}`}
                   >
                     {processingRenewal ? (
                       <>
@@ -2195,12 +2314,12 @@ export default function LandlordDashboard({ session, profile }) {
       {
         showEmailModal && (
           <div className="fixed inset-0 bg-black/40 backdrop-blur-md flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
-            <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col border border-gray-200">
+            <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl max-w-2xl w-full max-h-[90vh] flex flex-col border border-gray-200">
               {/* Header */}
-              <div className="flex justify-between items-center p-6 border-b border-gray-100">
+              <div className="flex justify-between items-center p-4 sm:p-6 border-b border-gray-100">
                 <div>
-                  <h3 className="font-black text-xl text-gray-900">📬 Send Notification</h3>
-                  <p className="text-sm text-gray-500 mt-1">Email & SMS your tenants</p>
+                  <h3 className="font-black text-base sm:text-xl text-gray-900">📬 Send Notification</h3>
+                  <p className="text-xs sm:text-sm text-gray-500 mt-1">Email & SMS your tenants</p>
                 </div>
                 <button onClick={() => setShowEmailModal(false)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 cursor-pointer text-gray-500 hover:text-black transition-colors">✕</button>
               </div>
@@ -2521,7 +2640,7 @@ export default function LandlordDashboard({ session, profile }) {
                             className="w-12 h-12 rounded-full border border-gray-100 bg-gray-50 object-cover flex-shrink-0"
                           />
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-bold text-gray-900 tracking-tight truncate group-hover:text-blue-600 transition-colors">
+                            <p className="text-sm font-bold text-gray-900 tracking-tight truncate transition-colors">
                               {member.member_profile?.first_name} {member.member_profile?.last_name}
                             </p>
                             <div className="flex items-center gap-1.5 mt-1 text-xs text-gray-500 font-medium">

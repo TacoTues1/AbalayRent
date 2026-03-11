@@ -275,13 +275,35 @@ export default function Register() {
           setLoading(false)
           return
         }
-        // Email verified via Brevo - try to create user with Supabase
-        const { data: signUpData } = await supabase.auth.signUp({
-          email, password,
-          options: { data: { first_name: firstName, middle_name: middleName || 'N/A', last_name: lastName, birthday, gender } }
+        // Email verified via Brevo - create user via Admin API (bypasses rate limits)
+        const regRes = await fetch('/api/register-brevo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email, password,
+            first_name: firstName,
+            middle_name: middleName || 'N/A',
+            last_name: lastName,
+            birthday, gender
+          })
         })
-        // Even if rate limit hits again, email is verified via Brevo
-        await finalizeRegistration(signUpData?.user)
+        const regData = await regRes.json()
+        if (!regRes.ok) {
+          showToast.error(regData.error || 'Registration failed. Please try again.', { duration: 4000, progress: true, position: 'top-right', transition: 'bounceIn', icon: '', sound: true })
+          setOtp('')
+          isVerifyingRef.current = false
+          setLoading(false)
+          return
+        }
+        // User created via Admin API - sign in to establish client session
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+        if (signInError) {
+          showToast.error('Account created! Please sign in manually.', { duration: 4000, progress: true, position: 'top-right', transition: 'bounceIn', icon: '', sound: true })
+          setTimeout(() => router.push('/login'), 1500)
+          return
+        }
+        showToast.success("Email verified successfully! Redirecting...", { duration: 4000, progress: true, position: 'top-right', transition: 'bounceIn', icon: '', sound: true })
+        setTimeout(() => router.push('/dashboard'), 1000)
       } else {
         // Standard Supabase OTP verification
         const { data, error } = await supabase.auth.verifyOtp({
@@ -332,13 +354,35 @@ export default function Register() {
           setLoading(false)
           return
         }
-        // Email verified via Brevo - try to create user with Supabase
-        const { data: signUpData } = await supabase.auth.signUp({
-          email, password,
-          options: { data: { first_name: firstName, middle_name: middleName || 'N/A', last_name: lastName, birthday, gender } }
+        // Email verified via Brevo - create user via Admin API (bypasses rate limits)
+        const regRes = await fetch('/api/register-brevo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email, password,
+            first_name: firstName,
+            middle_name: middleName || 'N/A',
+            last_name: lastName,
+            birthday, gender
+          })
         })
-        // Even if rate limit hits again, email is verified via Brevo
-        await finalizeRegistration(signUpData?.user)
+        const regData = await regRes.json()
+        if (!regRes.ok) {
+          showToast.error(regData.error || 'Registration failed. Please try again.', { duration: 4000, progress: true, position: 'top-right', transition: 'bounceIn', icon: '', sound: true })
+          setOtp('')
+          isVerifyingRef.current = false
+          setLoading(false)
+          return
+        }
+        // User created via Admin API - sign in to establish client session
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+        if (signInError) {
+          showToast.error('Account created! Please sign in manually.', { duration: 4000, progress: true, position: 'top-right', transition: 'bounceIn', icon: '', sound: true })
+          setTimeout(() => router.push('/login'), 1500)
+          return
+        }
+        showToast.success("Email verified successfully! Redirecting...", { duration: 4000, progress: true, position: 'top-right', transition: 'bounceIn', icon: '', sound: true })
+        setTimeout(() => router.push('/dashboard'), 1000)
       } else {
         // Standard Supabase OTP verification
         const { data, error } = await supabase.auth.verifyOtp({

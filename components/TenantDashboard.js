@@ -205,19 +205,14 @@ export default function TenantDashboard({ session, profile }) {
   useEffect(() => {
     if (profile) {
       loadInitialData()
-      // Reminders are now handled automatically by Supabase pg_cron
     }
   }, [profile])
 
   async function loadInitialData() {
-    // setLoading(true)
-    // We await these in order/parallel, but we need pendingPayments populated for the calc
     await loadProperties()
     await loadPropertyStats()
-    const occupancy = await loadTenantOccupancy() // Modified to return occupancy
+    const occupancy = await loadTenantOccupancy() 
 
-    // Only load payments via client if user is the primary tenant (not a family member)
-    // Family members get their payment data from the API (bypasses RLS)
     const isOwnOccupancy = occupancy && occupancy.tenant_id === session.user.id
     if (isOwnOccupancy) {
       await loadTenantBalance(occupancy)
@@ -229,7 +224,6 @@ export default function TenantDashboard({ session, profile }) {
     await loadUserFavorites()
     await loadFeaturedSections()
 
-    // SCRIPT: Check Last Month Security Deposit Logic (Auto-run)
     if (occupancy) {
       if (isOwnOccupancy) {
         await checkLastMonthDepositLogic(occupancy)
@@ -244,31 +238,17 @@ export default function TenantDashboard({ session, profile }) {
 
     const endDate = new Date(occupancy.contract_end_date);
     const today = new Date();
-    // Normalize to start of day
     endDate.setHours(0, 0, 0, 0);
     today.setHours(0, 0, 0, 0);
 
     const diffTime = endDate - today;
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-    // LOGIC: Only consume security deposit for the LAST month of the contract
-    // Security deposit should NOT be consumed if:
-    // 1. Renewal has been requested (pending)
-    // 2. Renewal has been approved (contract was extended)
-    // The deposit should ONLY be consumed at the true final month when no renewal is active
-
-    // Check if renewal is pending or approved - if so, don't consume deposit
     const renewalPendingOrApproved = occupancy.renewal_requested ||
       occupancy.renewal_status === 'pending' ||
       occupancy.renewal_status === 'approved';
 
-    // Only proceed if: 28 days or less remaining AND NO renewal active
     if (diffDays <= 28 && diffDays > 0 && !renewalPendingOrApproved) {
-
-      // Check if a "Last Month" bill already exists to prevent duplicate processing
-      // We look for a bill with due_date within the last 45 days of contract? 
-      // Or explicitly check for a payment request covering this period.
-      // Let's look for any bill generated recently for this property context.
 
       // Define a window for "Last Month Bill". E.g. Due date is between (EndDate - 35 days) and (EndDate).
       const windowStart = new Date(endDate);
@@ -279,10 +259,8 @@ export default function TenantDashboard({ session, profile }) {
         .select('*')
         .eq('occupancy_id', occupancy.id)
         .gte('due_date', windowStart.toISOString().split('T')[0])
-        // We assume last month bill would be Rent.
         .gt('rent_amount', 0);
 
-      // If we find a bill in this window, we assume the system (or this script previously) handled it.
       if (existingBills && existingBills.length > 0) {
         return;
       }
@@ -1393,13 +1371,13 @@ export default function TenantDashboard({ session, profile }) {
     return []
   }
 
-  const PropertyCard = ({ property, images, currentIndex, isSelectedForCompare, isFavorite, stats }) => (
+  const renderPropertyCard = ({ property, images, currentIndex, isSelectedForCompare, isFavorite, stats }) => (
     <div
-      className={`group bg-white rounded-2xl shadow-sm border overflow-hidden cursor-pointer flex flex-col transition-all duration-300 h-full hover:shadow-xl hover:shadow-gray-300/50 ${isSelectedForCompare ? 'ring-2 ring-black border-black' : 'border-gray-100 hover:border-gray-200'}`}
+      className={`group bg-white rounded-2xl shadow-sm border overflow-hidden cursor-pointer flex flex-col h-full card-hover ${isSelectedForCompare ? 'ring-2 ring-black border-black' : 'border-gray-100 hover:border-gray-300'}`}
       onClick={() => router.push(`/properties/${property.id}`)}
     >
-      <div className="relative aspect-[4/3] overflow-hidden bg-gray-100">
-        <img src={images[currentIndex]} alt={property.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+      <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-2xl">
+        <img src={images[currentIndex]} alt={property.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
         <div className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 md:top-3 md:right-3 z-20 flex items-center gap-1 sm:gap-2" onClick={(e) => e.stopPropagation()}>
           <button onClick={(e) => toggleFavorite(e, property.id)} className={`w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center backdrop-blur-md shadow-sm transition-all cursor-pointer ${isFavorite ? 'bg-red-500 text-white' : 'bg-white/90 text-gray-400 hover:bg-white hover:text-red-500'}`}>
             <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4" fill={isFavorite ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" /></svg>
@@ -2246,13 +2224,13 @@ export default function TenantDashboard({ session, profile }) {
                     {properties.slice(0, maxDisplayItems).map((item) => (
                       <CarouselItem key={item.id} className={carouselItemClass}>
                         <div className="p-1 h-full">
-                          <PropertyCard
-                            property={item} images={getPropertyImages(item)}
-                            currentIndex={currentImageIndex[item.id] || 0}
-                            isSelectedForCompare={comparisonList.some(p => p.id === item.id)}
-                            isFavorite={favorites.includes(item.id)}
-                            stats={propertyStats[item.id] || { favorite_count: 0, avg_rating: 0, review_count: 0 }}
-                          />
+                          {renderPropertyCard({
+                            property: item, images: getPropertyImages(item),
+                            currentIndex: currentImageIndex[item.id] || 0,
+                            isSelectedForCompare: comparisonList.some(p => p.id === item.id),
+                            isFavorite: favorites.includes(item.id),
+                            stats: propertyStats[item.id] || { favorite_count: 0, avg_rating: 0, review_count: 0 }
+                          })}
                         </div>
                       </CarouselItem>
                     ))}
@@ -2283,14 +2261,14 @@ export default function TenantDashboard({ session, profile }) {
                       return (
                         <CarouselItem key={item.id} className={carouselItemClass}>
                           <div className="p-1 h-full">
-                            <PropertyCard
-                              property={item}
-                              images={images}
-                              currentIndex={currentIndex}
-                              isSelectedForCompare={isSelectedForCompare}
-                              isFavorite={isFavorite}
-                              stats={stats}
-                            />
+                            {renderPropertyCard({
+                              property: item,
+                              images,
+                              currentIndex,
+                              isSelectedForCompare,
+                              isFavorite,
+                              stats
+                            })}
                           </div>
                         </CarouselItem>
                       )
@@ -2323,14 +2301,14 @@ export default function TenantDashboard({ session, profile }) {
                       return (
                         <CarouselItem key={item.id} className={carouselItemClass}>
                           <div className="p-1 h-full">
-                            <PropertyCard
-                              property={item}
-                              images={images}
-                              currentIndex={currentIndex}
-                              isSelectedForCompare={isSelectedForCompare}
-                              isFavorite={isFavorite}
-                              stats={stats}
-                            />
+                            {renderPropertyCard({
+                              property: item,
+                              images,
+                              currentIndex,
+                              isSelectedForCompare,
+                              isFavorite,
+                              stats
+                            })}
                           </div>
                         </CarouselItem>
                       )
