@@ -254,10 +254,10 @@ export default function Login() {
           <div className="absolute top-6 left-6 z-10">
             <button
               onClick={() => router.push(router.query.redirect || '/')}
-              className="flex items-center gap-2.5 bg-white/15 backdrop-blur-md px-4 py-2 rounded-full hover:bg-white/25 transition-all cursor-pointer"
+              className="flex items-center gap-2.5 transition-all cursor-pointer"
             >
-              <img src="/home.png" alt="Logo" className="w-6 h-6 object-contain" />
-              <span className="text-white font-bold text-sm">Abalay</span>
+              <img src="/home.png" alt="Logo" className="w-8 h-8 object-contain" />
+              <span className="text-white font-black text-3xl tracking-tight drop-shadow-md" style={{ fontFamily: '"Pacifico", cursive', marginTop: '-4px' }}>Abalay</span>
             </button>
           </div>
 
@@ -297,7 +297,7 @@ export default function Login() {
             <div className="text-center">
               <div className={`mx-auto flex items-center justify-center gap-3 mb-3 cursor-pointer transition-all duration-300 ${mounted ? 'animate-fadeInUp delay-100' : 'opacity-0'}`} onClick={() => router.push('/')}>
                 <img src="/home.png" alt="Abalay Logo" className="w-16 h-16 object-contain" />
-                <span className="text-4xl font-black text-gray-900">Abalay</span>
+                <span className="text-5xl font-black text-gray-900" style={{ fontFamily: '"Pacifico", cursive', marginTop: '-4px' }}>Abalay</span>
               </div>
               <p className={`text-sm text-gray-500 font-medium ${mounted ? 'animate-fadeInUp delay-200' : 'opacity-0'}`}>
                 Sign in to your Abalay account

@@ -39,7 +39,7 @@ export default function PaymentsPage() {
   const [processingId, setProcessingId] = useState(null) // For inline actions
   const [isProcessingModal, setIsProcessingModal] = useState(false) // For modal actions
   const [paypalProcessing, setPaypalProcessing] = useState(false)
-  const [activeTab, setActiveTab] = useState('water') // Default to water since rent is automatic, wifi/electric notify tenants automatically
+  const [activeTab, setActiveTab] = useState('internet') // Default to internet
   const [showEditModal, setShowEditModal] = useState(false)
   const [editingBill, setEditingBill] = useState(null)
   const [editFormData, setEditFormData] = useState({
@@ -278,7 +278,8 @@ export default function PaymentsPage() {
       tenant: occ.tenant_id,
       property: occ.property,
       tenant_profile: occ.tenant_profile,
-      price: occ.rent_amount || occ.property?.price // Prefer occupancy rent, fallback to property price
+      price: occ.rent_amount || occ.property?.price, // Prefer occupancy rent, fallback to property price
+      rent_due_day: occ.rent_due_day // Apartment bill due day set by landlord
     }))
 
     setApprovedApplications(mapped)
@@ -373,28 +374,31 @@ export default function PaymentsPage() {
     }
 
     // Determine values based on Active Tab
-    // Note: Electric and Wifi bills are now sent automatically 3 days before due date
     let rent = 0, water = 0, electrical = 0, wifi = 0, other = 0;
     let finalDueDate = null;
     let billTypeLabel = '';
 
-    // We set the specific amount and the specific due date based on the tab
-    // We also set the general 'due_date' for sorting/display compatibility
+    // We set the specific amount based on the tab
+    // Due dates are no longer required for utility bills (automated reminders handle this)
     if (activeTab === 'rent') {
       rent = parseFloat(formData.amount) || 0;
       finalDueDate = formData.due_date;
       billTypeLabel = 'Rent';
     } else if (activeTab === 'water') {
       water = parseFloat(formData.water_bill) || 0;
-      finalDueDate = formData.water_due_date;
       billTypeLabel = 'Water Bill';
+    } else if (activeTab === 'electricity') {
+      electrical = parseFloat(formData.electrical_bill) || 0;
+      billTypeLabel = 'Electricity Bill';
+    } else if (activeTab === 'internet') {
+      wifi = parseFloat(formData.wifi_bill) || 0;
+      billTypeLabel = 'Internet Bill';
     } else if (activeTab === 'other') {
       other = parseFloat(formData.other_bills) || 0;
-      finalDueDate = formData.other_due_date;
       billTypeLabel = 'Other Bill';
     }
 
-    const total = rent + water + other;
+    const total = rent + water + electrical + wifi + other;
 
     try {
       // ... (Keep existing QR code upload logic here) ...
@@ -2021,10 +2025,13 @@ export default function PaymentsPage() {
                 <button onClick={() => setShowFormModal(false)} className="text-gray-400 hover:text-black">✕</button>
               </div>
 
-              {/* Tabs for Bill Type - Rent/Wifi/Electric are automatic, only Water and Other remain */}
+              {/* Tabs for Bill Type */}
               <div className="flex gap-2 flex-wrap pb-2 mb-4 scrollbar-hide">
                 {[
-                  { id: 'other', label: 'Other', icon: '' }
+                  { id: 'internet', label: 'Internet' },
+                  { id: 'electricity', label: 'Electricity' },
+                  { id: 'water', label: 'Water' },
+                  { id: 'other', label: 'Other' }
                 ].map(tab => (
                   <button
                     key={tab.id}
@@ -2034,7 +2041,7 @@ export default function PaymentsPage() {
                       : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       }`}
                   >
-                    <span>{tab.icon}</span> {tab.label}
+                    {tab.label}
                   </button>
                 ))}
               </div>
@@ -2042,7 +2049,7 @@ export default function PaymentsPage() {
               {/* Info about automatic billing */}
               <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
                 <p className="text-xs text-gray-600">
-                  <span className="font-bold">Note:</span> House rent payment bills are sent automatically 3 days before due date. WiFi, electricity, and water only send <strong>reminder notifications</strong> (SMS & email).
+                  <span className="font-bold">Note:</span> House rent bills are sent automatically 3 days before due date. Use the tabs below to send Internet, Electricity, Water, or Other bills manually.
                 </p>
               </div>
 
@@ -2076,13 +2083,30 @@ export default function PaymentsPage() {
                               .sort((a, b) => new Date(b.due_date) - new Date(a.due_date))[0]; // Get the newest one
 
                             if (lastRentBill && lastRentBill.due_date) {
-                              // 2. If history exists: Take last due date + 30 Days
+                              // 2. If history exists: Calculate next due date
                               const d = new Date(lastRentBill.due_date);
-                              d.setDate(d.getDate() + 30);
+                              if (selectedApp.rent_due_day && selectedApp.rent_due_day >= 1 && selectedApp.rent_due_day <= 31) {
+                                // Use landlord's chosen due day: advance to next month with the set day
+                                d.setMonth(d.getMonth() + 1);
+                                d.setDate(selectedApp.rent_due_day);
+                              } else {
+                                // Fallback: Take last due date + 30 Days
+                                d.setDate(d.getDate() + 30);
+                              }
                               nextDueDate = d.toISOString().split('T')[0]; // Format YYYY-MM-DD for input
                             } else {
-                              // 3. If no history (First Bill): Default to Today's Date
-                              nextDueDate = new Date().toISOString().split('T')[0];
+                              // 3. If no history (First Bill): Use rent_due_day of current month or today
+                              if (selectedApp.rent_due_day && selectedApp.rent_due_day >= 1 && selectedApp.rent_due_day <= 31) {
+                                const now = new Date();
+                                const dueDateThisMonth = new Date(now.getFullYear(), now.getMonth(), selectedApp.rent_due_day);
+                                // If due day already passed this month, use next month
+                                if (dueDateThisMonth <= now) {
+                                  dueDateThisMonth.setMonth(dueDateThisMonth.getMonth() + 1);
+                                }
+                                nextDueDate = dueDateThisMonth.toISOString().split('T')[0];
+                              } else {
+                                nextDueDate = new Date().toISOString().split('T')[0];
+                              }
                             }
                             // --- END AUTOMATIC DATE CALCULATION ---
 
@@ -2135,33 +2159,35 @@ export default function PaymentsPage() {
                       </div>
                     )}
 
+                    {activeTab === 'internet' && (
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Amount *</label>
+                        <input type="number" required min="0" step="0.01" className="w-full border-2 border-gray-200 focus:border-black rounded-lg px-3 py-2 outline-none" placeholder="0.00"
+                          value={formData.wifi_bill} onChange={e => setFormData({ ...formData, wifi_bill: e.target.value })} />
+                      </div>
+                    )}
+
+                    {activeTab === 'electricity' && (
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Amount *</label>
+                        <input type="number" required min="0" step="0.01" className="w-full border-2 border-gray-200 focus:border-black rounded-lg px-3 py-2 outline-none" placeholder="0.00"
+                          value={formData.electrical_bill} onChange={e => setFormData({ ...formData, electrical_bill: e.target.value })} />
+                      </div>
+                    )}
+
                     {activeTab === 'water' && (
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-xs font-bold text-gray-500 mb-1">Water Amount *</label>
-                          <input type="number" required min="0" step="0.01" className="w-full border-2 border-gray-200 focus:border-black rounded-lg px-3 py-2 outline-none" placeholder="0.00"
-                            value={formData.water_bill} onChange={e => setFormData({ ...formData, water_bill: e.target.value })} />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-bold text-gray-500 mb-1">Due Date *</label>
-                          <input type="date" required className="w-full border-2 border-gray-200 focus:border-black rounded-lg px-3 py-2 outline-none"
-                            value={formData.water_due_date} onChange={e => setFormData({ ...formData, water_due_date: e.target.value })} />
-                        </div>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Amount *</label>
+                        <input type="number" required min="0" step="0.01" className="w-full border-2 border-gray-200 focus:border-black rounded-lg px-3 py-2 outline-none" placeholder="0.00"
+                          value={formData.water_bill} onChange={e => setFormData({ ...formData, water_bill: e.target.value })} />
                       </div>
                     )}
 
                     {activeTab === 'other' && (
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-xs font-bold text-gray-500 mb-1">Other Amount *</label>
-                          <input type="number" required min="0" step="0.01" className="w-full border-2 border-gray-200 focus:border-black rounded-lg px-3 py-2 outline-none" placeholder="0.00"
-                            value={formData.other_bills} onChange={e => setFormData({ ...formData, other_bills: e.target.value })} />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-bold text-gray-500 mb-1">Due Date *</label>
-                          <input type="date" required className="w-full border-2 border-gray-200 focus:border-black rounded-lg px-3 py-2 outline-none"
-                            value={formData.other_due_date} onChange={e => setFormData({ ...formData, other_due_date: e.target.value })} />
-                        </div>
+                      <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">Amount *</label>
+                        <input type="number" required min="0" step="0.01" className="w-full border-2 border-gray-200 focus:border-black rounded-lg px-3 py-2 outline-none" placeholder="0.00"
+                          value={formData.other_bills} onChange={e => setFormData({ ...formData, other_bills: e.target.value })} />
                       </div>
                     )}
 
@@ -2180,7 +2206,6 @@ export default function PaymentsPage() {
                     {/* File Uploads (Bill Receipt & QR) - Keep as is from your original code */}
                     <div className="mt-4">
                       <label className="block text-xs font-bold text-gray-500 mb-1">Bill Receipt *</label>
-                      {/* ... (Your existing Bill Receipt upload UI code) ... */}
                       <div className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${billReceiptPreview ? 'border-black bg-gray-50' : 'border-gray-300 hover:border-gray-400'}`}>
                         {billReceiptPreview ? (
                           <div className="relative inline-block">
@@ -2196,28 +2221,12 @@ export default function PaymentsPage() {
                       </div>
                     </div>
 
-                    <div className="mt-4">
-                      <label className="block text-xs font-bold text-gray-500 mb-1">Payment QR Code (Optional)</label>
-                      {/* ... (Your existing QR upload UI code) ... */}
-                      <div className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${qrCodePreview ? 'border-black bg-gray-50' : 'border-gray-300 hover:border-gray-400'}`}>
-                        {qrCodePreview ? (
-                          <div className="relative inline-block">
-                            <img src={qrCodePreview} alt="QR Code" className="max-h-40 rounded shadow-sm border border-gray-200" />
-                            <button type="button" onClick={() => { setQrCodeFile(null); setQrCodePreview(null) }} className="absolute -top-2 -right-2 bg-black text-white p-1 rounded-full shadow-md cursor-pointer hover:bg-gray-800">✕</button>
-                          </div>
-                        ) : (
-                          <label className="cursor-pointer block w-full h-full">
-                            <span className="text-sm font-bold text-black">Upload QR</span>
-                            <input type="file" accept="image/*" className="hidden" onChange={e => { const file = e.target.files[0]; if (file) { setQrCodeFile(file); setQrCodePreview(URL.createObjectURL(file)) } }} />
-                          </label>
-                        )}
-                      </div>
-                    </div>
-
                     <div className="mt-6 bg-black text-white p-4 rounded-lg flex justify-between items-center">
                       <span className="text-sm font-bold uppercase tracking-wider">Total</span>
                       <span className="text-xl font-bold">
                         ₱{((activeTab === 'rent' ? parseFloat(formData.amount) : 0) +
+                          (activeTab === 'internet' ? parseFloat(formData.wifi_bill) : 0) +
+                          (activeTab === 'electricity' ? parseFloat(formData.electrical_bill) : 0) +
                           (activeTab === 'water' ? parseFloat(formData.water_bill) : 0) +
                           (activeTab === 'other' ? parseFloat(formData.other_bills) : 0) || 0
                         ).toLocaleString('en-US', { minimumFractionDigits: 2 })}

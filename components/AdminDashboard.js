@@ -68,14 +68,14 @@ export default function AdminDashboard({ session, profile }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row font-sans" style={{ background: 'linear-gradient(135deg,#f8fafc 0%,#eef2ff 50%,#f0fdf4 100%)' }}>
+    <div className="min-h-screen flex flex-col md:flex-row font-sans bg-gray-50">
       {/* SIDEBAR (Desktop) */}
-      <aside className={`${sidebarCollapsed ? 'w-20' : 'w-72'} hidden md:flex flex-col flex-shrink-0 h-screen sticky top-0 z-20 transition-all duration-300`} style={{ background: 'linear-gradient(180deg,#0f172a 0%,#1e293b 100%)' }}>
+      <aside className={`${sidebarCollapsed ? 'w-20' : 'w-72'} hidden md:flex flex-col flex-shrink-0 h-screen sticky top-0 z-20 transition-all duration-300 bg-[#1a1a2e]`}>
         <div className={`p-6 ${sidebarCollapsed ? 'px-4' : ''} flex items-center justify-between`}>
           {!sidebarCollapsed && (
             <h1 className="text-xl font-black tracking-tighter uppercase flex items-center gap-2">
-              <span className="w-2 h-8 rounded-full" style={{ background: 'linear-gradient(180deg,#818cf8,#6366f1)' }}></span>
-              <span className="text-white">Admin</span><span className="text-indigo-400">Panel</span>
+              <span className="w-2 h-8 rounded-full bg-white"></span>
+              <span className="text-white">Admin</span><span className="text-gray-400">Panel</span>
             </h1>
           )}
           <button onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all cursor-pointer">
@@ -89,28 +89,26 @@ export default function AdminDashboard({ session, profile }) {
               key={item.id}
               onClick={() => setActiveTab(item.id)}
               title={sidebarCollapsed ? item.label : ''}
-              className={`w-full flex items-center gap-3 ${sidebarCollapsed ? 'justify-center px-2' : 'px-4'} py-3.5 rounded-xl text-sm font-semibold transition-all duration-200 cursor-pointer relative overflow-hidden ${activeTab === item.id
-                ? 'text-white shadow-lg shadow-indigo-500/20'
+              className={`w-full flex items-center gap-3 ${sidebarCollapsed ? 'justify-center px-2' : 'px-4'} py-3.5 rounded-xl text-sm font-semibold transition-all duration-200 cursor-pointer ${activeTab === item.id
+                ? 'text-white bg-white/15'
                 : 'text-slate-400 hover:text-white hover:bg-white/5'
                 }`}
-              style={activeTab === item.id ? { background: 'linear-gradient(135deg,#6366f1,#818cf8)' } : {}}
             >
-              {activeTab === item.id && <div className="absolute inset-0 bg-white/10 rounded-xl"></div>}
-              <svg className="w-5 h-5 flex-shrink-0 relative z-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} /></svg>
-              {!sidebarCollapsed && <span className="relative z-10 truncate">{item.label}</span>}
+              <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} /></svg>
+              {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
             </button>
           ))}
         </nav>
 
         <div className={`p-4 border-t border-white/5 space-y-3 ${sidebarCollapsed ? 'px-2' : ''}`}>
           <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm text-white shadow-lg flex-shrink-0" style={{ background: 'linear-gradient(135deg,#6366f1,#a78bfa)' }}>
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm text-white bg-gray-600 flex-shrink-0">
               {profile?.first_name?.[0]}
             </div>
             {!sidebarCollapsed && (
               <div className="overflow-hidden">
                 <p className="text-sm font-bold text-white truncate">{profile?.first_name} {profile?.last_name}</p>
-                <p className="text-[10px] text-indigo-300 truncate uppercase tracking-wider font-bold">Administrator</p>
+                <p className="text-[10px] text-gray-400 truncate uppercase tracking-wider font-bold">Administrator</p>
               </div>
             )}
           </div>
@@ -122,9 +120,9 @@ export default function AdminDashboard({ session, profile }) {
       </aside>
 
       {/* MOBILE NAV (Bottom Fixed) */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex justify-between px-4 py-3 pb-5 overflow-x-auto border-t border-white/10" style={{ background: 'linear-gradient(180deg,#0f172a,#1e293b)' }}>
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex justify-between px-4 py-3 pb-5 overflow-x-auto border-t border-gray-800 bg-[#1a1a2e]">
         {navItems.map(item => (
-          <button key={item.id} onClick={() => setActiveTab(item.id)} className={`p-3 rounded-2xl transition-all cursor-pointer flex-shrink-0 ${activeTab === item.id ? 'text-white transform -translate-y-1.5 shadow-lg shadow-indigo-500/30' : 'text-slate-500'}`} style={activeTab === item.id ? { background: 'linear-gradient(135deg,#6366f1,#818cf8)' } : {}}>
+          <button key={item.id} onClick={() => setActiveTab(item.id)} className={`p-3 rounded-2xl transition-all cursor-pointer flex-shrink-0 ${activeTab === item.id ? 'text-white bg-white/15 transform -translate-y-1.5' : 'text-slate-500'}`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} /></svg>
           </button>
         ))}
@@ -134,19 +132,19 @@ export default function AdminDashboard({ session, profile }) {
       </div>
 
       <div className="flex-1 flex flex-col min-h-screen">
-        <header className="hidden md:flex items-center justify-between px-8 py-5 bg-white/70 backdrop-blur-xl border-b border-gray-200/50 sticky top-0 z-10">
+        <header className="hidden md:flex items-center justify-between px-8 py-5 bg-white border-b border-gray-200 sticky top-0 z-10">
           <div>
             <div className="flex items-center gap-2 text-xs text-gray-400 mb-1">
               <span>Admin</span><span>/</span><span className="text-gray-700 font-semibold">{currentLabel}</span>
             </div>
-            <h2 className="text-xl font-black text-gray-900 tracking-tight">{greeting}, {profile?.first_name} 👋</h2>
+            <h2 className="text-xl font-black text-gray-900 tracking-tight">{greeting}, {profile?.first_name}</h2>
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
               <p className="text-sm font-bold text-gray-900 tabular-nums">{clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
               <p className="text-[10px] text-gray-400 font-medium">{clock.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p>
             </div>
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm shadow-lg" style={{ background: 'linear-gradient(135deg,#6366f1,#a78bfa)' }}>{profile?.first_name?.[0]}</div>
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm bg-gray-700">{profile?.first_name?.[0]}</div>
           </div>
         </header>
 
@@ -157,6 +155,7 @@ export default function AdminDashboard({ session, profile }) {
           {activeTab === 'payments' && <PaymentsView />}
           {activeTab === 'bookings' && <BookingsView />}
           {activeTab === 'schedules' && <SchedulesView />}
+          {activeTab === 'profile' && <AdminProfileView session={session} profile={profile} />}
         </main>
       </div>
     </div>
@@ -169,14 +168,14 @@ function DeleteModal({ isOpen, onClose, onConfirm, title, message }) {
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[70] p-4 animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl w-full max-w-sm p-7 text-center shadow-2xl mx-4 border border-gray-100">
-        <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-5" style={{ background: 'linear-gradient(135deg,#fee2e2,#fecaca)' }}>
+        <div className="w-16 h-16 rounded-2xl bg-red-50 flex items-center justify-center mx-auto mb-5">
           <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
         </div>
         <h3 className="text-xl font-black text-gray-900 mb-2">{title}</h3>
         <p className="text-sm text-gray-500 mb-7 leading-relaxed">{message}</p>
         <div className="flex flex-col sm:flex-row gap-3">
           <button onClick={onClose} className="w-full py-3 bg-gray-50 border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-100 transition-all cursor-pointer">Cancel</button>
-          <button onClick={onConfirm} className="w-full py-3 text-white font-bold rounded-xl transition-all cursor-pointer shadow-lg shadow-red-200 hover:opacity-90" style={{ background: 'linear-gradient(135deg,#ef4444,#dc2626)' }}>Delete</button>
+          <button onClick={onConfirm} className="w-full py-3 bg-red-600 text-white font-bold rounded-xl transition-all cursor-pointer hover:bg-red-700">Delete</button>
         </div>
       </div>
     </div>
@@ -188,7 +187,7 @@ function EmptyStateRow({ colSpan, message }) {
     <tr>
       <td colSpan={colSpan} className="p-16 text-center">
         <div className="flex flex-col items-center justify-center text-gray-400 gap-3">
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg,#f1f5f9,#e2e8f0)' }}>
+          <div className="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center">
             <svg className="w-7 h-7 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
             </svg>
@@ -317,10 +316,10 @@ function OverviewView() {
   }
 
   const statCards = [
-    { label: 'Total Users', value: stats.users, icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z', gradient: 'linear-gradient(135deg,#3b82f6,#1d4ed8)', shadow: 'rgba(59,130,246,0.3)' },
-    { label: 'Properties', value: stats.properties, icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4', gradient: 'linear-gradient(135deg,#8b5cf6,#6d28d9)', shadow: 'rgba(139,92,246,0.3)' },
-    { label: 'Bookings', value: stats.bookings, icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z', gradient: 'linear-gradient(135deg,#f59e0b,#d97706)', shadow: 'rgba(245,158,11,0.3)' },
-    { label: 'Total Revenue', value: stats.revenue, prefix: '₱', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z', gradient: 'linear-gradient(135deg,#10b981,#059669)', shadow: 'rgba(16,185,129,0.3)' },
+    { label: 'Total Users', value: stats.users, icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z', bg: '#2563eb' },
+    { label: 'Properties', value: stats.properties, icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4', bg: '#7c3aed' },
+    { label: 'Bookings', value: stats.bookings, icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z', bg: '#d97706' },
+    { label: 'Total Revenue', value: stats.revenue, prefix: '₱', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z', bg: '#059669' },
   ]
 
   if (loading) return <Spinner />
@@ -330,11 +329,9 @@ function OverviewView() {
       {/* Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
         {statCards.map((card, i) => (
-          <div key={i} className="rounded-2xl p-5 text-white relative overflow-hidden group hover:-translate-y-1 transition-all duration-300 cursor-default" style={{ background: card.gradient, boxShadow: `0 10px 30px -5px ${card.shadow}` }}>
-            <div className="absolute -top-6 -right-6 w-24 h-24 bg-white/10 rounded-full group-hover:scale-150 transition-transform duration-500"></div>
-            <div className="absolute -bottom-4 -left-4 w-16 h-16 bg-white/5 rounded-full"></div>
+          <div key={i} className="rounded-2xl p-5 text-white relative overflow-hidden hover:-translate-y-1 transition-all duration-300 cursor-default" style={{ backgroundColor: card.bg }}>
             <div className="relative z-10">
-              <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center mb-3">
+              <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center mb-3">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={card.icon} /></svg>
               </div>
               <p className="text-2xl font-black">{card.prefix ? <AnimatedCounter value={card.value} prefix={card.prefix} /> : <AnimatedCounter value={card.value} />}</p>
@@ -345,19 +342,19 @@ function OverviewView() {
       </div>
 
       {/* Automated Processes */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-sm border border-gray-100/80">
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200">
         <h3 className="font-bold text-lg mb-5 flex items-center gap-2">
-          <span className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg,#6366f1,#818cf8)' }}><svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg></span>
+          <span className="w-8 h-8 rounded-lg bg-gray-800 flex items-center justify-center"><svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg></span>
           Automated Processes
-          {autoSendStatus === 'sending' && <span className="text-xs text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full ml-2 animate-pulse font-semibold">⏳ Auto-sending...</span>}
-          {autoSendStatus === 'sent' && <span className="text-xs text-green-600 bg-green-50 px-2.5 py-1 rounded-full ml-2 font-semibold">✓ Auto-sent this month</span>}
+          {autoSendStatus === 'sending' && <span className="text-xs text-gray-600 bg-gray-100 px-2.5 py-1 rounded-full ml-2 animate-pulse font-semibold">Auto-sending...</span>}
+          {autoSendStatus === 'sent' && <span className="text-xs text-green-600 bg-green-50 px-2.5 py-1 rounded-full ml-2 font-semibold">Auto-sent this month</span>}
         </h3>
-        <div className="flex flex-col lg:flex-row items-stretch gap-4 p-5 bg-gradient-to-r from-slate-50 to-indigo-50/50 rounded-xl border border-gray-100">
+        <div className="flex flex-col lg:flex-row items-stretch gap-4 p-5 bg-gray-50 rounded-xl border border-gray-200">
           <div className="flex-1">
             <h4 className="font-bold text-gray-900 text-base">Monthly Statements</h4>
             <p className="text-sm text-gray-500 mt-1">Send payment statements to tenants and financial overviews to landlords via email.</p>
-            <p className="text-xs text-indigo-600 font-semibold mt-3 bg-indigo-50 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full">
-              Auto-sends on the 30th • Or click to send manually
+            <p className="text-xs text-gray-600 font-semibold mt-3 bg-gray-100 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full">
+              Auto-sends on the 30th / Click to send manually
             </p>
           </div>
           <button
@@ -374,14 +371,14 @@ function OverviewView() {
               } catch (err) { showToast.error("Failed to connect to server") }
               finally { btn.innerText = originalText; btn.disabled = false }
             }}
-            className="self-center px-6 py-3 text-white font-bold rounded-xl hover:opacity-90 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-lg whitespace-nowrap" style={{ background: 'linear-gradient(135deg,#6366f1,#818cf8)' }}
+            className="self-center px-6 py-3 bg-gray-800 text-white font-bold rounded-xl hover:bg-black transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap"
           >
             Send Now
           </button>
         </div>
 
         {/* Reminder Toggle */}
-        <div className="flex flex-col lg:flex-row items-stretch gap-4 p-5 bg-gradient-to-r from-slate-50 to-green-50/50 rounded-xl border border-gray-100 mt-4">
+        <div className="flex flex-col lg:flex-row items-stretch gap-4 p-5 bg-gray-50 rounded-xl border border-gray-200 mt-4">
           <div className="flex-1">
             <h4 className="font-bold text-gray-900 text-base">Payment Reminders</h4>
             <p className="text-sm text-gray-500 mt-1">Automatically email/SMS tenants about upcoming due dates.</p>
@@ -404,7 +401,7 @@ function OverviewView() {
               ? 'bg-red-50 text-red-600 hover:bg-red-600 hover:text-white border border-red-200'
               : 'text-white shadow-lg hover:opacity-90'
               }`}
-            style={!remindersEnabled ? { background: 'linear-gradient(135deg,#10b981,#059669)' } : {}}
+            style={!remindersEnabled ? { backgroundColor: '#059669' } : {}}
           >
             {togglingReminders ? 'Processing...' : remindersEnabled ? 'Stop Reminders' : 'Start Reminders'}
           </button>
@@ -412,9 +409,9 @@ function OverviewView() {
       </div>
 
       {/* Recent Users */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 shadow-sm border border-gray-100/80">
+      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200">
         <h3 className="font-bold text-lg mb-5 flex items-center gap-2">
-          <span className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg,#3b82f6,#1d4ed8)' }}><svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg></span>
+          <span className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center"><svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg></span>
           Recent Users
           <span className="text-xs text-gray-400 font-medium ml-auto">Last 5 registered</span>
         </h3>
@@ -422,7 +419,7 @@ function OverviewView() {
           {recentUsers.map((user, idx) => (
             <div key={user.id} className="flex items-center justify-between p-4 bg-gradient-to-r from-gray-50 to-transparent rounded-xl hover:from-indigo-50/50 transition-all duration-300 group">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm text-white shadow-md" style={{ background: `linear-gradient(135deg,${['#6366f1', '#3b82f6', '#8b5cf6', '#f59e0b', '#10b981'][idx % 5]},${['#818cf8', '#60a5fa', '#a78bfa', '#fbbf24', '#34d399'][idx % 5]})` }}>
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm text-white bg-gray-600">
                   {user.first_name?.[0]}
                 </div>
                 <div>
@@ -949,9 +946,9 @@ function PropertiesView() {
             </div>
 
             {/* Image Management */}
-            <div className="mb-6 p-5 bg-gradient-to-r from-indigo-50/50 to-purple-50/50 rounded-xl border border-indigo-100/50">
+            <div className="mb-6 p-5 bg-gray-50 rounded-xl border border-gray-200">
               <label className="block text-sm font-bold text-gray-900 mb-3 flex items-center gap-2">
-                <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                 Property Photos (Max 10)
               </label>
               <div className="grid grid-cols-5 sm:grid-cols-6 md:grid-cols-8 gap-2">
@@ -966,9 +963,9 @@ function PropertiesView() {
                           </div>
                         </div>
                       ) : (
-                        <div className={`w-full h-full border-2 border-dashed rounded-lg flex items-center justify-center text-xs transition-colors ${uploadingImages[index] ? 'bg-yellow-50 border-yellow-300' : 'bg-white border-gray-300 text-gray-400 hover:border-indigo-400'}`}>
+                        <div className={`w-full h-full border-2 border-dashed rounded-lg flex items-center justify-center text-xs transition-colors ${uploadingImages[index] ? 'bg-yellow-50 border-yellow-300' : 'bg-white border-gray-300 text-gray-400 hover:border-gray-500'}`}>
                           {uploadingImages[index] ? (
-                            <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                            <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
                           ) : <span className="text-lg">+</span>}
                         </div>
                       )}
@@ -980,7 +977,7 @@ function PropertiesView() {
                   </div>
                 ))}
                 {imageUrls.length < 10 && (
-                  <button type="button" onClick={() => setImageUrls([...imageUrls, ''])} className="aspect-square rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 cursor-pointer bg-white hover:bg-gray-50 hover:border-indigo-400 transition-colors text-lg">+</button>
+                  <button type="button" onClick={() => setImageUrls([...imageUrls, ''])} className="aspect-square rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 cursor-pointer bg-white hover:bg-gray-50 hover:border-gray-500 transition-colors text-lg">+</button>
                 )}
               </div>
               <p className="text-[10px] text-gray-400 mt-2">Max 5MB per image. Click to upload or replace.</p>
@@ -1003,7 +1000,7 @@ function PropertiesView() {
               <Input label="Area (Sqft)" type="number" value={propForm.area_sqft || ''} onChange={e => setPropForm({ ...propForm, area_sqft: e.target.value })} />
               <div className="space-y-1">
                 <label className="block text-sm font-bold text-gray-700 mb-1">Status</label>
-                <select value={propForm.status} onChange={e => setPropForm({ ...propForm, status: e.target.value })} className="w-full border rounded-xl px-4 py-3 cursor-pointer bg-white focus:ring-2 focus:ring-indigo-500 outline-none">
+                <select value={propForm.status} onChange={e => setPropForm({ ...propForm, status: e.target.value })} className="w-full border rounded-xl px-4 py-3 cursor-pointer bg-white focus:ring-2 focus:ring-black outline-none">
                   <option value="available">Available</option>
                   <option value="occupied">Occupied</option>
                   <option value="not available">Not Available</option>
@@ -1026,7 +1023,7 @@ function PropertiesView() {
                     <button key={amenity} type="button" onClick={() => {
                       const current = propForm.amenities || []
                       setPropForm({ ...propForm, amenities: current.includes(amenity) ? current.filter(a => a !== amenity) : [...current, amenity] })
-                    }} className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer ${(propForm.amenities || []).includes(amenity) ? 'border-indigo-500 bg-indigo-500 text-white' : 'border-gray-200 bg-white text-gray-600 hover:border-indigo-300'}`}>
+                    }} className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer ${(propForm.amenities || []).includes(amenity) ? 'border-black bg-black text-white' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400'}`}>
                       {amenity}
                     </button>
                   ))}
@@ -1034,7 +1031,7 @@ function PropertiesView() {
               </div>
               <div className="md:col-span-2">
                 <label className="block text-sm font-bold text-gray-700 mb-1">Description</label>
-                <textarea className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-indigo-500 outline-none transition-all resize-none" rows={4} value={propForm.description || ''} onChange={e => setPropForm({ ...propForm, description: e.target.value })} />
+                <textarea className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-black outline-none transition-all resize-none" rows={4} value={propForm.description || ''} onChange={e => setPropForm({ ...propForm, description: e.target.value })} />
               </div>
               {/* Terms & Conditions URL */}
               <div className="md:col-span-2">
@@ -1043,7 +1040,7 @@ function PropertiesView() {
             </div>
             <div className="flex flex-col sm:flex-row gap-3 pt-8">
               <Button variant="secondary" className="flex-1 py-3.5 cursor-pointer rounded-xl" onClick={() => setEditingProp(null)}>Cancel</Button>
-              <Button className="flex-1 py-3.5 text-white hover:opacity-90 cursor-pointer rounded-xl shadow-lg" style={{ background: 'linear-gradient(135deg,#6366f1,#818cf8)' }} onClick={handleUpdateProperty}>Update Property</Button>
+              <Button className="flex-1 py-3.5 bg-black text-white hover:bg-gray-800 cursor-pointer rounded-xl" onClick={handleUpdateProperty}>Update Property</Button>
             </div>
           </div>
         </div>
@@ -1119,16 +1116,16 @@ function PaymentsView() {
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
-      <div className="bg-white/80 backdrop-blur-sm p-6 rounded-2xl shadow-sm border border-gray-100/80">
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
           <div>
             <h3 className="font-bold text-lg flex items-center gap-2">
-              <span className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg,#10b981,#059669)' }}><svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg></span>
+              <span className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center"><svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg></span>
               Income Analytics
             </h3>
             <p className="text-sm text-gray-500 mt-1">Showing: <span className="font-bold text-gray-900">{selectedLandlordId === 'all' ? 'All Landlords' : landlords.find(l => l.id === selectedLandlordId)?.name}</span></p>
           </div>
-          <select value={selectedLandlordId} onChange={(e) => setSelectedLandlordId(e.target.value)} className="bg-gray-50 border border-gray-200 text-sm rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer font-medium w-full md:w-auto">
+          <select value={selectedLandlordId} onChange={(e) => setSelectedLandlordId(e.target.value)} className="bg-gray-50 border border-gray-200 text-sm rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-black outline-none cursor-pointer font-medium w-full md:w-auto">
             <option value="all">All Landlords (Total)</option>
             {landlords.map(l => (<option key={l.id} value={l.id}>{l.name}</option>))}
           </select>
@@ -1137,9 +1134,9 @@ function PaymentsView() {
           {graphData.length === 0 ? <div className="w-full h-full flex items-center justify-center text-gray-400 italic">No income data</div> :
             graphData.map(([month, value]) => (
               <div key={month} className="flex flex-col items-center flex-1 group min-w-[55px]">
-                <div className="relative w-full flex items-end justify-center h-44 bg-gradient-to-b from-gray-50 to-white rounded-2xl overflow-hidden border border-gray-100">
-                  <div className="w-full mx-1.5 rounded-t-xl transition-all duration-700 ease-out group-hover:opacity-90" style={{ height: `${Math.max((value / maxIncome) * 100, 5)}%`, background: 'linear-gradient(180deg,#6366f1,#818cf8)' }}></div>
-                  <div className="absolute top-2 bg-white/95 backdrop-blur shadow-lg border border-gray-100 text-gray-900 text-[10px] font-bold px-2.5 py-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-200 transform group-hover:-translate-y-1">₱{value.toLocaleString()}</div>
+                <div className="relative w-full flex items-end justify-center h-44 bg-gray-50 rounded-2xl overflow-hidden border border-gray-100">
+                  <div className="w-full mx-1.5 rounded-t-xl transition-all duration-700 ease-out group-hover:opacity-90 bg-gray-800" style={{ height: `${Math.max((value / maxIncome) * 100, 5)}%` }}></div>
+                  <div className="absolute top-2 bg-white shadow-lg border border-gray-100 text-gray-900 text-[10px] font-bold px-2.5 py-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-200 transform group-hover:-translate-y-1">₱{value.toLocaleString()}</div>
                 </div>
                 <p className="mt-2.5 text-xs font-bold text-gray-400 uppercase tracking-wider">{month}</p>
               </div>
@@ -1383,6 +1380,147 @@ function SchedulesView() {
         </div>
       )}
       <DeleteModal isOpen={!!deleteId} onClose={() => setDeleteId(null)} onConfirm={confirmDelete} title="Delete Schedule" message="Are you sure you want to remove this time slot?" />
+    </div>
+  )
+}
+
+function AdminProfileView({ session, profile }) {
+  const [form, setForm] = useState({
+    first_name: profile?.first_name || '',
+    middle_name: profile?.middle_name || '',
+    last_name: profile?.last_name || '',
+    phone: profile?.phone || '',
+    birthday: profile?.birthday || '',
+    gender: profile?.gender || '',
+  })
+  const [email, setEmail] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [savingPassword, setSavingPassword] = useState(false)
+
+  useEffect(() => {
+    async function getEmail() {
+      if (session?.user?.email) {
+        setEmail(session.user.email)
+      }
+    }
+    getEmail()
+  }, [session])
+
+  async function handleSaveProfile() {
+    setSaving(true)
+    try {
+      const { error } = await supabase.from('profiles').update({
+        first_name: form.first_name,
+        middle_name: form.middle_name,
+        last_name: form.last_name,
+        phone: form.phone,
+        birthday: form.birthday || null,
+        gender: form.gender || null,
+      }).eq('id', profile?.id)
+      if (error) throw error
+      showToast.success('Profile updated successfully')
+    } catch (err) {
+      showToast.error(err.message || 'Failed to update profile')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleChangePassword() {
+    if (!newPassword || newPassword.length < 6) {
+      showToast.error('Password must be at least 6 characters')
+      return
+    }
+    setSavingPassword(true)
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword })
+      if (error) throw error
+      showToast.success('Password updated successfully')
+      setNewPassword('')
+    } catch (err) {
+      showToast.error(err.message || 'Failed to update password')
+    } finally {
+      setSavingPassword(false)
+    }
+  }
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-500 max-w-2xl">
+      <div>
+        <h2 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight">Admin Profile</h2>
+        <p className="text-gray-500 mt-1 text-sm">Update your personal information and security settings.</p>
+      </div>
+
+      {/* Profile Details */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+        <h3 className="font-bold text-lg text-gray-900 mb-5">Personal Information</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">First Name</label>
+            <input type="text" className="w-full border border-gray-200 rounded-xl px-4 py-3 bg-white focus:ring-2 focus:ring-black outline-none text-sm"
+              value={form.first_name} onChange={e => setForm({ ...form, first_name: e.target.value })} />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">Middle Name</label>
+            <input type="text" className="w-full border border-gray-200 rounded-xl px-4 py-3 bg-white focus:ring-2 focus:ring-black outline-none text-sm"
+              value={form.middle_name} onChange={e => setForm({ ...form, middle_name: e.target.value })} />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">Last Name</label>
+            <input type="text" className="w-full border border-gray-200 rounded-xl px-4 py-3 bg-white focus:ring-2 focus:ring-black outline-none text-sm"
+              value={form.last_name} onChange={e => setForm({ ...form, last_name: e.target.value })} />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">Phone Number</label>
+            <input type="text" className="w-full border border-gray-200 rounded-xl px-4 py-3 bg-white focus:ring-2 focus:ring-black outline-none text-sm"
+              value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">Birthday</label>
+            <input type="date" className="w-full border border-gray-200 rounded-xl px-4 py-3 bg-white focus:ring-2 focus:ring-black outline-none text-sm"
+              value={form.birthday} onChange={e => setForm({ ...form, birthday: e.target.value })} />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">Gender</label>
+            <select className="w-full border border-gray-200 rounded-xl px-4 py-3 bg-white focus:ring-2 focus:ring-black outline-none text-sm cursor-pointer"
+              value={form.gender} onChange={e => setForm({ ...form, gender: e.target.value })}>
+              <option value="">Select</option>
+              <option value="male">Male</option>
+              <option value="female">Female</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+        </div>
+        <div className="mt-4">
+          <label className="block text-xs font-bold text-gray-500 mb-1">Email Address</label>
+          <input type="email" disabled className="w-full border border-gray-200 rounded-xl px-4 py-3 bg-gray-50 text-gray-500 text-sm cursor-not-allowed" value={email} />
+          <p className="text-[10px] text-gray-400 mt-1">Email cannot be changed here. Contact support if needed.</p>
+        </div>
+        <div className="flex justify-end mt-6">
+          <button onClick={handleSaveProfile} disabled={saving}
+            className="px-6 py-3 bg-black text-white font-bold rounded-xl hover:bg-gray-800 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+            {saving ? 'Saving...' : 'Save Changes'}
+          </button>
+        </div>
+      </div>
+
+      {/* Change Password */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+        <h3 className="font-bold text-lg text-gray-900 mb-5">Security</h3>
+        <div>
+          <label className="block text-xs font-bold text-gray-500 mb-1">New Password</label>
+          <input type="password" className="w-full border border-gray-200 rounded-xl px-4 py-3 bg-white focus:ring-2 focus:ring-black outline-none text-sm"
+            placeholder="Enter new password (min 6 characters)"
+            value={newPassword} onChange={e => setNewPassword(e.target.value)} />
+        </div>
+        <div className="flex justify-end mt-6">
+          <button onClick={handleChangePassword} disabled={savingPassword || !newPassword}
+            className="px-6 py-3 bg-black text-white font-bold rounded-xl hover:bg-gray-800 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+            {savingPassword ? 'Updating...' : 'Update Password'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

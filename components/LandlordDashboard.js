@@ -1275,6 +1275,23 @@ export default function LandlordDashboard({ session, profile }) {
       return
     }
 
+    // Check for pending payments before allowing contract end
+    const { data: pendingBills, error: pendingError } = await supabase
+      .from('payment_requests')
+      .select('id')
+      .eq('occupancy_id', occupancy.id)
+      .eq('status', 'pending')
+      .limit(1)
+
+    if (pendingError) {
+      console.error('Error checking pending payments:', pendingError)
+    }
+
+    if (pendingBills && pendingBills.length > 0) {
+      showToast.error("Cannot end contract: This tenant has pending payments. All bills must be settled first.", { duration: 6000, progress: true, position: 'top-center', transition: 'bounceIn' })
+      return
+    }
+
     setEndContractModal({ isOpen: false, occupancy: null })
 
     const { error } = await supabase
@@ -1370,6 +1387,23 @@ export default function LandlordDashboard({ session, profile }) {
   async function approveEndRequest(occupancyId) {
     const occupancy = pendingEndRequests.find(o => o.id === occupancyId);
     if (!occupancy) return
+
+    // Check for pending payments before allowing approval
+    const { data: pendingBills, error: pendingError } = await supabase
+      .from('payment_requests')
+      .select('id')
+      .eq('occupancy_id', occupancyId)
+      .eq('status', 'pending')
+      .limit(1)
+
+    if (pendingError) {
+      console.error('Error checking pending payments:', pendingError)
+    }
+
+    if (pendingBills && pendingBills.length > 0) {
+      showToast.error("Cannot approve: This tenant has pending payments. All bills must be settled before ending the contract.", { duration: 6000, progress: true, position: 'top-center', transition: 'bounceIn' })
+      return
+    }
 
     const { error } = await supabase
       .from('tenant_occupancies')

@@ -45,6 +45,7 @@ export default function AssignTenantPage() {
     const [wifiDueDay, setWifiDueDay] = useState('')
     const [waterDueDay, setWaterDueDay] = useState('')
     const [electricityDueDay, setElectricityDueDay] = useState('')
+    const [apartmentDueDay, setApartmentDueDay] = useState('')
     const [alreadyPaid, setAlreadyPaid] = useState(false)
 
     // Confirmation
@@ -166,6 +167,11 @@ export default function AssignTenantPage() {
         const isElecFree = amenities.includes('Free Electricity')
         const isWifiFree = amenities.includes('Free WiFi')
 
+        // Validate apartment due date
+        if (!apartmentDueDay || parseInt(apartmentDueDay) < 1 || parseInt(apartmentDueDay) > 31) {
+            return toast('error', 'Please enter a valid Apartment Bill Due Day (1-31)')
+        }
+
         // Validate utility due dates if not free
         if (!isWaterFree && (!waterDueDay || parseInt(waterDueDay) < 1 || parseInt(waterDueDay) > 31)) {
             return toast('error', 'Please enter a valid Water Due Day (1-31)')
@@ -212,6 +218,7 @@ export default function AssignTenantPage() {
             security_deposit_used: 0,
             wifi_due_day: isWifiFree ? null : (wifiDueDay ? parseInt(wifiDueDay) : null),
             electricity_due_day: isElecFree ? null : (electricityDueDay ? parseInt(electricityDueDay) : null),
+            rent_due_day: apartmentDueDay ? parseInt(apartmentDueDay) : null,
             late_payment_fee: penaltyDetails ? parseFloat(penaltyDetails) : 0,
             contract_url: contractUrl
         }).select('id').single()
@@ -471,6 +478,7 @@ export default function AssignTenantPage() {
         const isInRange = (day) => rangeStart && day >= rangeStart && day <= rangeEnd
         const isSelected = (day) => rangeStart && day === rangeStart
         const colors = {
+            rose: { bg: 'bg-rose-500', light: 'bg-rose-50 text-rose-600 border-rose-100', ring: 'ring-rose-300', badge: 'bg-rose-100 text-rose-700', iconBg: 'bg-rose-100 text-rose-600', headerBg: 'from-rose-500 to-rose-600' },
             blue: { bg: 'bg-blue-500', light: 'bg-blue-50 text-blue-600 border-blue-100', ring: 'ring-blue-300', badge: 'bg-blue-100 text-blue-700', iconBg: 'bg-blue-100 text-blue-600', headerBg: 'from-blue-500 to-blue-600' },
             amber: { bg: 'bg-amber-500', light: 'bg-amber-50 text-amber-600 border-amber-100', ring: 'ring-amber-300', badge: 'bg-amber-100 text-amber-700', iconBg: 'bg-amber-100 text-amber-600', headerBg: 'from-amber-500 to-amber-600' },
             violet: { bg: 'bg-violet-500', light: 'bg-violet-50 text-violet-600 border-violet-100', ring: 'ring-violet-300', badge: 'bg-violet-100 text-violet-700', iconBg: 'bg-violet-100 text-violet-600', headerBg: 'from-violet-500 to-violet-600' },
@@ -546,6 +554,7 @@ export default function AssignTenantPage() {
         )
     }
 
+    const apartmentIcon = <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
     const waterIcon = <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 21c-3.866 0-7-3.134-7-7 0-4.97 7-11 7-11s7 6.03 7 11c0 3.866-3.134 7-7 7z" /></svg>
     const elecIcon = <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
     const wifiIcon = <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01M5.636 13.636a9 9 0 0112.728 0M1.393 10.393a14 14 0 0121.213 0" /></svg>
@@ -564,7 +573,8 @@ export default function AssignTenantPage() {
         )
         return (
             <div className="space-y-3">
-                <p className="text-xs text-gray-500 font-medium leading-relaxed">Select a due day for each utility. A 4-day notification window will be highlighted.</p>
+                <p className="text-xs text-gray-500 font-medium leading-relaxed">Select a due day for each bill. A 4-day notification window will be highlighted.</p>
+                <DayPickerModal label="Apartment Bill" icon={apartmentIcon} selectedDay={apartmentDueDay} onSelect={setApartmentDueDay} accentColor="rose" pickerKey="apartment" />
                 {!isWaterFree ? <DayPickerModal label="Water" icon={waterIcon} selectedDay={waterDueDay} onSelect={setWaterDueDay} accentColor="blue" pickerKey="water" /> : <FreeBadge label="Free Water" icon={waterIcon} />}
                 {!isElecFree ? <DayPickerModal label="Electricity" icon={elecIcon} selectedDay={electricityDueDay} onSelect={setElectricityDueDay} accentColor="amber" pickerKey="electricity" /> : <FreeBadge label="Free Electricity" icon={elecIcon} />}
                 {!isWifiFree ? <DayPickerModal label="WiFi" icon={wifiIcon} selectedDay={wifiDueDay} onSelect={setWifiDueDay} accentColor="violet" pickerKey="wifi" /> : <FreeBadge label="Free WiFi" icon={wifiIcon} />}

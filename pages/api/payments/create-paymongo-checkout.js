@@ -18,7 +18,7 @@ export default async function handler(req, res) {
     // Build the success/cancel URLs
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL
         ? `https://${process.env.VERCEL_URL}`
-        : 'http://localhost:3000');
+        : 'https://www.abalay-rent.me');
 
     const successUrl = `${baseUrl}/payments?paymongo_success=true&payment_request_id=${paymentRequestId}`;
     const cancelUrl = `${baseUrl}/payments?paymongo_cancelled=true`;

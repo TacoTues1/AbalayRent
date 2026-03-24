@@ -318,6 +318,10 @@ export default function Home() {
         landlord_profile:profiles!properties_landlord_fkey(id, first_name, middle_name, last_name, role)
       `)
 
+    if (!searchQuery) {
+      query = query.ilike('city', '%Dumaguete%')
+    }
+
     if (priceRange.min) {
       query = query.gte('price', parseInt(priceRange.min))
     }
@@ -368,10 +372,9 @@ export default function Home() {
       // Update State for Stats
       setPropertyStats(statsMap)
 
-      // 3. Guest Favorites (Most Favorited)
+      // 3. Available in Dumaguete City
       const favorites = allProps
-        .filter(p => (statsMap[p.id]?.favorite_count || 0) >= 1)
-        .sort((a, b) => (statsMap[b.id]?.favorite_count || 0) - (statsMap[a.id]?.favorite_count || 0))
+        .filter(p => p.city && p.city.toLowerCase().includes('valencia'))
         .slice(0, maxDisplayItems)
 
       setGuestFavorites(favorites)
@@ -569,11 +572,11 @@ export default function Home() {
       <div className="flex-1 max-w-[1800px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-1">
 
         {/* All Properties Section - Fixed height container to prevent layout shift */}
-        <div className="mb-2 pt-5">
+        <div className="mb-2 pt-2">
           {/* Section Header */}
-          <div className={`flex flex-col sm:flex-row items-start sm:items-center mb-3 gap-3 ${mounted ? 'animate-fadeInLeft delay-200' : 'opacity-0'}`}>
-            <h2 className="text-xl sm:text-3xl font-black text-black tracking-tight shrink-0">
-              Recommended Properties
+          <div className={`flex flex-col sm:flex-row items-start sm:items-center mb-4 gap-3 ${mounted ? 'animate-fadeInLeft delay-200' : 'opacity-0'}`}>
+            <h2 className="text-2xl font-black text-black shrink-0">
+              Available in Dumaguete City
             </h2>
 
             <div className="flex items-center gap-3 w-full sm:w-auto sm:flex-1 sm:max-w-md lg:max-w-lg">
@@ -648,7 +651,7 @@ export default function Home() {
                             <div className="flex items-center gap-2 text-xs text-gray-500">
                               <span>{property.city}</span>
                               <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
-                              <span className="font-bold text-gray-900">₱{Number(property.price).toLocaleString()}/mo</span>
+                              <span className="font-bold text-gray-900">Γé▒{Number(property.price).toLocaleString()}/mo</span>
                             </div>
                           </div>
                           <div className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-green-100 text-green-700">
@@ -707,7 +710,7 @@ export default function Home() {
                             <div className="flex items-center gap-2 text-xs text-gray-500">
                               <span>{property.city}</span>
                               <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
-                              <span className="font-bold text-gray-900">₱{Number(property.price).toLocaleString()}/mo</span>
+                              <span className="font-bold text-gray-900">Γé▒{Number(property.price).toLocaleString()}/mo</span>
                             </div>
                             {/* Matched fields indicator */}
                             {property._matchedFields && property._matchedFields.length > 0 && (
@@ -914,13 +917,12 @@ export default function Home() {
 
         {/* Guest Favorites Section - Carousel */}
         {guestFavorites.length > 0 && (
-          <div className={`mb-2 mt-8 ${mounted ? 'animate-fadeInUp delay-300' : 'opacity-0'}`}>
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+          <div className={`mb-2 mt-4 ${mounted ? 'animate-fadeInUp delay-300' : 'opacity-0'}`}>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
               <div>
                 <div className="flex items-center gap-3 mb-1">
-                  <h2 className="text-2xl sm:text-2xl font-black text-black">Tenants Favorites</h2>
+                  <h2 className="text-2xl font-black text-black">Near Valencia</h2>
                 </div>
-                <p className="text-sm text-gray-500">Most loved by our community</p>
               </div>
             </div>
             <Carousel className="w-full mx-auto sm:max-w-[calc(100%-100px)]">
@@ -1040,13 +1042,12 @@ export default function Home() {
 
         {/* Top Rated Section - Carousel */}
         {topRated.length > 0 && (
-          <div className={`mb-2 mt-8 ${mounted ? 'animate-fadeInUp delay-400' : 'opacity-0'}`}>
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+          <div className={`mb-2 mt-4 ${mounted ? 'animate-fadeInUp delay-400' : 'opacity-0'}`}>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
               <div>
                 <div className="flex items-center gap-3 mb-1">
                   <h2 className="text-2xl font-black text-black">Top Rated</h2>
                 </div>
-                <p className="text-sm text-gray-500">Highest rated by tenants</p>
               </div>
             </div>
             <Carousel className="w-full mx-auto sm:max-w-[calc(100%-100px)]">
@@ -1322,7 +1323,7 @@ export default function Home() {
 
                   <div className="mb-6 pb-6 border-b-2 border-gray-100 flex items-baseline gap-2">
                     <p className="text-4xl font-black text-black">
-                      ₱{Number(selectedProperty.price).toLocaleString()}
+                      Γé▒{Number(selectedProperty.price).toLocaleString()}
                     </p>
                     <span className="text-gray-500 font-bold text-sm uppercase tracking-wide">/ month</span>
                   </div>

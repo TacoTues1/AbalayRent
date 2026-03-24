@@ -722,7 +722,21 @@ export default function MaintenancePage() {
                 Loading Maintenance list...
               </p>
             </div>
-          ) : (
+          ) : filteredRequests.length === 0 ? (
+          <div className="min-h-screen flex items-start justify-center bg-[#F5F5F5] px-4 pt-20">
+    <div className="w-full max-w-md rounded-[28px] border border-gray-200/80 bg-white/90 p-8 text-center shadow-[0_10px_30px_rgba(0,0,0,0.06)] backdrop-blur-sm">
+
+      <h2 className="text-2xl font-bold tracking-tight text-gray-800">
+        No Maintenance Request
+      </h2>
+
+      <p className="mt-3 text-sm leading-6 text-gray-500">
+        You’re all caught up. New maintenance requests will appear here once
+        they are submitted.
+      </p>
+    </div>
+  </div>
+          ): (
             filteredRequests.map(req => (
               <div key={req.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow">
                 {/* Header Strip */}

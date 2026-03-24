@@ -269,7 +269,7 @@ export default function PropertyDetail() {
         // Add property marker
         new mlgl.Marker({ element: el.firstElementChild, anchor: 'bottom' })
           .setLngLat([lng, lat])
-          .setPopup(new mlgl.Popup({ offset: 25 }).setHTML(`<b>${property.title || 'Property Location'}</b>`))
+          .setPopup(new mlgl.Popup({ offset: 25, focusAfterOpen: false }).setHTML(`<b>${property.title || 'Property Location'}</b>`))
           .addTo(map)
           .togglePopup()
 

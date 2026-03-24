@@ -38,6 +38,7 @@ export default function BookingsPage() {
   const [waterPayment, setWaterPayment] = useState('')
   const [electricityDueDay, setElectricityDueDay] = useState('')
   const [electricityPayment, setElectricityPayment] = useState('')
+  const [apartmentDueDay, setApartmentDueDay] = useState('')
 
   const [showWifiDayPicker, setShowWifiDayPicker] = useState(false)
   const [showWaterDayPicker, setShowWaterDayPicker] = useState(false)
@@ -569,6 +570,7 @@ export default function BookingsPage() {
       security_deposit_used: 0,
       wifi_due_day: wifiDueDay ? parseInt(wifiDueDay) : null,
       electricity_due_day: electricityDueDay ? parseInt(electricityDueDay) : null,
+      rent_due_day: apartmentDueDay ? parseInt(apartmentDueDay) : null,
       // IMPORTANT: To save the other utility values (water_due_day, water_monthly_payment, electricity_monthly_payment, wifi_monthly_payment) 
       // you must first add those columns to your "tenant_occupancies" table via Supabase Dashboard. 
       // water_due_day: waterDueDay ? parseInt(waterDueDay) : null,

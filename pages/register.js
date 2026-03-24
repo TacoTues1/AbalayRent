@@ -583,10 +583,10 @@ export default function Register() {
           <div className="absolute top-6 left-6 z-10">
             <button
               onClick={() => router.push('/')}
-              className="flex items-center gap-2.5 bg-white/15 backdrop-blur-md px-4 py-2 rounded-full hover:bg-white/25 transition-all cursor-pointer"
+              className="flex items-center gap-2.5 transition-all cursor-pointer"
             >
-              <img src="/home.png" alt="Logo" className="w-6 h-6 object-contain" />
-              <span className="text-white font-bold text-sm">Abalay</span>
+              <img src="/home.png" alt="Logo" className="w-8 h-8 object-contain" />
+              <span className="text-white font-black text-3xl tracking-tight drop-shadow-md" style={{ fontFamily: '"Pacifico", cursive', marginTop: '-4px' }}>Abalay</span>
             </button>
           </div>
 
@@ -626,11 +626,18 @@ export default function Register() {
             <div className="text-center">
               <div className={`mx-auto flex items-center justify-center gap-3 mb-2 cursor-pointer transition-all duration-300 ${mounted ? 'animate-fadeInUp delay-100' : 'opacity-0'}`} onClick={() => router.push('/')}>
                 <img src="/home.png" alt="Abalay Logo" className="w-14 h-14 object-contain" />
-                <span className="text-3xl font-black text-gray-900">Abalay</span>
+                <span className="text-3xl font-black text-gray-900" style={{ fontFamily: '"Pacifico", cursive', marginTop: '-4px' }}>Abalay</span>
               </div>
               <p className={`text-sm text-gray-500 font-medium ${mounted ? 'animate-fadeInUp delay-200' : 'opacity-0'}`}>
                 {showOtpInput ? `Enter the 6-digit code sent to ${email}` : 'Create your Abalay account'}
               </p>
+              {!showOtpInput && (
+                <div className={`mt-4 ${mounted ? 'animate-fadeInUp delay-200' : 'opacity-0'}`}>
+                  <Link href="/register-landlord" className="inline-flex items-center justify-center gap-2 w-full text-sm font-bold text-gray-800 bg-white hover:bg-gray-50 px-4 py-2.5 rounded-xl transition-all duration-300 border border-gray-300 shadow-sm text-center">
+                    Register as a Landlord instead →
+                  </Link>
+                </div>
+              )}
             </div>
 
             {/* Conditional Rendering: OTP Form vs Registration Form */}
@@ -896,12 +903,7 @@ export default function Register() {
                   Sign in
                 </Link>
               </p>
-              <p className="text-xs text-gray-400 mt-1">
-                Register as a landlord?{' '}
-                <Link href="/register-landlord" className="font-bold text-gray-600 hover:text-gray-900 hover:underline transition-all duration-300">
-                  Click here
-                </Link>
-              </p>
+
             </div>
           </div>
         </div>

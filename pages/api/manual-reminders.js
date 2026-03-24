@@ -274,6 +274,7 @@ export default async function handler(req, res) {
         start_date,
         late_payment_fee,
         wifi_due_day,
+        rent_due_day,
         tenant:profiles!tenant_occupancies_tenant_id_fkey(id, first_name, last_name, phone),
         property:properties(id, title, price)
       `)
@@ -287,9 +288,18 @@ export default async function handler(req, res) {
 
       // Filter occupancies where today is 1, 2, or 3 days before the due date
       const rentOccupancies = (allOccupancies || []).filter(occ => {
-        if (!occ.start_date) return false;
-        const startDate = new Date(occ.start_date);
-        const dueDay = startDate.getDate();
+        if (!occ.start_date && !occ.rent_due_day) return false;
+        
+        // Use rent_due_day if landlord set it, otherwise fall back to start_date's day
+        let dueDay;
+        if (occ.rent_due_day && occ.rent_due_day >= 1 && occ.rent_due_day <= 31) {
+          dueDay = occ.rent_due_day;
+        } else if (occ.start_date) {
+          const startDate = new Date(occ.start_date);
+          dueDay = startDate.getDate();
+        } else {
+          return false;
+        }
 
         // Calculate due date for current month
         const currentMonthDueDate = new Date(todayYear, todayMonth, dueDay);
@@ -305,8 +315,14 @@ export default async function handler(req, res) {
         for (const occ of rentOccupancies) {
           if (!occ.tenant) continue;
 
-          const startDate = new Date(occ.start_date);
-          const dueDay = startDate.getDate();
+          // Use rent_due_day if set, otherwise fall back to start_date's day
+          let dueDay;
+          if (occ.rent_due_day && occ.rent_due_day >= 1 && occ.rent_due_day <= 31) {
+            dueDay = occ.rent_due_day;
+          } else {
+            const startDate = new Date(occ.start_date);
+            dueDay = startDate.getDate();
+          }
           const currentMonthDueDate = new Date(todayYear, todayMonth, dueDay);
           const daysUntilDue = Math.floor((currentMonthDueDate - today) / (1000 * 60 * 60 * 24));
 
@@ -504,10 +520,14 @@ export default async function handler(req, res) {
             occ.tenant.profile_id = occ.tenant.id;
             await sendUtilityReminder(supabaseAdmin, occ.tenant, 'wifi_due_reminder',
               wifiMessage,
-              `📶 WiFi Bill Due Reminder (${daysText} before due)`
+              `WiFi Bill Due Reminder (${daysText} before due)`
             );
+
+            // Also notify the LANDLORD about upcoming WiFi due date
+            await sendLandlordUtilityReminder(supabaseAdmin, occ.landlord_id, occ.tenant, 'wifi', occ.property?.title, dueDateStr, daysText);
+
             results.wifi_reminders_sent = (results.wifi_reminders_sent || 0) + 1;
-            console.log(`[Wifi Reminder] ✅ Reminder sent to ${occ.tenant?.first_name}`);
+            console.log(`[Wifi Reminder] Reminder sent to ${occ.tenant?.first_name} and landlord`);
           } else {
             console.log(`[Wifi Reminder] ⏭️ Skipped ${occ.tenant?.first_name} - already sent today`);
           }
@@ -561,10 +581,15 @@ export default async function handler(req, res) {
             occ.tenant.profile_id = occ.tenant.id;
             await sendUtilityReminder(supabaseAdmin, occ.tenant, 'electricity_due_reminder',
               electricMessage,
-              `⚡ Electricity Bill Due Reminder (${daysText} into first week)`
+              `Electricity Bill Due Reminder (${daysText} into first week)`
             );
+
+            // Also notify the LANDLORD about upcoming electricity due
+            const elecMonthYear = today.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+            await sendLandlordUtilityReminder(supabaseAdmin, occ.landlord_id, occ.tenant, 'electricity', occ.property?.title, `first week of ${elecMonthYear}`, daysText);
+
             results.electricity_reminders_sent = (results.electricity_reminders_sent || 0) + 1;
-            console.log(`[Electric Reminder] ✅ Reminder sent to ${occ.tenant?.first_name}`);
+            console.log(`[Electric Reminder] Reminder sent to ${occ.tenant?.first_name} and landlord`);
           } else {
             console.log(`[Electric Reminder] ⏭️ Skipped ${occ.tenant?.first_name} - already sent today`);
           }
@@ -618,10 +643,15 @@ export default async function handler(req, res) {
             occ.tenant.profile_id = occ.tenant.id;
             await sendUtilityReminder(supabaseAdmin, occ.tenant, 'water_due_reminder',
               waterMessage,
-              `💧 Water Bill Due Reminder (${daysText} into first week)`
+              `Water Bill Due Reminder (${daysText} into first week)`
             );
+
+            // Also notify the LANDLORD about upcoming water due
+            const waterMonthYear = today.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+            await sendLandlordUtilityReminder(supabaseAdmin, occ.landlord_id, occ.tenant, 'water', occ.property?.title, `first week of ${waterMonthYear}`, daysText);
+
             results.water_reminders_sent = (results.water_reminders_sent || 0) + 1;
-            console.log(`[Water Reminder] ✅ Reminder sent to ${occ.tenant?.first_name}`);
+            console.log(`[Water Reminder] Reminder sent to ${occ.tenant?.first_name} and landlord`);
           } else {
             console.log(`[Water Reminder] ⏭️ Skipped ${occ.tenant?.first_name} - already sent today`);
           }
@@ -1051,5 +1081,86 @@ async function sendUtilityReminder(supabase, tenant, type, message, subject) {
     } catch (e) { console.error("SMS error:", e); }
   } else {
     console.log(`[Utility Reminder] No phone found for user ${userId}`);
+  }
+}
+
+// Notify landlord via email and SMS when utility due dates are near
+async function sendLandlordUtilityReminder(supabase, landlordId, tenant, utilityType, propertyTitle, dueDateStr, daysText) {
+  if (!landlordId) return;
+
+  try {
+    // Fetch landlord profile
+    const { data: landlordProfile } = await supabase
+      .from('profiles')
+      .select('first_name, last_name, phone')
+      .eq('id', landlordId)
+      .single();
+
+    // Fetch landlord email
+    let landlordEmail = null;
+    try {
+      const { data: userData } = await supabase.auth.admin.getUserById(landlordId);
+      landlordEmail = userData?.user?.email;
+    } catch (e) {
+      console.error('Failed to fetch landlord email:', e);
+    }
+
+    const tenantName = `${tenant?.first_name || ''} ${tenant?.last_name || ''}`.trim() || 'Tenant';
+    const landlordName = landlordProfile ? `${landlordProfile.first_name || ''}`.trim() : 'Landlord';
+    const utilityLabel = utilityType === 'wifi' ? 'Internet/WiFi' : utilityType === 'electricity' ? 'Electricity' : 'Water';
+
+    const landlordMessage = `${utilityLabel} Payment Settlement Notice (${daysText} before due): Tenant ${tenantName}'s ${utilityLabel.toLowerCase()} bill for "${propertyTitle || 'property'}" is due on ${dueDateStr}. Please follow up to ensure timely payment settlement.`;
+    const subject = `${utilityLabel} Due - Tenant Payment Settlement (${daysText} left)`;
+
+    // 1. In-App Notification
+    await supabase.from('notifications').insert({
+      recipient: landlordId,
+      actor: landlordId,
+      type: `landlord_${utilityType}_due_reminder`,
+      message: landlordMessage,
+      link: '/payments',
+      is_read: false
+    });
+
+    // 2. Email
+    if (landlordEmail) {
+      try {
+        await sendNotificationEmail({
+          to: landlordEmail,
+          subject: subject,
+          message: `
+            <div style="font-family: sans-serif; color: #333; max-width: 600px; margin: 0 auto;">
+              <div style="padding: 20px; background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 8px;">
+                <h2 style="color: #92400e; margin-top: 0;">${subject}</h2>
+                <p>Hi ${landlordName},</p>
+                <p>${landlordMessage}</p>
+                <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'https://easerent.vercel.app'}/payments" 
+                   style="display: inline-block; background-color: #92400e; color: white; padding: 10px 20px; margin-top: 15px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                   View Payments
+                </a>
+              </div>
+            </div>
+          `
+        });
+        console.log(`[Landlord Utility Reminder] Email sent to ${landlordEmail}`);
+      } catch (e) {
+        console.error(`[Landlord Utility Reminder] Email error:`, e);
+      }
+    }
+
+    // 3. SMS
+    const landlordPhone = formatPhoneNumber(landlordProfile?.phone);
+    if (landlordPhone) {
+      try {
+        await sendSMS(landlordPhone, `[EaseRent] ${landlordMessage}`);
+        console.log(`[Landlord Utility Reminder] SMS sent to ${landlordPhone}`);
+      } catch (e) {
+        console.error(`[Landlord Utility Reminder] SMS error:`, e);
+      }
+    }
+
+    console.log(`[Landlord Utility Reminder] ${utilityLabel} reminder sent to landlord ${landlordId} for tenant ${tenantName}`);
+  } catch (err) {
+    console.error(`[Landlord Utility Reminder] Error:`, err);
   }
 }

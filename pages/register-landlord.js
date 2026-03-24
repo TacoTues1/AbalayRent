@@ -500,7 +500,7 @@ export default function RegisterLandlord() {
                     <div className="text-center">
                         <div className={`mx-auto flex items-center justify-center gap-3 mb-2 cursor-pointer transition-all duration-300 ${mounted ? 'animate-fadeInUp delay-100' : 'opacity-0'}`} onClick={() => router.push('/')}>
                             <img src="/home.png" alt="Abalay Logo" className="w-14 h-14 object-contain" />
-                            <span className="text-3xl font-black text-gray-900">Abalay</span>
+                            <span className="text-3xl font-black text-gray-900" style={{ fontFamily: '"Pacifico", cursive', marginTop: '-4px' }}>Abalay</span>
                         </div>
                         <h2 className="text-lg font-black text-gray-900 tracking-tight">Landlord Registration</h2>
                     </div>
@@ -542,9 +542,6 @@ export default function RegisterLandlord() {
                     <div className="text-center pt-1">
                         <p className="text-xs text-gray-500 font-medium">
                             Already have an account?{' '}<Link href="/login" className="font-bold text-gray-900 hover:text-gray-700 hover:underline transition-all duration-300">Sign in</Link>
-                        </p>
-                        <p className="text-xs text-gray-400 mt-1">
-                            Register as a tenant?{' '}<Link href="/register" className="font-bold text-gray-600 hover:text-gray-900 hover:underline transition-all duration-300">Click here</Link>
                         </p>
                     </div>
                 </div>

@@ -981,6 +981,7 @@ export default function TenantDashboard({ session, profile }) {
 
   async function loadProperties() {
     let query = supabase.from('properties').select('*, landlord_profile:profiles!properties_landlord_fkey(id, first_name, middle_name, last_name, role)')
+      .ilike('city', '%Dumaguete%')
     const { data, error } = await query
     if (error) console.error('Error loading properties:', error)
     setProperties(data || [])
@@ -1191,7 +1192,7 @@ export default function TenantDashboard({ session, profile }) {
       })
       setPropertyStats(statsMap)
 
-      const favs = allProps.filter(p => (statsMap[p.id]?.favorite_count || 0) >= 1).sort((a, b) => (statsMap[b.id]?.favorite_count || 0) - (statsMap[a.id]?.favorite_count || 0)).slice(0, maxDisplayItems)
+      const favs = allProps.filter(p => p.city && p.city.toLowerCase().includes('valencia')).slice(0, maxDisplayItems)
       setGuestFavorites(favs)
 
       const rated = allProps.filter(p => (statsMap[p.id]?.review_count || 0) > 0).sort((a, b) => (statsMap[b.id]?.avg_rating || 0) - (statsMap[a.id]?.avg_rating || 0)).slice(0, maxDisplayItems)
@@ -1224,6 +1225,25 @@ export default function TenantDashboard({ session, profile }) {
       return;
     }
     setSubmittingEndRequest(true)
+
+    // Check for pending payments before allowing end request
+    const { data: pendingBills, error: pendingError } = await supabase
+      .from('payment_requests')
+      .select('id')
+      .eq('occupancy_id', tenantOccupancy.id)
+      .eq('status', 'pending')
+      .limit(1)
+
+    if (pendingError) {
+      console.error('Error checking pending payments:', pendingError)
+    }
+
+    if (pendingBills && pendingBills.length > 0) {
+      showToast.error("You cannot end your contract while you have pending payments. Please settle all outstanding bills first.", { duration: 6000, progress: true, position: 'top-center', transition: 'bounceIn' })
+      setSubmittingEndRequest(false)
+      return
+    }
+
     const { error } = await supabase.from('tenant_occupancies').update({ status: 'pending_end', end_requested_at: new Date().toISOString(), end_request_reason: endRequestReason.trim(), end_request_date: endRequestDate, end_request_status: 'pending' }).eq('id', tenantOccupancy.id)
 
     if (error) {
@@ -2160,9 +2180,9 @@ export default function TenantDashboard({ session, profile }) {
           /* --- ALL PROPERTIES SECTION (DISCOVERY VIEW) --- */
           <div className="space-y-8">
             {/* All Properties Section */}
-            <div className={`mb-0 mt-8 transition-all duration-700 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
-              <div className="flex flex-col sm:flex-row items-start sm:items-center mb-2 gap-3">
-                <h2 className="text-2xl font-black text-black shrink-0">Recommended Properties</h2>
+            <div className={`mb-0 mt-4 transition-all duration-700 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center mb-4 gap-3">
+                <h2 className="text-2xl font-black text-black shrink-0">Available in Dumaguete City</h2>
                 <div className="flex items-center gap-3 w-full sm:w-auto sm:flex-1 sm:max-w-md lg:max-w-lg">
                   <div className="relative flex-1" ref={searchRef}>
                     <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none z-10">
@@ -2271,11 +2291,12 @@ export default function TenantDashboard({ session, profile }) {
 
             {/* Tenants Favorites Section */}
             {guestFavorites.length > 0 && (
-              <div className={`mb-2 mt-8 transition-all duration-700 delay-150 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+              <div className={`mb-2 mt-4 transition-all duration-700 delay-150 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
                   <div>
-                    <h2 className="text-2xl font-bold text-gray-900">Tenants Favorites</h2>
-                    <p className="text-sm text-gray-500">Most loved by our community</p>
+                    <div className="flex items-center gap-3 mb-1">
+                      <h2 className="text-2xl font-black text-black">Near Valencia</h2>
+                    </div>
                   </div>
                 </div>
                 <Carousel className="w-full mx-auto sm:max-w-[calc(100%-100px)]">
@@ -2311,11 +2332,12 @@ export default function TenantDashboard({ session, profile }) {
 
             {/* Top Rated Section - Carousel */}
             {topRated.length > 0 && (
-              <div className={`mb-2 mt-8 transition-all duration-700 delay-300 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+              <div className={`mb-2 mt-4 transition-all duration-700 delay-300 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
                   <div>
-                    <h2 className="text-2xl font-bold text-gray-900">Top Rated</h2>
-                    <p className="text-sm text-gray-500">Highest rated by tenants</p>
+                    <div className="flex items-center gap-3 mb-1">
+                      <h2 className="text-2xl font-black text-black">Top Rated</h2>
+                    </div>
                   </div>
                 </div>
                 <Carousel className="w-full mx-auto sm:max-w-[calc(100%-100px)]">

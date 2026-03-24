@@ -13,7 +13,7 @@ import { useRouter } from 'next/router'
 function MyApp({ Component, pageProps }) {
   const router = useRouter()
 
-  const hideNavbarPaths = ['/login', '/register', '/register-landlord', '/forgotPassword', '/updatePassword', '/getDirections', '/assign-tenant']
+  const hideNavbarPaths = ['/login', '/register', '/register-landlord', '/forgotPassword', '/updatePassword', '/getDirections', '/assign-tenant', '/properties/new']
   return (
     <>
       <Meta />
