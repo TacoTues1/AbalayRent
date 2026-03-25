@@ -454,9 +454,6 @@ export default async function handler(req, res) {
                 payoutMethod = 'maya';
                 payoutDestination = accepted.maya.number;
             }
-
-            console.log(`Tenant paid via: ${tenantPaymentMethod} → Payout to landlord via: ${payoutMethod} (${payoutDestination})`);
-
             // Generate a simulated payout reference number (test mode)
             const payoutRefNumber = `PO-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
@@ -484,7 +481,6 @@ export default async function handler(req, res) {
                 console.error('Payout record creation failed:', payoutError);
             } else {
                 const methodLabel = payoutMethod === 'maya' ? 'Maya' : 'GCash';
-                console.log(`✅ Payout completed: ₱${payoutAmount} to ${methodLabel} (${payoutDestination}), Ref: ${payoutRefNumber}`);
 
                 // Notify landlord about payout received
                 const { data: tenantProfile2 } = await supabase

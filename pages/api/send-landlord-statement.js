@@ -36,7 +36,8 @@ export default async function handler(req, res) {
             },
             totalIncome: totalIncome || 0,
             transactions: [], // Can be expanded to include transaction details
-            propertySummary: propertySummary || []
+            propertySummary: propertySummary || [],
+            hasPaymentRecord: (Number(totalIncome || 0) > 0) || ((propertySummary || []).length > 0)
         })
 
         if (result.success) {

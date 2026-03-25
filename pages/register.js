@@ -23,9 +23,37 @@ export default function Register() {
   const [mounted, setMounted] = useState(false)
   const [currentSlide, setCurrentSlide] = useState(0)
   const isVerifyingRef = useRef(false) // Prevent double-triggering auto-verification
+  const isRegisteringRef = useRef(false) // Prevent duplicate register requests
+  const isResendingRef = useRef(false) // Prevent duplicate resend requests
+  const lastRateLimitToastRef = useRef({ second: null, at: 0 })
   const [useBrevoFallback, setUseBrevoFallback] = useState(false) // Brevo fallback when Supabase email rate limit exceeded
   const [resendCooldown, setResendCooldown] = useState(0)
   const router = useRouter()
+
+  const TOAST_BASE = { duration: 4000, progress: true, position: 'top-right', transition: 'bounceIn', icon: '', sound: true }
+  const RATE_LIMIT_TOAST_ID = 'register-rate-limit-toast'
+
+  const isRateLimitMessage = (message = '') => {
+    const m = String(message).toLowerCase()
+    return m.includes('please wait') || m.includes('rate') || m.includes('limit') || m.includes('only request this after')
+  }
+
+  const getWaitSeconds = (message = '') => {
+    const match = String(message).match(/(\d+)\s*seconds?/i)
+    return match ? parseInt(match[1], 10) : null
+  }
+
+  const showRateLimitToast = (message) => {
+    const now = Date.now()
+    const waitSecond = getWaitSeconds(message)
+    const last = lastRateLimitToastRef.current
+
+    // Throttle repeated cooldown toasts so rapid clicks do not stack notifications.
+    if (last.second === waitSecond && now - last.at < 900) return
+    lastRateLimitToastRef.current = { second: waitSecond, at: now }
+
+    showToast.error(message, { ...TOAST_BASE, id: RATE_LIMIT_TOAST_ID })
+  }
 
   const heroImages = [
     '/logo_login.jpg',
@@ -88,7 +116,8 @@ export default function Register() {
   // Step 1: Sign Up
   const handleRegister = async (e) => {
     e.preventDefault()
-    if (loading) return
+    if (loading || isRegisteringRef.current) return
+    isRegisteringRef.current = true
     setLoading(true)
 
     if (!termsAccepted) {
@@ -181,13 +210,21 @@ export default function Register() {
           })
           const d = await res.json()
           if (!res.ok) {
-            showToast.error(d.error || 'Failed to send verification code', { duration: 4000, progress: true, position: 'top-right', transition: 'bounceIn', icon: '', sound: true })
+            const msg = d.error || 'Failed to send verification code'
+            if (isRateLimitMessage(msg)) {
+              const waitSeconds = getWaitSeconds(msg)
+              // If code was recently sent, switch to OTP screen and reflect cooldown.
+              setShowOtpInput(true)
+              if (waitSeconds) setResendCooldown(waitSeconds)
+              showRateLimitToast(msg)
+            }
+            else showToast.error(msg, TOAST_BASE)
             setLoading(false)
             return
           }
           setShowOtpInput(true)
           setResendCooldown(90)
-          showToast.success("Verification code sent to your email! (via backup)", { duration: 4000, progress: true, position: 'top-right', transition: 'bounceIn', icon: '', sound: true })
+          showToast.success("Verification code sent to your email!", { duration: 4000, progress: true, position: 'top-right', transition: 'bounceIn', icon: '', sound: true })
           setLoading(false)
           return
         }
@@ -209,16 +246,11 @@ export default function Register() {
       }
 
     } catch (error) {
-      showToast.error(error.message, {
-        duration: 4000,
-        progress: true,
-        position: "top-right",
-        transition: "bounceIn",
-        icon: '',
-        sound: true,
-      });
+      if (isRateLimitMessage(error.message)) showRateLimitToast(error.message)
+      else showToast.error(error.message, TOAST_BASE);
 
     } finally {
+      isRegisteringRef.current = false
       setLoading(false)
     }
   }
@@ -426,6 +458,13 @@ export default function Register() {
 
   // Resend OTP
   const handleResendOtp = async () => {
+    if (loading || isResendingRef.current) return
+    if (resendCooldown > 0) {
+      showRateLimitToast(`For security purposes, you can only request this after ${resendCooldown} seconds.`)
+      return
+    }
+
+    isResendingRef.current = true
     setLoading(true)
     setOtp('')
     isVerifyingRef.current = false
@@ -490,15 +529,15 @@ export default function Register() {
         }
       }
     } catch (error) {
-      showToast.error(error.message || "Resend failed, Please Try again!", {
-        duration: 4000,
-        progress: true,
-        position: "top-right",
-        transition: "bounceIn",
-        icon: '',
-        sound: true,
-      });
+      const msg = error.message || 'Resend failed, Please Try again!'
+      if (isRateLimitMessage(msg)) {
+        const waitSeconds = getWaitSeconds(msg)
+        if (waitSeconds) setResendCooldown(waitSeconds)
+        showRateLimitToast(msg)
+      }
+      else showToast.error(msg, TOAST_BASE);
     } finally {
+      isResendingRef.current = false
       setLoading(false)
     }
   }
@@ -769,7 +808,7 @@ export default function Register() {
                           <option value="" disabled>Select</option>
                           <option value="Male">Male</option>
                           <option value="Female">Female</option>
-                          <option value="Prefer not to say">Other</option>
+                          <option value="Prefer not to say">Prefer not to say</option>
                         </select>
                         <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
                           <svg className="fill-current h-3 w-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">

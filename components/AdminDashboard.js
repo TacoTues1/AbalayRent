@@ -205,11 +205,14 @@ function OverviewView() {
   const [stats, setStats] = useState({ users: 0, properties: 0, bookings: 0, revenue: 0 })
   const [recentUsers, setRecentUsers] = useState([])
   const [loading, setLoading] = useState(true)
-  const [autoSendStatus, setAutoSendStatus] = useState(null)
+  const [monthlyStatementReport, setMonthlyStatementReport] = useState(null)
+  const [monthlyStatementLastRun, setMonthlyStatementLastRun] = useState(null)
+  const [monthlyStatementLastSource, setMonthlyStatementLastSource] = useState(null)
+  const [monthlyStatementHistory, setMonthlyStatementHistory] = useState([])
   const [remindersEnabled, setRemindersEnabled] = useState(true)
   const [togglingReminders, setTogglingReminders] = useState(false)
 
-  useEffect(() => { loadStats(); checkReminderStatus(); }, [])
+  useEffect(() => { loadStats(); checkReminderStatus(); loadMonthlyStatementStatus(); }, [])
 
   async function checkReminderStatus() {
     try {
@@ -223,6 +226,37 @@ function OverviewView() {
     } catch (e) {
       console.error("Failed to load settings", e)
       setRemindersEnabled(true)
+    }
+  }
+
+  async function loadMonthlyStatementStatus() {
+    try {
+      const { data, error } = await supabase
+        .from('system_settings')
+        .select('key, value')
+        .in('key', ['monthly_statements_last_run_at', 'monthly_statements_last_run_source', 'monthly_statements_run_history'])
+
+      if (error || !data) return
+
+      const map = Object.fromEntries((data || []).map((item) => [item.key, item.value]))
+      setMonthlyStatementLastRun(map.monthly_statements_last_run_at || null)
+      setMonthlyStatementLastSource(map.monthly_statements_last_run_source || null)
+
+      const rawHistory = map.monthly_statements_run_history
+      let parsedHistory = []
+      if (Array.isArray(rawHistory)) {
+        parsedHistory = rawHistory
+      } else if (typeof rawHistory === 'string') {
+        try {
+          const parsed = JSON.parse(rawHistory)
+          if (Array.isArray(parsed)) parsedHistory = parsed
+        } catch {
+          parsedHistory = []
+        }
+      }
+      setMonthlyStatementHistory(parsedHistory.slice(0, 10))
+    } catch {
+      // Ignore read errors so dashboard remains usable.
     }
   }
 
@@ -249,45 +283,6 @@ function OverviewView() {
       setTogglingReminders(false)
     }
   }
-
-  useEffect(() => {
-    async function checkAndAutoSend() {
-      const now = new Date()
-      const day = now.getDate()
-      const month = now.getMonth()
-      const year = now.getFullYear()
-
-      const lastDayOfMonth = new Date(year, month + 1, 0).getDate()
-
-      const isTargetDay = day === 30 || (lastDayOfMonth < 30 && day === lastDayOfMonth)
-
-      if (!isTargetDay) return
-
-      const sentKey = `statements_sent_${year}_${month}`
-      const alreadySent = localStorage.getItem(sentKey)
-
-      setAutoSendStatus('sending')
-
-      try {
-        const res = await fetch('/api/admin/send-monthly-statements', { method: 'POST' })
-        const data = await res.json()
-
-        if (res.ok) {
-          localStorage.setItem(sentKey, JSON.stringify({ date: now.toISOString(), tenants: data.tenants?.processed, landlords: data.landlords?.processed }))
-          setAutoSendStatus('sent')
-          showToast.success(`Auto-sent statements to ${data.tenants?.processed || 0} tenants and ${data.landlords?.processed || 0} landlords`)
-        } else {
-          setAutoSendStatus('error')
-          console.error('Auto-send failed:', data.error)
-        }
-      } catch (err) {
-        setAutoSendStatus('error')
-        console.error('Auto-send error:', err)
-      }
-    }
-
-    checkAndAutoSend()
-  }, [])
 
   async function loadStats() {
     setLoading(true)
@@ -346,16 +341,40 @@ function OverviewView() {
         <h3 className="font-bold text-lg mb-5 flex items-center gap-2">
           <span className="w-8 h-8 rounded-lg bg-gray-800 flex items-center justify-center"><svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg></span>
           Automated Processes
-          {autoSendStatus === 'sending' && <span className="text-xs text-gray-600 bg-gray-100 px-2.5 py-1 rounded-full ml-2 animate-pulse font-semibold">Auto-sending...</span>}
-          {autoSendStatus === 'sent' && <span className="text-xs text-green-600 bg-green-50 px-2.5 py-1 rounded-full ml-2 font-semibold">Auto-sent this month</span>}
         </h3>
         <div className="flex flex-col lg:flex-row items-stretch gap-4 p-5 bg-gray-50 rounded-xl border border-gray-200">
           <div className="flex-1">
             <h4 className="font-bold text-gray-900 text-base">Monthly Statements</h4>
             <p className="text-sm text-gray-500 mt-1">Send payment statements to tenants and financial overviews to landlords via email.</p>
             <p className="text-xs text-gray-600 font-semibold mt-3 bg-gray-100 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full">
-              Auto-sends on the 30th / Click to send manually
+              Auto-sends via Supabase cron at end of month, 12:00 AM PH time / Click to send manually
             </p>
+            {monthlyStatementLastRun && (
+              <p className="text-xs text-gray-500 mt-2">
+                Last run: {new Date(monthlyStatementLastRun).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
+                {' '}({monthlyStatementLastSource === 'pg_cron' ? 'cron' : 'manual'})
+              </p>
+            )}
+
+            {monthlyStatementHistory.length > 0 && (
+              <div className="mt-3 max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white p-3 space-y-1.5">
+                <p className="text-xs font-bold text-gray-700 uppercase tracking-wide">Recent Run Records</p>
+                {monthlyStatementHistory.map((item) => (
+                  <div
+                    key={item.id || `${item.runAt}-${item.source}`}
+                    className="text-xs text-gray-600 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 border-t border-gray-100 pt-1.5 first:border-t-0 first:pt-0"
+                  >
+                    <span>
+                      {item.runAt ? new Date(item.runAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : 'Unknown time'}
+                      {' '}({item.source === 'pg_cron' ? 'cron' : 'manual'})
+                    </span>
+                    <span>
+                      T: {item.tenants?.processed || 0}/{item.tenants?.total || 0} | L: {item.landlords?.processed || 0} | F: {(item.tenants?.failed || 0) + (item.landlords?.failed || 0)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <button
             onClick={async (e) => {
@@ -366,7 +385,15 @@ function OverviewView() {
               try {
                 const res = await fetch('/api/admin/send-monthly-statements', { method: 'POST' })
                 const data = await res.json()
-                if (res.ok) { showToast.success(`Sent to ${data.tenants?.processed || 0} tenants and ${data.landlords?.processed || 0} landlords`) }
+                if (res.ok) {
+                  setMonthlyStatementReport(data)
+                  setMonthlyStatementLastRun(data.lastRunAt || null)
+                  setMonthlyStatementLastSource(data.source || 'manual_admin')
+                  if (Array.isArray(data.historyPreview)) {
+                    setMonthlyStatementHistory(data.historyPreview)
+                  }
+                  showToast.success(`Sent to ${data.tenants?.processed || 0} tenants and ${data.landlords?.processed || 0} landlords`)
+                }
                 else { showToast.error(data.error || 'Failed to send statements') }
               } catch (err) { showToast.error("Failed to connect to server") }
               finally { btn.innerText = originalText; btn.disabled = false }
@@ -376,6 +403,60 @@ function OverviewView() {
             Send Now
           </button>
         </div>
+
+        {monthlyStatementReport && (
+          <div className="mt-4 p-5 bg-gray-50 rounded-xl border border-gray-200 space-y-4">
+            <div className="flex items-center justify-between">
+              <h5 className="font-bold text-gray-900">Last Monthly Statement Report</h5>
+              <span className="text-xs font-semibold text-gray-600 bg-gray-200 px-2 py-1 rounded-full">{monthlyStatementReport.period}</span>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="bg-white rounded-lg border border-gray-200 p-3">
+                <p className="text-sm font-bold text-gray-900">Tenants</p>
+                <p className="text-xs text-gray-500 mt-1">Processed: {monthlyStatementReport.tenants?.processed || 0} / {monthlyStatementReport.tenants?.total || 0}</p>
+                <p className="text-xs text-red-600 mt-1">Failed: {monthlyStatementReport.tenants?.errors?.length || 0}</p>
+                {(monthlyStatementReport.tenants?.sentRecipients?.length || 0) > 0 && (
+                  <div className="mt-2 max-h-28 overflow-y-auto text-xs text-gray-700 space-y-1">
+                    {monthlyStatementReport.tenants.sentRecipients.map((r, i) => (
+                      <p key={`tenant-sent-${i}`}>Sent: {r.email}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="bg-white rounded-lg border border-gray-200 p-3">
+                <p className="text-sm font-bold text-gray-900">Landlords</p>
+                <p className="text-xs text-gray-500 mt-1">Processed: {monthlyStatementReport.landlords?.processed || 0}</p>
+                <p className="text-xs text-amber-600 mt-1">Skipped overlap: {monthlyStatementReport.landlords?.skippedTenantOverlap || 0}</p>
+                <p className="text-xs text-red-600 mt-1">Failed: {monthlyStatementReport.landlords?.errors?.length || 0}</p>
+                {(monthlyStatementReport.landlords?.sentRecipients?.length || 0) > 0 && (
+                  <div className="mt-2 max-h-28 overflow-y-auto text-xs text-gray-700 space-y-1">
+                    {monthlyStatementReport.landlords.sentRecipients.map((r, i) => (
+                      <p key={`landlord-sent-${i}`}>Sent: {r.email}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {(monthlyStatementReport.tenants?.errors?.length || 0) > 0 && (
+              <div className="bg-red-50 rounded-lg border border-red-200 p-3 text-xs text-red-700 max-h-28 overflow-y-auto space-y-1">
+                {monthlyStatementReport.tenants.errors.map((e, i) => (
+                  <p key={`tenant-err-${i}`}>Tenant error: {e.tenant || e.occupancyId || 'Unknown'} - {e.error}</p>
+                ))}
+              </div>
+            )}
+
+            {(monthlyStatementReport.landlords?.errors?.length || 0) > 0 && (
+              <div className="bg-red-50 rounded-lg border border-red-200 p-3 text-xs text-red-700 max-h-28 overflow-y-auto space-y-1">
+                {monthlyStatementReport.landlords.errors.map((e, i) => (
+                  <p key={`landlord-err-${i}`}>Landlord error: {e.landlord || e.landlordId || 'Unknown'} - {e.error}</p>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Reminder Toggle */}
         <div className="flex flex-col lg:flex-row items-stretch gap-4 p-5 bg-gray-50 rounded-xl border border-gray-200 mt-4">
