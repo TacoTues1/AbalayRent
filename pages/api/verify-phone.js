@@ -4,6 +4,7 @@ import { sendOTP } from '../../lib/sms';
 // In-memory OTP storage (for production, use Redis or database)
 // Format: { [phone]: { code: string, expiresAt: number, attempts: number } }
 const otpStore = new Map();
+const RESEND_COOLDOWN_MS = 5 * 60 * 1000;
 
 // Generate a 6-digit OTP
 function generateOTP() {
@@ -66,12 +67,13 @@ export default async function handler(req, res) {
   cleanupExpiredOTPs();
 
   if (action === 'send') {
-    // Check if there's a recent OTP (rate limiting - 1 minute cooldown)
+    // Check if there's a recent OTP (rate limiting - 5 minute cooldown)
     const existing = otpStore.get(normalizedPhone);
-    if (existing && existing.expiresAt > Date.now() && existing.sentAt > Date.now() - 60000) {
-      const waitTime = Math.ceil((existing.sentAt + 60000 - Date.now()) / 1000);
+    if (existing && existing.expiresAt > Date.now() && existing.sentAt > Date.now() - RESEND_COOLDOWN_MS) {
+      const waitTime = Math.ceil((existing.sentAt + RESEND_COOLDOWN_MS - Date.now()) / 1000);
       return res.status(429).json({ 
-        error: `Please wait ${waitTime} seconds before requesting a new code` 
+        error: `Please wait ${waitTime} seconds before requesting a new code`,
+        waitSeconds: waitTime
       });
     }
 
@@ -94,7 +96,8 @@ export default async function handler(req, res) {
       return res.status(200).json({
         success: true,
         message: 'Verification code sent',
-        phone: normalizedPhone
+        phone: normalizedPhone,
+        waitSeconds: Math.ceil(RESEND_COOLDOWN_MS / 1000)
       });
     } catch (error) {
       console.error('Failed to send OTP:', error);

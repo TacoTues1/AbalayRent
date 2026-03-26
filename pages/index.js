@@ -364,9 +364,15 @@ export default function Home() {
 
   async function detectUserLocation() {
     const fallback = { permission: 'unavailable', city: '' }
+    const LOCATION_CITY_KEY = 'ablay_user_location_city'
+    const LOCATION_PERMISSION_KEY = 'ablay_user_location_permission'
 
     if (typeof window === 'undefined' || !navigator?.geolocation) {
       setLocationPermission('unavailable')
+      try {
+        localStorage.setItem(LOCATION_PERMISSION_KEY, 'unavailable')
+        localStorage.removeItem(LOCATION_CITY_KEY)
+      } catch (_) {}
       return fallback
     }
 
@@ -380,19 +386,39 @@ export default function Home() {
             const data = await response.json()
             const city = (data?.city || data?.locality || data?.principalSubdivision || '').trim()
             setUserLocationCity(city)
+            try {
+              localStorage.setItem(LOCATION_PERMISSION_KEY, 'granted')
+              if (city) {
+                localStorage.setItem(LOCATION_CITY_KEY, city)
+              } else {
+                localStorage.removeItem(LOCATION_CITY_KEY)
+              }
+            } catch (_) {}
             resolve({ permission: 'granted', city })
           } catch (err) {
             console.error('Location reverse-geocode failed:', err)
             setUserLocationCity('')
+            try {
+              localStorage.setItem(LOCATION_PERMISSION_KEY, 'granted')
+              localStorage.removeItem(LOCATION_CITY_KEY)
+            } catch (_) {}
             resolve({ permission: 'granted', city: '' })
           }
         },
         (error) => {
           if (error?.code === 1) {
             setLocationPermission('denied')
+            try {
+              localStorage.setItem(LOCATION_PERMISSION_KEY, 'denied')
+              localStorage.removeItem(LOCATION_CITY_KEY)
+            } catch (_) {}
             resolve({ permission: 'denied', city: '' })
           } else {
             setLocationPermission('unavailable')
+            try {
+              localStorage.setItem(LOCATION_PERMISSION_KEY, 'unavailable')
+              localStorage.removeItem(LOCATION_CITY_KEY)
+            } catch (_) {}
             resolve(fallback)
           }
           setUserLocationCity('')

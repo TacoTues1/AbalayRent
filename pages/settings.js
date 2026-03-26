@@ -25,6 +25,7 @@ export default function Settings() {
   const [otpSent, setOtpSent] = useState(false)
   const [otp, setOtp] = useState('')
   const [otpLoading, setOtpLoading] = useState(false)
+  const [phoneOtpCooldown, setPhoneOtpCooldown] = useState(0)
   const [verifiedPhone, setVerifiedPhone] = useState('')
   const [avatarUrl, setAvatarUrl] = useState('')
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
@@ -37,6 +38,7 @@ export default function Settings() {
   const [gcashOtpSent, setGcashOtpSent] = useState(false)
   const [gcashOtp, setGcashOtp] = useState('')
   const [gcashOtpLoading, setGcashOtpLoading] = useState(false)
+  const [gcashOtpCooldown, setGcashOtpCooldown] = useState(0)
   const [gcashEditing, setGcashEditing] = useState(false)
   const [gcashQrUrl, setGcashQrUrl] = useState('')
   const [gcashQrUploading, setGcashQrUploading] = useState(false)
@@ -46,6 +48,7 @@ export default function Settings() {
   const [mayaOtpSent, setMayaOtpSent] = useState(false)
   const [mayaOtp, setMayaOtp] = useState('')
   const [mayaOtpLoading, setMayaOtpLoading] = useState(false)
+  const [mayaOtpCooldown, setMayaOtpCooldown] = useState(0)
   const [mayaEditing, setMayaEditing] = useState(false)
   const [mayaQrUrl, setMayaQrUrl] = useState('')
   const [mayaQrUploading, setMayaQrUploading] = useState(false)
@@ -129,6 +132,24 @@ export default function Settings() {
       loadSubscription()
     }
   }, [router.query])
+
+  useEffect(() => {
+    if (phoneOtpCooldown <= 0 && gcashOtpCooldown <= 0 && mayaOtpCooldown <= 0) return
+
+    const timer = setInterval(() => {
+      setPhoneOtpCooldown((prev) => Math.max(prev - 1, 0))
+      setGcashOtpCooldown((prev) => Math.max(prev - 1, 0))
+      setMayaOtpCooldown((prev) => Math.max(prev - 1, 0))
+    }, 1000)
+
+    return () => clearInterval(timer)
+  }, [phoneOtpCooldown, gcashOtpCooldown, mayaOtpCooldown])
+
+  const formatCooldown = (seconds) => {
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins}:${secs.toString().padStart(2, '0')}`
+  }
 
   async function loadProfile(userId) {
     setLoading(true)
@@ -283,9 +304,13 @@ export default function Settings() {
       const data = await response.json()
 
       if (!response.ok) {
+        if (data.waitSeconds) {
+          setPhoneOtpCooldown(data.waitSeconds)
+        }
         showToast.error(data.error || 'Failed to send verification code')
       } else {
         setOtpSent(true)
+        setPhoneOtpCooldown(data.waitSeconds || 300)
         showToast.success('Verification code sent to your phone!')
       }
     } catch (error) {
@@ -435,8 +460,14 @@ export default function Settings() {
     const phone = type === 'gcash' ? gcashNumber : mayaNumber
     const setOtpLoading = type === 'gcash' ? setGcashOtpLoading : setMayaOtpLoading
     const setOtpSent = type === 'gcash' ? setGcashOtpSent : setMayaOtpSent
+    const cooldown = type === 'gcash' ? gcashOtpCooldown : mayaOtpCooldown
+    const setCooldown = type === 'gcash' ? setGcashOtpCooldown : setMayaOtpCooldown
     if (!phone || phone.replace(/\D/g, '').length < 10) {
       showToast.error(`Enter a valid ${type === 'gcash' ? 'GCash' : 'Maya'} number`)
+      return
+    }
+    if (cooldown > 0) {
+      showToast.error(`Please wait ${formatCooldown(cooldown)} before requesting another code`)
       return
     }
     setOtpLoading(true)
@@ -447,8 +478,15 @@ export default function Settings() {
         body: JSON.stringify({ action: 'send', phone })
       })
       const data = await res.json()
-      if (!res.ok) { showToast.error(data.error || 'Failed to send code'); return }
+      if (!res.ok) {
+        if (data.waitSeconds) {
+          setCooldown(data.waitSeconds)
+        }
+        showToast.error(data.error || 'Failed to send code')
+        return
+      }
       setOtpSent(true)
+      setCooldown(data.waitSeconds || 300)
       showToast.success(`Code sent to your ${type === 'gcash' ? 'GCash' : 'Maya'} number!`)
     } catch { showToast.error('Failed to send code') }
     finally { setOtpLoading(false) }
@@ -813,7 +851,7 @@ export default function Settings() {
                           <div className="flex flex-col gap-3">
                             <p className="text-sm text-gray-600">We'll send a code to <strong>{phone}</strong></p>
                             <div className="flex gap-2">
-                              <button type="button" onClick={handleSendVerification} disabled={otpLoading} className="flex-1 py-2 bg-black text-white rounded-lg font-bold text-sm hover:opacity-90 cursor-pointer">{otpLoading ? 'Sending...' : 'Send Code'}</button>
+                              <button type="button" onClick={handleSendVerification} disabled={otpLoading || phoneOtpCooldown > 0} className="flex-1 py-2 bg-black text-white rounded-lg font-bold text-sm hover:opacity-90 cursor-pointer disabled:opacity-60">{otpLoading ? 'Sending...' : (phoneOtpCooldown > 0 ? `Send again in ${formatCooldown(phoneOtpCooldown)}` : 'Send Code')}</button>
                               <button type="button" onClick={() => {
                                 setVerifying(false)
                                 if (backupPhone.current) {
@@ -835,7 +873,7 @@ export default function Settings() {
                             <input type="text" value={otp} onChange={(e) => setOtp(e.target.value)} maxLength={6} className="w-full text-center tracking-widest text-xl font-bold py-2 border-2 border-gray-200 rounded-lg focus:border-black outline-none" placeholder="000000" />
                             <div className="flex gap-2">
                               <button type="button" onClick={handleVerifyOtp} disabled={otpLoading} className="flex-1 py-2 bg-black text-white rounded-lg font-bold text-sm hover:opacity-90 cursor-pointer">{otpLoading ? 'Verifying...' : 'Confirm'}</button>
-                              <button type="button" onClick={() => setOtpSent(false)} className="px-4 py-2 text-sm text-gray-500 hover:underline cursor-pointer">Resend</button>
+                              <button type="button" onClick={() => setOtpSent(false)} disabled={phoneOtpCooldown > 0} className="px-4 py-2 text-sm text-gray-500 hover:underline cursor-pointer disabled:opacity-50 disabled:no-underline">{phoneOtpCooldown > 0 ? `Resend in ${formatCooldown(phoneOtpCooldown)}` : 'Resend'}</button>
                             </div>
                           </div>
                         )}
@@ -871,7 +909,7 @@ export default function Settings() {
                       </div>
                       {gcashVerified && !gcashEditing && (
                         <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-green-600 bg-green-100 px-2 py-1 rounded-full">Verified ✓</span>
+                          <span className="text-xs font-bold text-green-600 bg-green-100 px-2 py-1 rounded-full">Verified</span>
                           <button type="button" onClick={() => { setGcashEditing(true); setGcashOtpSent(false); setGcashOtp('') }} className="text-xs font-bold text-gray-500 hover:text-black px-3 py-1 rounded-lg border border-gray-200 hover:border-gray-300 transition-all cursor-pointer">Change</button>
                         </div>
                       )}
@@ -907,7 +945,7 @@ export default function Settings() {
                         </div>
                         {!gcashOtpSent ? (
                           <div className="flex gap-2">
-                            <button type="button" onClick={() => handlePaymentOtpSend('gcash')} disabled={gcashOtpLoading} className="flex-1 py-2.5 bg-blue-500 text-white font-bold rounded-xl hover:bg-blue-600 transition-colors cursor-pointer disabled:opacity-50">{gcashOtpLoading ? 'Sending...' : 'Send Verification Code'}</button>
+                            <button type="button" onClick={() => handlePaymentOtpSend('gcash')} disabled={gcashOtpLoading || gcashOtpCooldown > 0} className="flex-1 py-2.5 bg-blue-500 text-white font-bold rounded-xl hover:bg-blue-600 transition-colors cursor-pointer disabled:opacity-50">{gcashOtpLoading ? 'Sending...' : (gcashOtpCooldown > 0 ? `Send again in ${formatCooldown(gcashOtpCooldown)}` : 'Send Verification Code')}</button>
                             {gcashEditing && <button type="button" onClick={() => setGcashEditing(false)} className="px-4 py-2.5 border border-gray-200 font-bold rounded-xl hover:bg-gray-50 cursor-pointer">Cancel</button>}
                           </div>
                         ) : (
@@ -916,7 +954,7 @@ export default function Settings() {
                             <input type="text" value={gcashOtp} onChange={e => setGcashOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} maxLength={6} className="w-full text-center tracking-widest text-xl font-bold py-2.5 border-2 border-gray-200 rounded-xl focus:border-blue-500 outline-none" placeholder="000000" />
                             <div className="flex gap-2">
                               <button type="button" onClick={() => handlePaymentOtpVerify('gcash')} disabled={gcashOtpLoading} className="flex-1 py-2.5 bg-blue-500 text-white font-bold rounded-xl hover:bg-blue-600 cursor-pointer disabled:opacity-50">{gcashOtpLoading ? 'Verifying...' : 'Confirm'}</button>
-                              <button type="button" onClick={() => handlePaymentOtpSend('gcash')} disabled={gcashOtpLoading} className="px-3 py-2.5 text-sm text-gray-500 hover:underline cursor-pointer">Resend</button>
+                              <button type="button" onClick={() => handlePaymentOtpSend('gcash')} disabled={gcashOtpLoading || gcashOtpCooldown > 0} className="px-3 py-2.5 text-sm text-gray-500 hover:underline cursor-pointer disabled:opacity-50 disabled:no-underline">{gcashOtpCooldown > 0 ? `Resend in ${formatCooldown(gcashOtpCooldown)}` : 'Resend'}</button>
                             </div>
                           </div>
                         )}
@@ -936,7 +974,7 @@ export default function Settings() {
                       </div>
                       {mayaVerified && !mayaEditing && (
                         <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-green-600 bg-green-100 px-2 py-1 rounded-full">Verified ✓</span>
+                          <span className="text-xs font-bold text-green-600 bg-green-100 px-2 py-1 rounded-full">Verified</span>
                           <button type="button" onClick={() => { setMayaEditing(true); setMayaOtpSent(false); setMayaOtp('') }} className="text-xs font-bold text-gray-500 hover:text-black px-3 py-1 rounded-lg border border-gray-200 hover:border-gray-300 transition-all cursor-pointer">Change</button>
                         </div>
                       )}
@@ -972,7 +1010,7 @@ export default function Settings() {
                         </div>
                         {!mayaOtpSent ? (
                           <div className="flex gap-2">
-                            <button type="button" onClick={() => handlePaymentOtpSend('maya')} disabled={mayaOtpLoading} className="flex-1 py-2.5 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 transition-colors cursor-pointer disabled:opacity-50">{mayaOtpLoading ? 'Sending...' : 'Send Verification Code'}</button>
+                            <button type="button" onClick={() => handlePaymentOtpSend('maya')} disabled={mayaOtpLoading || mayaOtpCooldown > 0} className="flex-1 py-2.5 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 transition-colors cursor-pointer disabled:opacity-50">{mayaOtpLoading ? 'Sending...' : (mayaOtpCooldown > 0 ? `Send again in ${formatCooldown(mayaOtpCooldown)}` : 'Send Verification Code')}</button>
                             {mayaEditing && <button type="button" onClick={() => setMayaEditing(false)} className="px-4 py-2.5 border border-gray-200 font-bold rounded-xl hover:bg-gray-50 cursor-pointer">Cancel</button>}
                           </div>
                         ) : (
@@ -981,7 +1019,7 @@ export default function Settings() {
                             <input type="text" value={mayaOtp} onChange={e => setMayaOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} maxLength={6} className="w-full text-center tracking-widest text-xl font-bold py-2.5 border-2 border-gray-200 rounded-xl focus:border-green-500 outline-none" placeholder="000000" />
                             <div className="flex gap-2">
                               <button type="button" onClick={() => handlePaymentOtpVerify('maya')} disabled={mayaOtpLoading} className="flex-1 py-2.5 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 cursor-pointer disabled:opacity-50">{mayaOtpLoading ? 'Verifying...' : 'Confirm'}</button>
-                              <button type="button" onClick={() => handlePaymentOtpSend('maya')} disabled={mayaOtpLoading} className="px-3 py-2.5 text-sm text-gray-500 hover:underline cursor-pointer">Resend</button>
+                              <button type="button" onClick={() => handlePaymentOtpSend('maya')} disabled={mayaOtpLoading || mayaOtpCooldown > 0} className="px-3 py-2.5 text-sm text-gray-500 hover:underline cursor-pointer disabled:opacity-50 disabled:no-underline">{mayaOtpCooldown > 0 ? `Resend in ${formatCooldown(mayaOtpCooldown)}` : 'Resend'}</button>
                             </div>
                           </div>
                         )}
