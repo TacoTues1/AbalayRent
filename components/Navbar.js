@@ -891,6 +891,7 @@ export default function Navbar() {
               <div className="p-4 grid grid-cols-1 gap-2">
                 <button onClick={() => router.push('/')} className="w-full text-left flex items-center px-4 py-3 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 transition-all">Home</button>
                 <button onClick={() => router.push('/properties/allProperties')} className="w-full text-left flex items-center px-4 py-3 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 transition-all">Properties</button>
+                <button onClick={() => router.push('/contact')} className="w-full text-left flex items-center px-4 py-3 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 transition-all">Emergency Contacts</button>
                 {/* <button onClick={() => router.push('/team')} className="w-full text-left flex items-center px-4 py-3 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 transition-all">Our Team</button> */}
                 <div className="h-px bg-gray-200 my-1"></div>
                 <button onClick={() => router.push('/register-landlord')} className="w-full text-left flex items-center px-4 py-3 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 transition-all">Become a Landlord</button>
@@ -1239,6 +1240,8 @@ export default function Navbar() {
                 Notifications
                 {unreadCount > 0 && <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${isActive('/notifications') ? 'bg-white text-black' : 'bg-red-500 text-white'}`}>{unreadCount}</span>}
               </Link>
+
+              <Link href="/contact" onClick={() => setShowMobileMenu(false)} className={`flex items-center justify-center px-3 py-2 rounded-lg text-xs font-medium transition-all ${isActive('/contact') ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-100'} ${disabledClass}`}>Emergency Contacts</Link>
             </div>
 
             <div className="p-2 border-t border-gray-100 bg-gray-50/50 grid grid-cols-2 gap-1">
