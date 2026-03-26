@@ -371,7 +371,7 @@ export default async function handler(req, res) {
               // Check if bill already exists for this month
               const { data: existingBill } = await supabaseAdmin
                 .from('payment_requests')
-                .select('id')
+                .select('id, rent_amount')
                 .eq('tenant', occ.tenant_id)
                 .eq('property_id', occ.property?.id)
                 .gte('due_date', new Date(todayYear, todayMonth, 1).toISOString())
@@ -405,7 +405,31 @@ export default async function handler(req, res) {
                   console.error(`[Rent Reminder] Payment request exception:`, err);
                 }
               } else {
-                console.log(`[Rent Reminder] ⏭️ Payment request already exists for this month`);
+                const currentBill = existingBill[0];
+                const existingAmount = parseFloat(currentBill.rent_amount || 0);
+
+                if (existingAmount !== parseFloat(rentAmount || 0)) {
+                  try {
+                    const { error: syncError } = await supabaseAdmin
+                      .from('payment_requests')
+                      .update({
+                        rent_amount: rentAmount,
+                        bills_description: `Monthly Rent for ${monthName}`
+                      })
+                      .eq('id', currentBill.id)
+                      .eq('status', 'pending');
+
+                    if (syncError) {
+                      console.error(`[Rent Reminder] Failed to sync existing pending bill amount:`, syncError);
+                    } else {
+                      console.log(`[Rent Reminder] ✅ Synced pending bill amount to latest property price (bill: ${currentBill.id})`);
+                    }
+                  } catch (syncErr) {
+                    console.error(`[Rent Reminder] Pending bill sync exception:`, syncErr);
+                  }
+                } else {
+                  console.log(`[Rent Reminder] ⏭️ Payment request already exists for this month (amount up to date)`);
+                }
               }
             }
 

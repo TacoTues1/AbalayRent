@@ -221,37 +221,60 @@ export default async function handler(req, res) {
 
     const { data: existingBill } = await supabaseAdmin
       .from('payment_requests')
-      .select('id, status')
+      .select('id, status, rent_amount')
       .eq('occupancy_id', occupancy.id)
       .gte('due_date', monthStart)
       .lte('due_date', monthEnd)
       .in('status', ['pending', 'pending_confirmation'])
       .maybeSingle()
 
+    let paymentRequestCreated = false
+    let paymentRequestUpdated = false
+
     if (existingBill) {
-      return res.status(400).json({
-        error: `A pending bill already exists for ${monthName}. Cannot create duplicate.`,
-        existingBillId: existingBill.id
+      const existingAmount = parseFloat(existingBill.rent_amount || 0)
+      const latestAmount = parseFloat(rentAmount || 0)
+
+      if (existingBill.status === 'pending' && existingAmount !== latestAmount) {
+        const { error: updateExistingError } = await supabaseAdmin
+          .from('payment_requests')
+          .update({
+            rent_amount: rentAmount,
+            bills_description: `Monthly Rent for ${monthName}`
+          })
+          .eq('id', existingBill.id)
+          .eq('status', 'pending')
+
+        if (updateExistingError) {
+          return res.status(500).json({
+            error: 'Failed to sync existing pending bill with latest property price',
+            details: updateExistingError
+          })
+        }
+
+        paymentRequestUpdated = true
+      }
+    } else {
+      // Create payment request
+      const { error: billError } = await supabaseAdmin.from('payment_requests').insert({
+        landlord: occupancy.landlord_id,
+        tenant: occupancy.tenant_id,
+        property_id: occupancy.property?.id,
+        occupancy_id: occupancy.id,
+        rent_amount: rentAmount,
+        water_bill: 0,
+        electrical_bill: 0,
+        other_bills: 0,
+        bills_description: `Monthly Rent for ${monthName}`,
+        due_date: dueDate.toISOString(),
+        status: 'pending'
       })
-    }
 
-    // Create payment request
-    const { error: billError } = await supabaseAdmin.from('payment_requests').insert({
-      landlord: occupancy.landlord_id,
-      tenant: occupancy.tenant_id,
-      property_id: occupancy.property?.id,
-      occupancy_id: occupancy.id,
-      rent_amount: rentAmount,
-      water_bill: 0,
-      electrical_bill: 0,
-      other_bills: 0,
-      bills_description: `Monthly Rent for ${monthName}`,
-      due_date: dueDate.toISOString(),
-      status: 'pending'
-    })
+      if (billError) {
+        return res.status(500).json({ error: 'Failed to create payment request', details: billError })
+      }
 
-    if (billError) {
-      return res.status(500).json({ error: 'Failed to create payment request', details: billError })
+      paymentRequestCreated = true
     }
 
     // Get tenant email
@@ -322,9 +345,14 @@ export default async function handler(req, res) {
 
     res.status(200).json({
       success: true,
-      message: 'Rent bill created and notifications sent',
+      message: paymentRequestCreated
+        ? 'Rent bill created and notifications sent'
+        : paymentRequestUpdated
+          ? 'Rent bill amount updated to latest property price and notifications sent'
+          : 'Rent reminder sent for existing bill',
       results: {
-        payment_request_created: true,
+        payment_request_created: paymentRequestCreated,
+        payment_request_updated: paymentRequestUpdated,
         ...results
       },
       details: {

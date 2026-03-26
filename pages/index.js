@@ -126,19 +126,25 @@ export default function Home() {
   }, [properties, guestFavorites, topRated])
 
   useEffect(() => {
-    if (router.query.view === 'all') {
-      setIsExpanded(true)
-      loadFeaturedProperties(true)
-    } else {
-      setIsExpanded(false)
-      loadFeaturedProperties(false)
-    }
-    loadFeaturedSections()
-  }, [router.query, userLocationCity, locationPermission])
+    const initializeHome = async () => {
+      const expanded = router.query.view === 'all'
+      setIsExpanded(expanded)
+      setLoading(true)
 
-  useEffect(() => {
-    detectUserLocation()
-  }, [])
+      try {
+        const locationPromise = detectUserLocation()
+        await loadFeaturedProperties(expanded, false)
+        const locationData = await locationPromise
+        await loadFeaturedSections(locationData)
+      } catch (err) {
+        console.error('Initial home load failed:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    initializeHome()
+  }, [router.query.view])
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -231,10 +237,6 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    loadFeaturedProperties(false)
-  }, [])
-
-  useEffect(() => {
     if (chatMessagesRef.current && chatHistory.length > 0) {
       setTimeout(() => {
         chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight
@@ -283,8 +285,10 @@ export default function Home() {
     })
   }
 
-  async function loadFeaturedProperties(expanded = false) {
-    setLoading(true)
+  async function loadFeaturedProperties(expanded = false, manageLoading = true) {
+    if (manageLoading) {
+      setLoading(true)
+    }
 
     // Use Elastic Search API when there's a search query for fuzzy matching
     if (searchQuery) {
@@ -308,7 +312,9 @@ export default function Home() {
           else if (sortBy === 'price_high') results.sort((a, b) => b.price - a.price)
 
           setProperties(results)
-          setLoading(false)
+          if (manageLoading) {
+            setLoading(false)
+          }
           return
         }
       } catch (err) {
@@ -351,42 +357,55 @@ export default function Home() {
     }
 
     setProperties(nextProperties)
-    setLoading(false)
+    if (manageLoading) {
+      setLoading(false)
+    }
   }
 
   async function detectUserLocation() {
+    const fallback = { permission: 'unavailable', city: '' }
+
     if (typeof window === 'undefined' || !navigator?.geolocation) {
       setLocationPermission('unavailable')
-      return
+      return fallback
     }
 
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        setLocationPermission('granted')
-        try {
-          const { latitude, longitude } = position.coords
-          const response = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`)
-          const data = await response.json()
-          const city = (data?.city || data?.locality || data?.principalSubdivision || '').trim()
-          setUserLocationCity(city)
-        } catch (err) {
-          console.error('Location reverse-geocode failed:', err)
+    return new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          setLocationPermission('granted')
+          try {
+            const { latitude, longitude } = position.coords
+            const response = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`)
+            const data = await response.json()
+            const city = (data?.city || data?.locality || data?.principalSubdivision || '').trim()
+            setUserLocationCity(city)
+            resolve({ permission: 'granted', city })
+          } catch (err) {
+            console.error('Location reverse-geocode failed:', err)
+            setUserLocationCity('')
+            resolve({ permission: 'granted', city: '' })
+          }
+        },
+        (error) => {
+          if (error?.code === 1) {
+            setLocationPermission('denied')
+            resolve({ permission: 'denied', city: '' })
+          } else {
+            setLocationPermission('unavailable')
+            resolve(fallback)
+          }
           setUserLocationCity('')
-        }
-      },
-      (error) => {
-        if (error?.code === 1) {
-          setLocationPermission('denied')
-        } else {
-          setLocationPermission('unavailable')
-        }
-        setUserLocationCity('')
-      },
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
-    )
+        },
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+      )
+    })
   }
 
-  async function loadFeaturedSections() {
+  async function loadFeaturedSections(locationData = null) {
+    const resolvedPermission = locationData?.permission ?? locationPermission
+    const resolvedCity = locationData?.city ?? userLocationCity
+
     // 1. Fetch properties (Available only, or remove .eq for all)
     const { data: allProps } = await supabase
       .from('properties')
@@ -413,8 +432,8 @@ export default function Home() {
       setPropertyStats(statsMap)
 
       // 3. Available in [User Location] (shown only when location permission is granted)
-      if (locationPermission === 'granted' && userLocationCity) {
-        const normalizedCity = userLocationCity.toLowerCase()
+      if (resolvedPermission === 'granted' && resolvedCity) {
+        const normalizedCity = resolvedCity.toLowerCase()
         const favorites = allProps
           .filter(p => {
             const propertyCity = (p.city || '').toLowerCase()
@@ -622,21 +641,23 @@ export default function Home() {
         {/* All Properties Section - Fixed height container to prevent layout shift */}
         <div className="mb-2 pt-2">
           {/* Section Header */}
-          <div className={`flex flex-col sm:flex-row items-start sm:items-center mb-4 gap-3 ${mounted ? 'animate-fadeInLeft delay-200' : 'opacity-0'}`}>
-            <h2 className="text-2xl font-black text-black shrink-0">
-              Recommended Properties
-            </h2>
+          {!loading && (
+            <div className={`flex flex-col sm:flex-row items-start sm:items-center mb-4 gap-3 ${mounted ? 'animate-fadeInLeft delay-200' : 'opacity-0'}`}>
+              <h2 className="text-2xl font-black text-black shrink-0">
+                Recommended Properties
+              </h2>
 
-            <button
-              onClick={handleSeeMore}
-              className="ml-auto inline-flex items-center gap-1 text-sm font-bold text-gray-900 hover:text-gray-600 cursor-pointer transition-all duration-300 shrink-0"
-            >
-              See more properties
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          </div>
+              <button
+                onClick={handleSeeMore}
+                className="ml-auto inline-flex items-center gap-1 text-sm font-bold text-gray-900 hover:text-gray-600 cursor-pointer transition-all duration-300 shrink-0"
+              >
+                See more properties
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+          )}
 
           {loading ? (
             <div className="min-h-screen flex items-center justify-center bg-[#F5F5F5]">
