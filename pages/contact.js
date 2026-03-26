@@ -79,9 +79,7 @@ export default function Contact() {
   const DEFAULT_CITY = 'dumaguete'
   const LOCATION_CITY_KEY = 'ablay_user_location_city'
   const LOCATION_PERMISSION_KEY = 'ablay_user_location_permission'
-  const [selectedCity, setSelectedCity] = useState('valencia')
-  const [detectedCity, setDetectedCity] = useState('')
-  const [locationStatus, setLocationStatus] = useState('checking')
+  const [selectedCity, setSelectedCity] = useState(DEFAULT_CITY)
   const [locationMessage, setLocationMessage] = useState('Detecting your location...')
 
   const emergencyContacts = useMemo(() => CONTACTS_BY_CITY[selectedCity] || [], [selectedCity])
@@ -96,15 +94,12 @@ export default function Contact() {
 
         if (cachedPermission === 'denied') {
           setSelectedCity(DEFAULT_CITY)
-          setLocationStatus('denied')
           setLocationMessage(`Location permission was denied. Showing default directory for ${CITY_LABELS[DEFAULT_CITY]}.`)
           return
         }
 
         if (cachedPermission === 'granted' && cachedCity && CONTACTS_BY_CITY[cachedCity]?.length) {
-          setDetectedCity(cachedCity)
           setSelectedCity(cachedCity)
-          setLocationStatus('matched')
           setLocationMessage(`Showing emergency contacts for ${CITY_LABELS[cachedCity]}.`)
           return
         }
@@ -112,7 +107,6 @@ export default function Contact() {
 
       if (typeof window === 'undefined' || !navigator?.geolocation) {
         setSelectedCity(DEFAULT_CITY)
-        setLocationStatus('unsupported')
         setLocationMessage(`Location access is unavailable on this device. Showing default directory for ${CITY_LABELS[DEFAULT_CITY]}.`)
         return
       }
@@ -126,9 +120,7 @@ export default function Contact() {
             const detected = normalizeCityName(data?.city || data?.locality || data?.principalSubdivision || '')
 
             if (detected && CONTACTS_BY_CITY[detected]?.length) {
-              setDetectedCity(detected)
               setSelectedCity(detected)
-              setLocationStatus('matched')
               setLocationMessage(`Showing emergency contacts for ${CITY_LABELS[detected]}.`)
               try {
                 localStorage.setItem(LOCATION_PERMISSION_KEY, 'granted')
@@ -136,19 +128,16 @@ export default function Contact() {
               } catch (_) {}
             } else {
               setSelectedCity(DEFAULT_CITY)
-              setLocationStatus('unmatched')
               setLocationMessage(`No direct city match from your location. Showing default directory for ${CITY_LABELS[DEFAULT_CITY]}.`)
             }
           } catch (error) {
             console.error('Failed to detect city:', error)
             setSelectedCity(DEFAULT_CITY)
-            setLocationStatus('error')
             setLocationMessage(`Could not determine your city. Showing default directory for ${CITY_LABELS[DEFAULT_CITY]}.`)
           }
         },
         () => {
           setSelectedCity(DEFAULT_CITY)
-          setLocationStatus('denied')
           setLocationMessage(`Location permission denied. Showing default directory for ${CITY_LABELS[DEFAULT_CITY]}.`)
           try {
             localStorage.setItem(LOCATION_PERMISSION_KEY, 'denied')
@@ -207,19 +196,6 @@ export default function Contact() {
           </aside>
 
           <section className="lg:col-span-8">
-            <div className="mb-4 flex flex-col sm:flex-row sm:items-center gap-3">
-              <label className="text-xs font-bold uppercase tracking-[0.12em] text-black/55">Directory Location</label>
-              <select
-                value={selectedCity}
-                onChange={(event) => setSelectedCity(event.target.value)}
-                className="w-full sm:w-[16rem] px-4 py-2.5 bg-white border border-black/15 rounded-xl text-sm font-bold focus:outline-none focus:border-black"
-              >
-                {Object.keys(CONTACTS_BY_CITY).map((cityKey) => (
-                  <option key={cityKey} value={cityKey}>{CITY_LABELS[cityKey]}</option>
-                ))}
-              </select>
-            </div>
-
             <div className="divide-y divide-black/10 rounded-3xl border border-black/10 bg-white shadow-sm overflow-hidden">
               <div className="grid grid-cols-[1fr_auto] px-5 sm:px-7 py-4 bg-[#f8f6f1]">
                 <p className="text-[11px] sm:text-xs font-bold uppercase tracking-[0.16em] text-black/55">Service</p>
