@@ -25,7 +25,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { tenantId } = req.query
+    const { tenantId, billType = 'rent' } = req.query
 
     if (!tenantId) {
       return res.status(400).json({ error: 'tenantId is required' })
@@ -39,7 +39,11 @@ export default async function handler(req, res) {
         tenant_id,
         landlord_id,
         start_date,
+        wifi_due_day,
+        water_due_day,
+        electricity_due_day,
         late_payment_fee,
+        landlord_profile:profiles!tenant_occupancies_landlord_id_fkey(accepted_payments),
         tenant:profiles!tenant_occupancies_tenant_id_fkey(id, first_name, last_name, phone),
         property:properties(id, title, price)
       `)
@@ -49,6 +53,120 @@ export default async function handler(req, res) {
 
     if (occError || !occupancy) {
       return res.status(404).json({ error: 'Active occupancy not found for this tenant' })
+    }
+
+    // Utility "Send Now": send immediate reminder notifications without creating rent bills.
+    if (billType !== 'rent') {
+      const normalizeDay = (d, fallback) => {
+        const value = parseInt(d, 10)
+        if (!Number.isFinite(value)) return fallback
+        return Math.max(1, Math.min(31, value))
+      }
+
+      const now = new Date()
+      let dueDay = 7
+      let utilityLabel = 'Utility'
+      let notificationType = 'utility_due_reminder'
+
+      if (billType === 'internet') {
+        dueDay = normalizeDay(occupancy.wifi_due_day, 10)
+        utilityLabel = 'Internet/WiFi'
+        notificationType = 'wifi_due_reminder'
+      } else if (billType === 'water') {
+        dueDay = normalizeDay(occupancy.water_due_day, 7)
+        utilityLabel = 'Water'
+        notificationType = 'water_due_reminder'
+      } else if (billType === 'electricity') {
+        dueDay = normalizeDay(occupancy.electricity_due_day, 7)
+        utilityLabel = 'Electricity'
+        notificationType = 'electricity_due_reminder'
+      } else {
+        return res.status(400).json({ error: 'Unsupported billType. Use rent, internet, water, or electricity.' })
+      }
+
+      const utilitySettings = occupancy?.landlord_profile?.accepted_payments?.utility_reminders || {}
+      if (utilitySettings[billType] === false) {
+        return res.status(403).json({ error: `${utilityLabel} reminders are disabled by the landlord.` })
+      }
+
+      const dueDate = new Date(now.getFullYear(), now.getMonth(), dueDay)
+      if (dueDate < now) dueDate.setMonth(dueDate.getMonth() + 1)
+      const dueDateStr = dueDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+
+      // Get tenant email
+      let email = null
+      try {
+        const { data: userData } = await supabaseAdmin.auth.admin.getUserById(occupancy.tenant_id)
+        email = userData?.user?.email
+      } catch (e) {
+        console.error('Failed to fetch user email:', e)
+      }
+
+      const phone = formatPhoneNumber(occupancy.tenant?.phone)
+      const tenantName = occupancy.tenant?.first_name || 'Tenant'
+      const reminderMessage = `${utilityLabel} Reminder: ${utilityLabel} for "${occupancy.property?.title || 'your property'}" is due on ${dueDateStr}.`
+
+      const results = { email_sent: false, sms_sent: false, in_app_sent: false }
+
+      try {
+        await supabaseAdmin.from('notifications').insert({
+          recipient: occupancy.tenant_id,
+          actor: occupancy.landlord_id,
+          type: notificationType,
+          message: reminderMessage,
+          link: '/payments',
+          is_read: false
+        })
+        results.in_app_sent = true
+      } catch (e) {
+        console.error('In-app notification error:', e)
+      }
+
+      if (email) {
+        try {
+          await sendNotificationEmail({
+            to: email,
+            subject: `⚠️ ${utilityLabel} Due Reminder`,
+            message: `
+              <div style="font-family: sans-serif; color: #333; max-width: 600px; margin: 0 auto;">
+                <div style="padding: 20px; background-color: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px;">
+                  <h2 style="color: #0369a1; margin-top: 0;">⚠️ ${utilityLabel} Reminder</h2>
+                  <p>${reminderMessage}</p>
+                  <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'https://easerent.vercel.app'}/dashboard" 
+                     style="display: inline-block; background-color: #0369a1; color: white; padding: 10px 20px; margin-top: 15px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                    View Dashboard
+                  </a>
+                </div>
+              </div>
+            `
+          })
+          results.email_sent = true
+        } catch (e) {
+          console.error('Email error:', e)
+        }
+      }
+
+      if (phone) {
+        try {
+          await sendSMS(phone, `[EaseRent] ${reminderMessage}`)
+          results.sms_sent = true
+        } catch (e) {
+          console.error('SMS error:', e)
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: `${utilityLabel} reminder sent successfully`,
+        results,
+        details: {
+          tenant: tenantName,
+          property: occupancy.property?.title,
+          due_date: dueDateStr,
+          email: email || 'No email found',
+          phone: phone || 'No phone found'
+        }
+      })
     }
 
     const rentAmount = occupancy.property?.price || 0

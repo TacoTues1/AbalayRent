@@ -67,6 +67,8 @@ export default function Home() {
   const [guestFavorites, setGuestFavorites] = useState([])
   const [topRated, setTopRated] = useState([])
   const [propertyStats, setPropertyStats] = useState({})
+  const [userLocationCity, setUserLocationCity] = useState('')
+  const [locationPermission, setLocationPermission] = useState('prompt')
 
   // --- Session & Favorites State ---
   const [session, setSession] = useState(null)
@@ -132,7 +134,11 @@ export default function Home() {
       loadFeaturedProperties(false)
     }
     loadFeaturedSections()
-  }, [router.query])
+  }, [router.query, userLocationCity, locationPermission])
+
+  useEffect(() => {
+    detectUserLocation()
+  }, [])
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -318,10 +324,6 @@ export default function Home() {
         landlord_profile:profiles!properties_landlord_fkey(id, first_name, middle_name, last_name, role)
       `)
 
-    if (!searchQuery) {
-      query = query.ilike('city', '%Dumaguete%')
-    }
-
     if (priceRange.min) {
       query = query.gte('price', parseInt(priceRange.min))
     }
@@ -342,8 +344,46 @@ export default function Home() {
     }
 
     const { data, error } = await query
-    setProperties(data || [])
+    let nextProperties = data || []
+
+    if (!searchQuery) {
+      nextProperties = [...nextProperties].sort(() => Math.random() - 0.5)
+    }
+
+    setProperties(nextProperties)
     setLoading(false)
+  }
+
+  async function detectUserLocation() {
+    if (typeof window === 'undefined' || !navigator?.geolocation) {
+      setLocationPermission('unavailable')
+      return
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        setLocationPermission('granted')
+        try {
+          const { latitude, longitude } = position.coords
+          const response = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`)
+          const data = await response.json()
+          const city = (data?.city || data?.locality || data?.principalSubdivision || '').trim()
+          setUserLocationCity(city)
+        } catch (err) {
+          console.error('Location reverse-geocode failed:', err)
+          setUserLocationCity('')
+        }
+      },
+      (error) => {
+        if (error?.code === 1) {
+          setLocationPermission('denied')
+        } else {
+          setLocationPermission('unavailable')
+        }
+        setUserLocationCity('')
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+    )
   }
 
   async function loadFeaturedSections() {
@@ -372,12 +412,20 @@ export default function Home() {
       // Update State for Stats
       setPropertyStats(statsMap)
 
-      // 3. Available in Dumaguete City
-      const favorites = allProps
-        .filter(p => p.city && p.city.toLowerCase().includes('valencia'))
-        .slice(0, maxDisplayItems)
+      // 3. Available in [User Location] (shown only when location permission is granted)
+      if (locationPermission === 'granted' && userLocationCity) {
+        const normalizedCity = userLocationCity.toLowerCase()
+        const favorites = allProps
+          .filter(p => {
+            const propertyCity = (p.city || '').toLowerCase()
+            return propertyCity.includes(normalizedCity) || normalizedCity.includes(propertyCity)
+          })
+          .slice(0, maxDisplayItems)
 
-      setGuestFavorites(favorites)
+        setGuestFavorites(favorites)
+      } else {
+        setGuestFavorites([])
+      }
 
       // 4. Top Rated (Highest Average Rating with at least 1 review)
       const rated = allProps
@@ -576,7 +624,7 @@ export default function Home() {
           {/* Section Header */}
           <div className={`flex flex-col sm:flex-row items-start sm:items-center mb-4 gap-3 ${mounted ? 'animate-fadeInLeft delay-200' : 'opacity-0'}`}>
             <h2 className="text-2xl font-black text-black shrink-0">
-              𝐀𝐯𝐚𝐢𝐥𝐚𝐛𝐥𝐞 𝐢𝐧 𝐃𝐮𝐦𝐚𝐠𝐮𝐞𝐭𝐞 𝐂𝐢𝐭𝐲
+              Recommended Properties
             </h2>
 
             <button
@@ -730,12 +778,12 @@ export default function Home() {
         </div>
 
         {/* Guest Favorites Section - Carousel */}
-        {guestFavorites.length > 0 && (
+        {locationPermission === 'granted' && userLocationCity && guestFavorites.length > 0 && (
           <div className={`mb-2 mt-4 ${mounted ? 'animate-fadeInUp delay-300' : 'opacity-0'}`}>
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
               <div>
                 <div className="flex items-center gap-3 mb-1">
-                  <h2 className="text-2xl font-black text-black">𝐍𝐞𝐚𝐫 𝐕𝐚𝐥𝐞𝐧𝐜𝐢𝐚</h2>
+                  <h2 className="text-2xl font-black text-black">Available in {userLocationCity}</h2>
                 </div>
               </div>
             </div>

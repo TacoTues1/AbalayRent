@@ -608,7 +608,7 @@ export default function BookingsPage() {
       body: JSON.stringify({
         type: 'move_in',
         recordId: occupancyId,
-        tenantName: `${assignBooking.tenant_profile?.first_name || ''} ${assignBooking.tenant_profile?.last_name || ''}`.trim(),
+        tenantName: getProfileDisplayName(assignBooking.tenant_profile, 'Tenant'),
         tenantPhone: assignBooking.tenant_profile?.phone,
         tenantEmail: null, // Will be fetched server-side if needed
         propertyTitle: selectedProp.title,
@@ -884,6 +884,29 @@ export default function BookingsPage() {
     }
   }
 
+  function getProfileDisplayName(profileData, fallback = 'Unknown User') {
+    if (!profileData) return fallback
+
+    const name = [profileData.first_name, profileData.middle_name, profileData.last_name]
+      .filter(Boolean)
+      .join(' ')
+      .trim()
+
+    if (name) return name
+    if (profileData.email) return profileData.email
+    if (profileData.phone) return profileData.phone
+
+    return fallback
+  }
+
+  function getProfileInitials(profileData) {
+    const first = profileData?.first_name?.[0] || ''
+    const last = profileData?.last_name?.[0] || ''
+    const initials = `${first}${last}`.trim()
+    if (initials) return initials.toUpperCase()
+    return 'U'
+  }
+
   if (loading && !profile) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-[#F5F5F5]">
@@ -1028,7 +1051,7 @@ export default function BookingsPage() {
                         </div>
                         <div className="flex items-center gap-2">
                           <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-                          <span className="font-medium text-gray-900">{booking.tenant_profile?.first_name} {booking.tenant_profile?.last_name}</span>
+                          <span className="font-medium text-gray-900">{getProfileDisplayName(booking.tenant_profile, 'Unknown Tenant')}</span>
                           {booking.tenant_profile?.phone && <span className="text-gray-400">• {booking.tenant_profile.phone}</span>}
                         </div>
                       </div>
@@ -1337,13 +1360,13 @@ export default function BookingsPage() {
                       <img src={assignBooking.tenant_profile.avatar_url} alt="" className="w-full h-full object-cover" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-blue-700 font-bold text-sm bg-blue-100">
-                        {assignBooking.tenant_profile?.first_name?.[0]}{assignBooking.tenant_profile?.last_name?.[0]}
+                        {getProfileInitials(assignBooking.tenant_profile)}
                       </div>
                     )}
                   </div>
                   <div>
                     <p className="text-xs text-blue-800 font-bold uppercase tracking-wider mb-0.5">Assigning Tenant</p>
-                    <p className="font-bold text-gray-900 text-sm leading-none">{assignBooking.tenant_profile?.first_name} {assignBooking.tenant_profile?.last_name}</p>
+                    <p className="font-bold text-gray-900 text-sm leading-none">{getProfileDisplayName(assignBooking.tenant_profile, 'Unknown Tenant')}</p>
                   </div>
                 </div>
 
@@ -1546,7 +1569,7 @@ export default function BookingsPage() {
                 </div>
                 <h3 className="text-lg font-bold text-gray-900 mb-2">Confirm Assignment</h3>
                 <p className="text-gray-500 text-sm mb-1">Are you sure you want to assign</p>
-                <p className="font-bold text-gray-900 mb-1">{assignBooking.tenant_profile?.first_name} {assignBooking.tenant_profile?.last_name}</p>
+                <p className="font-bold text-gray-900 mb-1">{getProfileDisplayName(assignBooking.tenant_profile, 'Unknown Tenant')}</p>
                 <p className="text-gray-500 text-sm mb-4">to <strong>{availableProperties.find(p => p.id === selectedPropertyId)?.title}</strong>?</p>
                 <p className="text-xs text-yellow-700 bg-yellow-50 p-2 rounded-lg border border-yellow-200 mb-5">This will mark the property as occupied and create a move-in payment bill.</p>
                 <div className="flex gap-3">

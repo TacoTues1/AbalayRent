@@ -107,7 +107,9 @@ export default function LandlordDashboard({ session, profile }) {
     tenantId: null,
     tenantName: '',
     propertyTitle: '',
-    propertyPrice: 0
+    propertyPrice: 0,
+    billType: 'rent',
+    billLabel: 'Rent'
   })
 
   // Monthly Income Statements State
@@ -455,6 +457,13 @@ export default function LandlordDashboard({ session, profile }) {
   // --- NEW: Billing Tracker State & Logic ---
   const [billingSchedule, setBillingSchedule] = useState([])
   const [sendingBillId, setSendingBillId] = useState(null)
+  const [editingDueDateItemId, setEditingDueDateItemId] = useState(null)
+  const [editingDueDateValue, setEditingDueDateValue] = useState('')
+  const [savingDueDateItemId, setSavingDueDateItemId] = useState(null)
+  const [autoBillingEnabled, setAutoBillingEnabled] = useState(true)
+  const [togglingAutoBilling, setTogglingAutoBilling] = useState(false)
+  const [utilityReminderSettings, setUtilityReminderSettings] = useState({ internet: true, water: true, electricity: true })
+  const [togglingUtilityKey, setTogglingUtilityKey] = useState(null)
 
   useEffect(() => {
     if (occupancies.length > 0) {
@@ -462,14 +471,138 @@ export default function LandlordDashboard({ session, profile }) {
     }
   }, [occupancies])
 
+  useEffect(() => {
+    loadAutoBillingSetting()
+  }, [session?.user?.id])
+
+  async function loadAutoBillingSetting() {
+    if (!session?.user?.id) return
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('accepted_payments')
+        .eq('id', session.user.id)
+        .maybeSingle()
+
+      if (error) {
+        console.error('Failed to load auto billing setting:', error)
+        setAutoBillingEnabled(true)
+        return
+      }
+
+      const accepted = data?.accepted_payments || {}
+      const enabled = accepted.auto_billing_enabled
+      setAutoBillingEnabled(enabled === undefined ? true : !!enabled)
+
+      const utilitySettings = accepted.utility_reminders || {}
+      setUtilityReminderSettings({
+        internet: utilitySettings.internet !== false,
+        water: utilitySettings.water !== false,
+        electricity: utilitySettings.electricity !== false
+      })
+    } catch (err) {
+      console.error('Auto billing setting exception:', err)
+      setAutoBillingEnabled(true)
+      setUtilityReminderSettings({ internet: true, water: true, electricity: true })
+    }
+  }
+
+  async function toggleAutoBilling() {
+    if (!session?.user?.id || togglingAutoBilling) return
+    setTogglingAutoBilling(true)
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('accepted_payments')
+        .eq('id', session.user.id)
+        .maybeSingle()
+
+      if (error) {
+        showToast.error('Failed to update auto billing setting.', { duration: 3500, transition: 'bounceIn' })
+        return
+      }
+
+      const accepted = data?.accepted_payments || {}
+      const nextState = !autoBillingEnabled
+      const updated = { ...accepted, auto_billing_enabled: nextState }
+
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ accepted_payments: updated })
+        .eq('id', session.user.id)
+
+      if (updateError) {
+        showToast.error('Failed to update auto billing setting.', { duration: 3500, transition: 'bounceIn' })
+        return
+      }
+
+      setAutoBillingEnabled(nextState)
+      showToast.success(`Automated billing ${nextState ? 'enabled' : 'disabled'}.`, { duration: 3000, transition: 'bounceIn' })
+    } catch (err) {
+      console.error('Toggle auto billing error:', err)
+      showToast.error('Failed to update auto billing setting.', { duration: 3500, transition: 'bounceIn' })
+    } finally {
+      setTogglingAutoBilling(false)
+    }
+  }
+
+  async function toggleUtilityReminder(utilityKey) {
+    if (!session?.user?.id || !utilityKey || togglingUtilityKey) return
+    setTogglingUtilityKey(utilityKey)
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('accepted_payments')
+        .eq('id', session.user.id)
+        .maybeSingle()
+
+      if (error) {
+        showToast.error('Failed to update utility reminder setting.', { duration: 3500, transition: 'bounceIn' })
+        return
+      }
+
+      const accepted = data?.accepted_payments || {}
+      const utilitySettings = accepted.utility_reminders || {}
+      const nextValue = !(utilitySettings[utilityKey] !== false)
+
+      const updated = {
+        ...accepted,
+        utility_reminders: {
+          ...utilitySettings,
+          [utilityKey]: nextValue
+        }
+      }
+
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ accepted_payments: updated })
+        .eq('id', session.user.id)
+
+      if (updateError) {
+        showToast.error('Failed to update utility reminder setting.', { duration: 3500, transition: 'bounceIn' })
+        return
+      }
+
+      setUtilityReminderSettings(prev => ({ ...prev, [utilityKey]: nextValue }))
+      showToast.success(`${utilityKey.charAt(0).toUpperCase() + utilityKey.slice(1)} reminders ${nextValue ? 'enabled' : 'disabled'}.`, { duration: 3000, transition: 'bounceIn' })
+    } catch (err) {
+      console.error('Toggle utility reminder error:', err)
+      showToast.error('Failed to update utility reminder setting.', { duration: 3500, transition: 'bounceIn' })
+    } finally {
+      setTogglingUtilityKey(null)
+    }
+  }
+
   // Open confirmation modal for sending advance bill
-  function openAdvanceBillModal(tenantId, tenantName, propertyTitle, propertyPrice) {
+  function openAdvanceBillModal(tenantId, tenantName, propertyTitle, propertyPrice, billType = 'rent', billLabel = 'Rent') {
     setAdvanceBillModal({
       isOpen: true,
       tenantId,
       tenantName,
       propertyTitle,
-      propertyPrice: propertyPrice || 0
+      propertyPrice: propertyPrice || 0,
+      billType,
+      billLabel
     })
   }
 
@@ -479,22 +612,31 @@ export default function LandlordDashboard({ session, profile }) {
       isOpen: false,
       tenantId: null,
       tenantName: '',
-      propertyTitle: ''
+      propertyTitle: '',
+      propertyPrice: 0,
+      billType: 'rent',
+      billLabel: 'Rent'
     })
   }
 
   // Actually send the advance bill after confirmation
   async function confirmSendAdvanceBill() {
+    if (!autoBillingEnabled) {
+      showToast.error('Automated billing is disabled. Enable it to send now.', { duration: 3500, transition: 'bounceIn' })
+      return
+    }
+
     const tenantId = advanceBillModal.tenantId
+    const billType = advanceBillModal.billType || 'rent'
     if (!tenantId) return
 
     closeAdvanceBillModal()
-    setSendingBillId(tenantId)
+    setSendingBillId(`${tenantId}-${billType}`)
     try {
-      const res = await fetch(`/api/test-rent-reminder?tenantId=${tenantId}`)
+      const res = await fetch(`/api/test-rent-reminder?tenantId=${tenantId}&billType=${billType}`)
       const data = await res.json()
       if (res.ok) {
-        showToast.success('Advance bill sent successfully!', { duration: 4000, transition: "bounceIn" })
+        showToast.success(data?.message || `${advanceBillModal.billLabel} sent successfully!`, { duration: 4000, transition: "bounceIn" })
         setTimeout(() => calculateBillingSchedule(), 1000) // Refresh status
       } else {
         showToast.error(data.error || 'Failed to send bill', { duration: 4000, transition: "bounceIn" })
@@ -508,10 +650,20 @@ export default function LandlordDashboard({ session, profile }) {
   }
 
   async function calculateBillingSchedule() {
+    const getUpcomingDateForDay = (dayOfMonth) => {
+      const safeDay = Math.max(1, Math.min(31, parseInt(dayOfMonth || 1, 10)))
+      const today = new Date()
+      const candidate = new Date(today.getFullYear(), today.getMonth(), safeDay)
+      if (candidate < today) {
+        candidate.setMonth(candidate.getMonth() + 1)
+      }
+      return candidate
+    }
+
     // 1. Fetch ALL bills for the landlord to analyze status correctly
     const { data: allBills } = await supabase
       .from('payment_requests')
-      .select('occupancy_id, status, due_date, created_at, rent_amount, advance_amount, bills_description')
+      .select('id, occupancy_id, status, due_date, created_at, rent_amount, advance_amount, bills_description')
       .eq('landlord', session.user.id)
       .order('due_date', { ascending: true }) // Order by due date to find earliest pending
 
@@ -527,7 +679,7 @@ export default function LandlordDashboard({ session, profile }) {
     }
 
     // 2. Build schedule based on occupancies
-    const schedule = occupancies.map(occ => {
+    const schedule = occupancies.flatMap(occ => {
       const bills = billsByOccupancy[occ.id] || []
 
       // Find earliest pending payment
@@ -592,21 +744,170 @@ export default function LandlordDashboard({ session, profile }) {
       const sendDate = new Date(nextDueDate)
       sendDate.setDate(sendDate.getDate() - 3)
 
-      return {
+      const rentScheduleItem = {
         id: occ.id,
         tenantId: occ.tenant_id,
         tenantName: `${occ.tenant?.first_name} ${occ.tenant?.last_name}`,
         propertyTitle: occ.property?.title,
         propertyPrice: occ.property?.price || 0,
+        billType: 'rent',
+        billLabel: 'Rent',
+        paymentRequestId: earliestPending?.id || null,
+        canEditDueDate: !!earliestPending && nextDueDate >= new Date(),
         nextDueDate: nextDueDate,
         sendDate: sendDate,
         status: status,
         note: note,
         lastBill: latestBill
       }
+
+      // Utility reminders: these are reminder schedule entries (SMS/Email) shown in billing schedule.
+      const utilityRows = [
+        {
+          id: `${occ.id}-internet`,
+          occupancyId: occ.id,
+          tenantId: occ.tenant_id,
+          tenantName: `${occ.tenant?.first_name} ${occ.tenant?.last_name}`,
+          propertyTitle: occ.property?.title,
+          propertyPrice: occ.property?.price || 0,
+          billType: 'internet',
+          billLabel: 'Internet',
+          paymentRequestId: null,
+          canEditDueDate: true,
+          isEnabled: utilityReminderSettings.internet,
+          nextDueDate: getUpcomingDateForDay(occ.wifi_due_day || 10),
+          sendDate: null,
+          status: 'Reminder Scheduled',
+          note: 'SMS & email reminder 3 days before due date',
+          lastBill: null
+        },
+        {
+          id: `${occ.id}-water`,
+          occupancyId: occ.id,
+          tenantId: occ.tenant_id,
+          tenantName: `${occ.tenant?.first_name} ${occ.tenant?.last_name}`,
+          propertyTitle: occ.property?.title,
+          propertyPrice: occ.property?.price || 0,
+          billType: 'water',
+          billLabel: 'Water',
+          paymentRequestId: null,
+          canEditDueDate: true,
+          isEnabled: utilityReminderSettings.water,
+          nextDueDate: getUpcomingDateForDay(occ.water_due_day || 7),
+          sendDate: null,
+          status: 'Reminder Scheduled',
+          note: 'SMS & email reminder 3 days before due date',
+          lastBill: null
+        },
+        {
+          id: `${occ.id}-electricity`,
+          occupancyId: occ.id,
+          tenantId: occ.tenant_id,
+          tenantName: `${occ.tenant?.first_name} ${occ.tenant?.last_name}`,
+          propertyTitle: occ.property?.title,
+          propertyPrice: occ.property?.price || 0,
+          billType: 'electricity',
+          billLabel: 'Electricity',
+          paymentRequestId: null,
+          canEditDueDate: true,
+          isEnabled: utilityReminderSettings.electricity,
+          nextDueDate: getUpcomingDateForDay(occ.electricity_due_day || 7),
+          sendDate: null,
+          status: 'Reminder Scheduled',
+          note: 'SMS & email reminder 3 days before due date',
+          lastBill: null
+        }
+      ]
+
+      return [rentScheduleItem, ...utilityRows]
     })
 
+    schedule.sort((a, b) => new Date(a.nextDueDate) - new Date(b.nextDueDate))
     setBillingSchedule(schedule)
+  }
+
+  function startEditIncomingDueDate(item) {
+    if (!autoBillingEnabled) {
+      showToast.error('Automated billing is disabled. Enable it to edit schedule due dates.', { duration: 3500, transition: 'bounceIn' })
+      return
+    }
+
+    if (!item?.canEditDueDate) return
+    if (item.billType !== 'rent' && item.isEnabled === false) {
+      showToast.error(`${item.billLabel} reminders are disabled.`, { duration: 3000, transition: 'bounceIn' })
+      return
+    }
+    setEditingDueDateItemId(item.id)
+    setEditingDueDateValue(new Date(item.nextDueDate).toISOString().split('T')[0])
+  }
+
+  function cancelEditIncomingDueDate() {
+    setEditingDueDateItemId(null)
+    setEditingDueDateValue('')
+  }
+
+  async function saveIncomingDueDate(item) {
+    if (!item || !editingDueDateValue) return
+
+    const selectedDate = new Date(editingDueDateValue)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    if (selectedDate < today) {
+      showToast.error('You can only edit incoming (today/future) due dates.', { duration: 3500, transition: 'bounceIn' })
+      return
+    }
+
+    setSavingDueDateItemId(item.id)
+    try {
+      let error = null
+
+      if (item.billType === 'rent') {
+        if (!item.paymentRequestId) {
+          showToast.error('No pending rent bill found to edit.', { duration: 3500, transition: 'bounceIn' })
+          return
+        }
+
+        const dueDateIso = selectedDate.toISOString()
+        const { error: rentUpdateError } = await supabase
+          .from('payment_requests')
+          .update({ due_date: dueDateIso })
+          .eq('id', item.paymentRequestId)
+        error = rentUpdateError
+      } else {
+        if (!item.occupancyId) {
+          showToast.error('No occupancy found for this utility row.', { duration: 3500, transition: 'bounceIn' })
+          return
+        }
+
+        const utilityDueDay = selectedDate.getDate()
+        const occupancyUpdate = {}
+
+        if (item.billType === 'internet') occupancyUpdate.wifi_due_day = utilityDueDay
+        if (item.billType === 'water') occupancyUpdate.water_due_day = utilityDueDay
+        if (item.billType === 'electricity') occupancyUpdate.electricity_due_day = utilityDueDay
+
+        const { error: occUpdateError } = await supabase
+          .from('tenant_occupancies')
+          .update(occupancyUpdate)
+          .eq('id', item.occupancyId)
+
+        error = occUpdateError
+      }
+
+      if (error) {
+        showToast.error('Failed to update due date.', { duration: 3500, transition: 'bounceIn' })
+        return
+      }
+
+      showToast.success('Incoming due date updated.', { duration: 3000, transition: 'bounceIn' })
+      cancelEditIncomingDueDate()
+      await Promise.all([calculateBillingSchedule(), loadDashboardTasks()])
+    } catch (err) {
+      console.error('Due date update failed:', err)
+      showToast.error('Failed to update due date.', { duration: 3500, transition: 'bounceIn' })
+    } finally {
+      setSavingDueDateItemId(null)
+    }
   }
 
   async function loadPendingEndRequests() {
@@ -1536,7 +1837,7 @@ export default function LandlordDashboard({ session, profile }) {
 
             {/* LEFT PANEL: Navigation Sidebar */}
             <div className="bg-white rounded-xl sm:rounded-2xl border border-gray-200/60 shadow-sm p-3 sm:p-5 relative">
-              <h3 className="text-[10px] sm:text-xs font-black text-gray-400 uppercase tracking-wider mb-3 sm:mb-5 px-2">Landlord Dashboard Menu</h3>
+              <h3 className="text-[10px] sm:text-xs font-black text-gray-400 uppercase tracking-wider mb-3 sm:mb-5 px-2">Landlord Tools</h3>
               <div className="flex flex-row flex-wrap lg:flex-col lg:flex-nowrap gap-1.5 sm:gap-2.5">
               <button onClick={() => setActivePanel('metrics')} className={`w-auto lg:w-full text-left px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 sm:gap-3 cursor-pointer ${activePanel === 'metrics' ? 'bg-black text-white shadow-md' : 'text-gray-600 hover:bg-gray-50'}`}>
                 <svg className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
@@ -1699,6 +2000,40 @@ export default function LandlordDashboard({ session, profile }) {
                       <h3 className="text-base sm:text-lg font-black text-gray-900 tracking-tight">Billing Schedule</h3>
                       <p className="text-xs sm:text-sm font-medium text-gray-500">Upcoming automated payments & reminders</p>
                     </div>
+                    <button
+                      onClick={toggleAutoBilling}
+                      disabled={togglingAutoBilling}
+                      className={`px-4 py-2 text-xs sm:text-sm font-bold rounded-xl border transition-all cursor-pointer ${autoBillingEnabled ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'} disabled:opacity-50`}
+                    >
+                      {togglingAutoBilling ? 'Updating...' : autoBillingEnabled ? 'Auto Billing: ON' : 'Auto Billing: OFF'}
+                    </button>
+                  </div>
+
+                  {!autoBillingEnabled && (
+                    <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs sm:text-sm text-amber-800 font-medium">
+                      Automated billing is disabled. Schedule edits and Send Now actions are blocked until you enable it.
+                    </div>
+                  )}
+
+                  <div className="mb-4 flex flex-wrap items-center gap-2">
+                    {[
+                      { key: 'internet', label: 'Internet' },
+                      { key: 'water', label: 'Water' },
+                      { key: 'electricity', label: 'Electricity' }
+                    ].map((util) => {
+                      const enabled = utilityReminderSettings[util.key] !== false
+                      const isBusy = togglingUtilityKey === util.key
+                      return (
+                        <button
+                          key={util.key}
+                          onClick={() => toggleUtilityReminder(util.key)}
+                          disabled={isBusy}
+                          className={`px-3 py-1.5 text-[11px] sm:text-xs font-bold rounded-lg border transition-all cursor-pointer ${enabled ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' : 'bg-gray-50 text-gray-600 border-gray-300 hover:bg-gray-100'} disabled:opacity-50`}
+                        >
+                          {isBusy ? 'Updating...' : `${util.label}: ${enabled ? 'ON' : 'OFF'}`}
+                        </button>
+                      )
+                    })}
                   </div>
 
                   <div className="overflow-x-auto -mx-3 sm:mx-0 px-3 sm:px-0">
@@ -1715,6 +2050,7 @@ export default function LandlordDashboard({ session, profile }) {
                         <thead className="text-[11px] text-gray-400 uppercase tracking-widest font-bold border-b border-gray-100">
                           <tr>
                             <th className="py-4 pl-2">Tenant & Property</th>
+                            <th className="py-4">Bill Type</th>
                             <th className="py-4">Auto-Send</th>
                             <th className="py-4">Due Date</th>
                             <th className="py-4">Status</th>
@@ -1722,33 +2058,81 @@ export default function LandlordDashboard({ session, profile }) {
                           </tr>
                         </thead>
                         <tbody className="text-sm divide-y divide-gray-50">
-                          {billingSchedule.slice(0, 8).map(item => {
+                          {billingSchedule.slice(0, 12).map(item => {
                             const autoSendDate = new Date(item.nextDueDate);
                             autoSendDate.setDate(autoSendDate.getDate() - 3);
+                            const isEditing = editingDueDateItemId === item.id;
                             return (
                               <tr key={item.id} className="hover:bg-gray-50/50 transition-colors group">
                                 <td className="py-4 pl-2">
                                   <p className="font-bold text-gray-900 group-hover:text-black transition-colors">{item.tenantName}</p>
                                   <p className="text-xs font-medium text-gray-500 mt-0.5">{item.propertyTitle}</p>
                                 </td>
+                                <td className="py-4 text-gray-800 text-xs font-bold">{item.billLabel}</td>
                                 <td className="py-4 text-gray-500 font-medium text-xs">
                                   <span className="inline-flex items-center gap-1.5">
                                     <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
                                     {autoSendDate.toLocaleDateString()}
                                   </span>
                                 </td>
-                                <td className="py-4 text-gray-900 text-xs font-bold">{item.nextDueDate.toLocaleDateString()}</td>
+                                <td className="py-4 text-gray-900 text-xs font-bold">
+                                  {isEditing ? (
+                                    <input
+                                      type="date"
+                                      className="border border-gray-300 rounded-lg px-2 py-1 text-xs"
+                                      value={editingDueDateValue}
+                                      min={new Date().toISOString().split('T')[0]}
+                                      onChange={(e) => setEditingDueDateValue(e.target.value)}
+                                    />
+                                  ) : (
+                                    item.nextDueDate.toLocaleDateString()
+                                  )}
+                                </td>
                                 <td className="py-4">
-                                  <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider ${item.status === 'Overdue' ? 'bg-red-50 text-red-600 border border-red-100' : item.status === 'Confirming' ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-emerald-50 text-emerald-600 border border-emerald-100'}`}>
+                                  <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider ${item.status === 'Overdue' ? 'bg-red-50 text-red-600 border border-red-100' : item.status === 'Confirming' ? 'bg-blue-50 text-blue-600 border border-blue-100' : item.status === 'Reminder Scheduled' ? 'bg-violet-50 text-violet-700 border border-violet-100' : 'bg-emerald-50 text-emerald-600 border border-emerald-100'}`}>
                                     {item.status}
                                   </span>
+                                  {item.billType !== 'rent' && item.isEnabled === false && (
+                                    <span className="ml-2 text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wider bg-gray-100 text-gray-500 border border-gray-200">
+                                      Disabled
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="py-4 text-right pr-2">
-                                  {item.status !== 'Contract Ending' && item.status !== 'Confirming' && (
-                                    <button onClick={() => openAdvanceBillModal(item.tenantId, item.tenantName, item.propertyTitle, item.propertyPrice)} disabled={sendingBillId === item.tenantId}
-                                      className="text-[11px] font-bold bg-black text-white px-4 py-2 rounded-xl hover:bg-gray-800 transition-all disabled:opacity-50 cursor-pointer shadow-sm">
-                                      Send Now
-                                    </button>
+                                  {isEditing ? (
+                                    <div className="flex items-center justify-end gap-2">
+                                      <button
+                                        onClick={() => cancelEditIncomingDueDate()}
+                                        className="text-[11px] font-bold border border-gray-300 text-gray-700 px-3 py-2 rounded-xl hover:bg-gray-50 transition-all cursor-pointer"
+                                      >
+                                        Cancel
+                                      </button>
+                                      <button
+                                        onClick={() => saveIncomingDueDate(item)}
+                                        disabled={savingDueDateItemId === item.id}
+                                        className="text-[11px] font-bold bg-black text-white px-3 py-2 rounded-xl hover:bg-gray-800 transition-all disabled:opacity-50 cursor-pointer shadow-sm"
+                                      >
+                                        {savingDueDateItemId === item.id ? 'Saving...' : 'Save'}
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center justify-end gap-2">
+                                      {item.canEditDueDate && (
+                                        <button
+                                          onClick={() => startEditIncomingDueDate(item)}
+                                          disabled={!autoBillingEnabled || (item.billType !== 'rent' && item.isEnabled === false)}
+                                          className="text-[11px] font-bold border border-gray-300 text-gray-700 px-3 py-2 rounded-xl hover:bg-gray-50 transition-all cursor-pointer"
+                                        >
+                                          Edit Due Date
+                                        </button>
+                                      )}
+                                      {item.status !== 'Contract Ending' && item.status !== 'Confirming' && (
+                                        <button onClick={() => openAdvanceBillModal(item.tenantId, item.tenantName, item.propertyTitle, item.propertyPrice, item.billType, item.billLabel)} disabled={!autoBillingEnabled || (item.billType !== 'rent' && item.isEnabled === false) || sendingBillId === `${item.tenantId}-${item.billType}`}
+                                          className="text-[11px] font-bold bg-black text-white px-4 py-2 rounded-xl hover:bg-gray-800 transition-all disabled:opacity-50 cursor-pointer shadow-sm">
+                                          Send Now
+                                        </button>
+                                      )}
+                                    </div>
                                   )}
                                 </td>
                               </tr>
@@ -2537,8 +2921,8 @@ export default function LandlordDashboard({ session, profile }) {
                     </svg>
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-gray-900">Confirm Send Advance Bill</h3>
-                    <p className="text-xs text-gray-500">This action will send a bill immediately</p>
+                    <h3 className="text-lg font-bold text-gray-900">Confirm Send {advanceBillModal.billLabel}</h3>
+                    <p className="text-xs text-gray-500">This action will send immediately</p>
                   </div>
                 </div>
               </div>
@@ -2546,24 +2930,26 @@ export default function LandlordDashboard({ session, profile }) {
               {/* Body */}
               <div className="p-6">
                 <p className="text-gray-700 mb-4">
-                  Are you sure you want to send an advance bill to <span className="font-bold">{advanceBillModal.tenantName}</span> for property <span className="font-bold">{advanceBillModal.propertyTitle}</span>?
+                  Are you sure you want to send {advanceBillModal.billLabel.toLowerCase()} now to <span className="font-bold">{advanceBillModal.tenantName}</span> for property <span className="font-bold">{advanceBillModal.propertyTitle}</span>?
                 </p>
-                <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 mb-4 flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0">
-                    <svg className="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                {advanceBillModal.billType === 'rent' && (
+                  <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4 mb-4 flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                      <svg className="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    </div>
+                    <div>
+                      <p className="text-xs text-emerald-700 font-semibold">Rent Amount</p>
+                      <p className="text-lg font-bold text-emerald-800">₱{Number(advanceBillModal.propertyPrice || 0).toLocaleString()}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-xs text-emerald-700 font-semibold">Rent Amount</p>
-                    <p className="text-lg font-bold text-emerald-800">₱{Number(advanceBillModal.propertyPrice || 0).toLocaleString()}</p>
-                  </div>
-                </div>
+                )}
                 <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 mb-4">
                   <div className="flex items-start gap-2">
                     <svg className="w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                     <p className="text-xs text-gray-500">
-                      This will immediately send a rent payment notification to the tenant. The tenant will receive an email, SMS (if phone is verified), and an in-app notification.
+                      This will immediately send a {advanceBillModal.billLabel.toLowerCase()} notification to the tenant. The tenant will receive an email, SMS (if phone is verified), and an in-app notification.
                     </p>
                   </div>
                 </div>
@@ -2584,7 +2970,7 @@ export default function LandlordDashboard({ session, profile }) {
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                   </svg>
-                  Yes, Send Bill
+                  Yes, Send Now
                 </button>
               </div>
             </div>

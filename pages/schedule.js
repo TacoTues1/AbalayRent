@@ -327,7 +327,7 @@ export default function SchedulePage() {
               >
                 <div className="text-sm font-bold uppercase mb-1">{config.label}</div>
                 <div className={`text-xs ${isSelected ? 'text-gray-400' : 'text-gray-500'}`}>{config.time}</div>
-                {isExisting && <div className="text-[10px] text-green-600 font-bold mt-1">✓ Added</div>}
+                {isExisting && <div className="text-[10px] text-green-600 font-bold mt-1">Added</div>}
               </button>
             )
           })}

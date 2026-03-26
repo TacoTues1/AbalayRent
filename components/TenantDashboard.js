@@ -69,6 +69,8 @@ export default function TenantDashboard({ session, profile }) {
   const [propertyStats, setPropertyStats] = useState({})
   const [guestFavorites, setGuestFavorites] = useState([])
   const [topRated, setTopRated] = useState([])
+  const [userLocationCity, setUserLocationCity] = useState('')
+  const [locationPermission, setLocationPermission] = useState('prompt')
   const [nextPaymentDate, setNextPaymentDate] = useState(null)
   const [lastRentPeriod, setLastRentPeriod] = useState(null)
   const [showRenewalModal, setShowRenewalModal] = useState(false)
@@ -198,17 +200,23 @@ export default function TenantDashboard({ session, profile }) {
     await loadProperties()
     await loadPropertyStats()
     const occupancy = await loadTenantOccupancy() 
+    let detectedLocationCity = ''
+    let detectedLocationPermission = locationPermission
 
     const isOwnOccupancy = occupancy && occupancy.tenant_id === session.user.id
     if (isOwnOccupancy) {
       await loadTenantBalance(occupancy)
       await loadPendingPayments(occupancy)
       await loadPaymentHistory(occupancy)
+    } else {
+      const locationResult = await detectUserLocation()
+      detectedLocationCity = locationResult.city
+      detectedLocationPermission = locationResult.permission
     }
 
     await checkPendingReviews(session.user.id)
     await loadUserFavorites()
-    await loadFeaturedSections()
+    await loadFeaturedSections(detectedLocationCity, detectedLocationPermission)
 
     if (occupancy) {
       if (isOwnOccupancy) {
@@ -980,11 +988,14 @@ export default function TenantDashboard({ session, profile }) {
   const handleCompareClick = () => { const ids = comparisonList.map(p => p.id).join(','); router.push(`/compare?ids=${ids}`) }
 
   async function loadProperties() {
-    let query = supabase.from('properties').select('*, landlord_profile:profiles!properties_landlord_fkey(id, first_name, middle_name, last_name, role)')
-      .ilike('city', '%Dumaguete%')
+    let query = supabase
+      .from('properties')
+      .select('*, landlord_profile:profiles!properties_landlord_fkey(id, first_name, middle_name, last_name, role)')
+      .eq('is_deleted', false)
     const { data, error } = await query
     if (error) console.error('Error loading properties:', error)
-    setProperties(data || [])
+    const randomized = [...(data || [])].sort(() => Math.random() - 0.5)
+    setProperties(randomized)
   }
 
   const handleSeeMore = () => { router.push('/properties/allProperties') }
@@ -1166,6 +1177,43 @@ export default function TenantDashboard({ session, profile }) {
     }
   }
 
+  async function detectUserLocation() {
+    if (typeof window === 'undefined' || !navigator?.geolocation) {
+      setLocationPermission('unavailable')
+      setUserLocationCity('')
+      return { permission: 'unavailable', city: '' }
+    }
+
+    return new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          try {
+            const { latitude, longitude } = position.coords
+            const response = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`)
+            const data = await response.json()
+            const city = (data?.city || data?.locality || data?.principalSubdivision || '').trim()
+
+            setLocationPermission('granted')
+            setUserLocationCity(city)
+            resolve({ permission: 'granted', city })
+          } catch (err) {
+            console.error('Location reverse-geocode failed:', err)
+            setLocationPermission('granted')
+            setUserLocationCity('')
+            resolve({ permission: 'granted', city: '' })
+          }
+        },
+        (error) => {
+          const permission = error?.code === 1 ? 'denied' : 'unavailable'
+          setLocationPermission(permission)
+          setUserLocationCity('')
+          resolve({ permission, city: '' })
+        },
+        { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+      )
+    })
+  }
+
   async function loadUserFavorites() {
     if (!session) return
     const { data } = await supabase.from('favorites').select('property_id').eq('user_id', session.user.id)
@@ -1181,7 +1229,7 @@ export default function TenantDashboard({ session, profile }) {
     }
   }
 
-  async function loadFeaturedSections() {
+  async function loadFeaturedSections(locationCityOverride = '', locationPermissionOverride = locationPermission) {
     const { data: allProps } = await supabase.from('properties').select('*, landlord_profile:profiles!properties_landlord_fkey(first_name, last_name)').eq('is_deleted', false)
     const { data: stats } = await supabase.from('property_stats').select('*')
 
@@ -1192,8 +1240,18 @@ export default function TenantDashboard({ session, profile }) {
       })
       setPropertyStats(statsMap)
 
-      const favs = allProps.filter(p => p.city && p.city.toLowerCase().includes('valencia')).slice(0, maxDisplayItems)
-      setGuestFavorites(favs)
+      const effectiveLocationCity = (locationCityOverride || userLocationCity || '').toLowerCase()
+      if (locationPermissionOverride === 'granted' && effectiveLocationCity) {
+        const favs = allProps
+          .filter(p => {
+            const propertyCity = (p.city || '').toLowerCase()
+            return propertyCity.includes(effectiveLocationCity) || effectiveLocationCity.includes(propertyCity)
+          })
+          .slice(0, maxDisplayItems)
+        setGuestFavorites(favs)
+      } else {
+        setGuestFavorites([])
+      }
 
       const rated = allProps.filter(p => (statsMap[p.id]?.review_count || 0) > 0).sort((a, b) => (statsMap[b.id]?.avg_rating || 0) - (statsMap[a.id]?.avg_rating || 0)).slice(0, maxDisplayItems)
       setTopRated(rated)
@@ -2182,7 +2240,7 @@ export default function TenantDashboard({ session, profile }) {
             {/* All Properties Section */}
             <div className={`mb-0 mt-4 transition-all duration-700 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
               <div className="flex flex-col sm:flex-row items-start sm:items-center mb-4 gap-3">
-                <h2 className="text-2xl font-black text-black shrink-0">Available in Dumaguete City</h2>
+                <h2 className="text-2xl font-black text-black shrink-0">Recommended Properties</h2>
                 <div className="flex items-center gap-3 w-full sm:w-auto sm:flex-1 sm:max-w-md lg:max-w-lg">
                   <div className="relative flex-1" ref={searchRef}>
                     <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none z-10">
@@ -2290,12 +2348,12 @@ export default function TenantDashboard({ session, profile }) {
             </div>
 
             {/* Tenants Favorites Section */}
-            {guestFavorites.length > 0 && (
+            {locationPermission === 'granted' && userLocationCity && guestFavorites.length > 0 && (
               <div className={`mb-2 mt-4 transition-all duration-700 delay-150 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
                   <div>
                     <div className="flex items-center gap-3 mb-1">
-                      <h2 className="text-2xl font-black text-black">Near Valencia</h2>
+                      <h2 className="text-2xl font-black text-black">Available in {userLocationCity}</h2>
                     </div>
                   </div>
                 </div>

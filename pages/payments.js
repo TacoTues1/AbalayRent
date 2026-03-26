@@ -39,7 +39,7 @@ export default function PaymentsPage() {
   const [processingId, setProcessingId] = useState(null) // For inline actions
   const [isProcessingModal, setIsProcessingModal] = useState(false) // For modal actions
   const [paypalProcessing, setPaypalProcessing] = useState(false)
-  const [activeTab, setActiveTab] = useState('internet') // Default to internet
+  const [activeTab, setActiveTab] = useState('other')
   const [showEditModal, setShowEditModal] = useState(false)
   const [editingBill, setEditingBill] = useState(null)
   const [editFormData, setEditFormData] = useState({
@@ -378,24 +378,37 @@ export default function PaymentsPage() {
     let finalDueDate = null;
     let billTypeLabel = '';
 
-    // We set the specific amount based on the tab
-    // Due dates are no longer required for utility bills (automated reminders handle this)
+    if (['internet', 'water', 'electricity'].includes(activeTab)) {
+      showToast.warning('Internet, water, and electricity are reminder-only and cannot be sent as bills.', { duration: 4000, transition: 'bounceIn' })
+      return
+    }
+
+    // We set the specific amount based on the tab and require a due date for each bill.
     if (activeTab === 'rent') {
       rent = parseFloat(formData.amount) || 0;
       finalDueDate = formData.due_date;
       billTypeLabel = 'Rent';
     } else if (activeTab === 'water') {
       water = parseFloat(formData.water_bill) || 0;
+      finalDueDate = formData.water_due_date || formData.due_date;
       billTypeLabel = 'Water Bill';
     } else if (activeTab === 'electricity') {
       electrical = parseFloat(formData.electrical_bill) || 0;
+      finalDueDate = formData.electrical_due_date || formData.due_date;
       billTypeLabel = 'Electricity Bill';
     } else if (activeTab === 'internet') {
       wifi = parseFloat(formData.wifi_bill) || 0;
+      finalDueDate = formData.wifi_due_date || formData.due_date;
       billTypeLabel = 'Internet Bill';
     } else if (activeTab === 'other') {
       other = parseFloat(formData.other_bills) || 0;
+      finalDueDate = formData.other_due_date || formData.due_date;
       billTypeLabel = 'Other Bill';
+    }
+
+    if (!finalDueDate) {
+      showToast.warning('Please set a due date for this bill.', { duration: 3500, transition: 'bounceIn' })
+      return
     }
 
     const total = rent + water + electrical + wifi + other;
@@ -437,7 +450,7 @@ export default function PaymentsPage() {
           bills_description: formData.bills_description || `No Message`,
 
           // Specific Due Dates
-          due_date: finalDueDate ? new Date(finalDueDate).toISOString() : null, // Main sort column
+          due_date: new Date(finalDueDate).toISOString(), // Main sort column
           electrical_due_date: formData.electrical_due_date ? new Date(formData.electrical_due_date).toISOString() : null,
           water_due_date: formData.water_due_date ? new Date(formData.water_due_date).toISOString() : null,
           wifi_due_date: formData.wifi_due_date ? new Date(formData.wifi_due_date).toISOString() : null,
@@ -2028,9 +2041,6 @@ export default function PaymentsPage() {
               {/* Tabs for Bill Type */}
               <div className="flex gap-2 flex-wrap pb-2 mb-4 scrollbar-hide">
                 {[
-                  { id: 'internet', label: 'Internet' },
-                  { id: 'electricity', label: 'Electricity' },
-                  { id: 'water', label: 'Water' },
                   { id: 'other', label: 'Other' }
                 ].map(tab => (
                   <button
@@ -2049,7 +2059,7 @@ export default function PaymentsPage() {
               {/* Info about automatic billing */}
               <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
                 <p className="text-xs text-gray-600">
-                  <span className="font-bold">Note:</span> House rent bills are sent automatically 3 days before due date. Use the tabs below to send Internet, Electricity, Water, or Other bills manually.
+                  <span className="font-bold">Note:</span> Internet, electricity, and water are automated reminders only. Use this modal for Other bills.
                 </p>
               </div>
 
@@ -2159,35 +2169,19 @@ export default function PaymentsPage() {
                       </div>
                     )}
 
-                    {activeTab === 'internet' && (
-                      <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">Amount *</label>
-                        <input type="number" required min="0" step="0.01" className="w-full border-2 border-gray-200 focus:border-black rounded-lg px-3 py-2 outline-none" placeholder="0.00"
-                          value={formData.wifi_bill} onChange={e => setFormData({ ...formData, wifi_bill: e.target.value })} />
-                      </div>
-                    )}
-
-                    {activeTab === 'electricity' && (
-                      <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">Amount *</label>
-                        <input type="number" required min="0" step="0.01" className="w-full border-2 border-gray-200 focus:border-black rounded-lg px-3 py-2 outline-none" placeholder="0.00"
-                          value={formData.electrical_bill} onChange={e => setFormData({ ...formData, electrical_bill: e.target.value })} />
-                      </div>
-                    )}
-
-                    {activeTab === 'water' && (
-                      <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">Amount *</label>
-                        <input type="number" required min="0" step="0.01" className="w-full border-2 border-gray-200 focus:border-black rounded-lg px-3 py-2 outline-none" placeholder="0.00"
-                          value={formData.water_bill} onChange={e => setFormData({ ...formData, water_bill: e.target.value })} />
-                      </div>
-                    )}
-
                     {activeTab === 'other' && (
                       <div>
                         <label className="block text-xs font-bold text-gray-500 mb-1">Amount *</label>
                         <input type="number" required min="0" step="0.01" className="w-full border-2 border-gray-200 focus:border-black rounded-lg px-3 py-2 outline-none" placeholder="0.00"
                           value={formData.other_bills} onChange={e => setFormData({ ...formData, other_bills: e.target.value })} />
+                        <label className="block text-xs font-bold text-gray-500 mt-3 mb-1">Payment Due Date *</label>
+                        <input
+                          type="date"
+                          required
+                          className="w-full border-2 border-gray-200 focus:border-black rounded-lg px-3 py-2 outline-none"
+                          value={formData.other_due_date}
+                          onChange={e => setFormData({ ...formData, other_due_date: e.target.value })}
+                        />
                       </div>
                     )}
 
@@ -2225,9 +2219,6 @@ export default function PaymentsPage() {
                       <span className="text-sm font-bold uppercase tracking-wider">Total</span>
                       <span className="text-xl font-bold">
                         ₱{((activeTab === 'rent' ? parseFloat(formData.amount) : 0) +
-                          (activeTab === 'internet' ? parseFloat(formData.wifi_bill) : 0) +
-                          (activeTab === 'electricity' ? parseFloat(formData.electrical_bill) : 0) +
-                          (activeTab === 'water' ? parseFloat(formData.water_bill) : 0) +
                           (activeTab === 'other' ? parseFloat(formData.other_bills) : 0) || 0
                         ).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                       </span>

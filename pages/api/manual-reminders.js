@@ -274,7 +274,10 @@ export default async function handler(req, res) {
         start_date,
         late_payment_fee,
         wifi_due_day,
+        water_due_day,
+        electricity_due_day,
         rent_due_day,
+        landlord_profile:profiles!tenant_occupancies_landlord_id_fkey(accepted_payments),
         tenant:profiles!tenant_occupancies_tenant_id_fkey(id, first_name, last_name, phone),
         property:properties(id, title, price)
       `)
@@ -285,6 +288,11 @@ export default async function handler(req, res) {
       }
 
       console.log(`[Rent Reminder] Total active occupancies: ${allOccupancies?.length || 0}`);
+
+      const isUtilityEnabled = (occ, utilityKey) => {
+        const utilitySettings = occ?.landlord_profile?.accepted_payments?.utility_reminders || {};
+        return utilitySettings[utilityKey] !== false;
+      };
 
       // Filter occupancies where today is 1, 2, or 3 days before the due date
       const rentOccupancies = (allOccupancies || []).filter(occ => {
@@ -471,6 +479,7 @@ export default async function handler(req, res) {
 
       // Filter occupancies where today is 1, 2, or 3 days before the WiFi due date
       const wifiOccupancies = (allOccupancies || []).filter(occ => {
+        if (!isUtilityEnabled(occ, 'internet')) return false;
         if (!occ.wifi_due_day) return false;
 
         const wifiDueDay = occ.wifi_due_day;
@@ -552,6 +561,7 @@ export default async function handler(req, res) {
 
         for (const occ of (allOccupancies || [])) {
           if (!occ.tenant) continue;
+          if (!isUtilityEnabled(occ, 'electricity')) continue;
 
           // Check if notification already sent TODAY
           const todayStart = new Date(todayYear, todayMonth, todayDay, 0, 0, 0, 0);
@@ -614,6 +624,7 @@ export default async function handler(req, res) {
 
         for (const occ of (allOccupancies || [])) {
           if (!occ.tenant) continue;
+          if (!isUtilityEnabled(occ, 'water')) continue;
 
           // Check if notification already sent TODAY
           const todayStartW = new Date(todayYear, todayMonth, todayDay, 0, 0, 0, 0);
