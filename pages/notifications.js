@@ -15,7 +15,7 @@ export default function NotificationsPage() {
       if (result.data?.session) {
         setSession(result.data.session)
       } else {
-        router.push('/auth')
+        router.push('/')
       }
     })
   }, [])

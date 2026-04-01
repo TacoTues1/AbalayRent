@@ -991,13 +991,26 @@ export default function Navbar() {
             {/* Mobile Center Logo (Clickable) - Removed since moved to left plane */}
 
             <div className="flex-1 flex items-center justify-end gap-3 lg:gap-5 z-50">
+              {/* Favorites Icon */}
+              <Link href="/favorites" className={`group hidden md:flex p-1.5 rounded-full items-center justify-center transition-colors relative ${isActive('/favorites') ? 'active bg-gray-300 text-gray-900' : 'text-gray-500 hover:text-red-500 hover:bg-gray-50'} ${disabledClass}`}>
+                <svg className="w-[22px] h-[22px]" fill={isActive('/favorites') ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                </svg>
+                <span className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-2 px-2 py-1 rounded-md bg-gray-900 text-white text-[11px] font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-[60]">
+                  My Favorite
+                </span>
+              </Link>
+
               {/* Message Icon */}
-              <Link href="/messages" className={`hidden md:flex p-1.5 rounded-full items-center justify-center transition-colors relative ${isActive('/messages') ? 'active bg-gray-300 text-gray-900' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'} ${disabledClass}`}>
+              <Link href="/messages" className={`group hidden md:flex p-1.5 rounded-full items-center justify-center transition-colors relative ${isActive('/messages') ? 'active bg-gray-300 text-gray-900' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'} ${disabledClass}`}>
                 <svg className="w-[22px] h-[22px]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                <span className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-2 px-2 py-1 rounded-md bg-gray-900 text-white text-[11px] font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-[60]">
+                  Messages
+                </span>
               </Link>
 
               {/* --- DESKTOP NOTIFICATIONS (FACEBOOK STYLE) --- */}
-              <div className={`relative hidden md:block ${disabledClass}`} ref={notifRef}>
+              <div className={`group relative hidden md:block ${disabledClass}`} ref={notifRef}>
                 <button
                   onClick={toggleNotifications}
                   className={`relative p-1.5 rounded-full transition-colors cursor-pointer ${showNotifDropdown || isActive('/notifications')
@@ -1013,6 +1026,12 @@ export default function Navbar() {
                     <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-[#FF4B60] rounded-full border-2 border-white"></span>
                   )}
                 </button>
+
+                {!showNotifDropdown && (
+                  <span className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-2 px-2 py-1 rounded-md bg-gray-900 text-white text-[11px] font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-[60]">
+                    Notifications
+                  </span>
+                )}
 
                 {/* Notification Dropdown */}
                 {showNotifDropdown && (
@@ -1233,6 +1252,8 @@ export default function Navbar() {
                   </Link>
                 </>
               )}
+
+              <Link href="/favorites" onClick={() => setShowMobileMenu(false)} className={`flex items-center justify-center px-3 py-2 rounded-lg text-xs font-medium transition-all ${isActive('/favorites') ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-100'} ${disabledClass}`}>My Favorite</Link>
 
               <Link href="/messages" onClick={() => setShowMobileMenu(false)} className={`flex items-center justify-center px-3 py-2 rounded-lg text-xs font-medium transition-all ${isActive('/messages') ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-100'} ${disabledClass}`}>Messages</Link>
 

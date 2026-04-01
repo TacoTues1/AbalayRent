@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabaseClient'
+import { normalizeImageForUpload } from '../../lib/imageCompression'
 import { useRouter } from 'next/router'
 import { showToast } from 'nextjs-toast-notify'
 
@@ -68,10 +69,35 @@ export default function NewProperty() {
   const [showAllAmenities, setShowAllAmenities] = useState(false)
 
   const availableAmenities = [
-    'Kitchen', 'Wifi', 'Pool', 'TV', 'Elevator', 'Air conditioning', 'Heating',
+    'Kitchen', 'Pool', 'TV', 'Elevator', 'Air conditioning', 'Heating',
     'Washing machine', 'Dryer', 'Parking', 'Gym', 'Security', 'Balcony', 'Garden',
     'Pet friendly', 'Furnished', 'Carbon monoxide alarm', 'Smoke alarm', 'Fire extinguisher', 'First aid kit'
   ]
+
+  const normalizeAmenities = (amenities = []) => {
+    const mapped = (amenities || []).map(a => (a === 'WiFi' ? 'Wifi' : a))
+    const unique = [...new Set(mapped)]
+    if (unique.includes('Free WiFi') && !unique.includes('Wifi')) unique.push('Wifi')
+    return unique
+  }
+
+  const getWifiModeFromAmenities = (amenities = []) => {
+    const normalized = normalizeAmenities(amenities)
+    if (normalized.includes('Free WiFi')) return 'free'
+    if (normalized.includes('Wifi')) return 'paid'
+    return 'none'
+  }
+
+  const setWifiMode = (mode) => {
+    setFormData(prev => {
+      const normalized = normalizeAmenities(prev.amenities)
+      const withoutWifi = normalized.filter(a => a !== 'Wifi' && a !== 'Free WiFi')
+
+      if (mode === 'paid') return { ...prev, amenities: [...withoutWifi, 'Wifi'] }
+      if (mode === 'free') return { ...prev, amenities: [...withoutWifi, 'Wifi', 'Free WiFi'] }
+      return { ...prev, amenities: withoutWifi }
+    })
+  }
 
   const toggleAmenity = (amenity) => {
     setFormData(prev => ({
@@ -89,7 +115,7 @@ export default function NewProperty() {
   async function checkAuth() {
     const result = await supabase.auth.getSession()
     if (!result.data?.session) {
-      router.push('/auth')
+      router.push('/')
       return
     }
 
@@ -143,20 +169,16 @@ export default function NewProperty() {
       return
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      notifyError('Image size must be less than 5MB')
-      return
-    }
-
     setUploadingImages(prev => ({ ...prev, [index]: true }))
     try {
-      const fileExt = file.name.split('.').pop()
+      const uploadFile = await normalizeImageForUpload(file)
+      const fileExt = uploadFile.name.split('.').pop()
       const randomId = Math.random().toString(36).substring(2, 10)
       const fileName = `${session.user.id}/${Date.now()}_${randomId}.${fileExt}`
 
       const { data, error } = await supabase.storage
         .from('property-images')
-        .upload(fileName, file)
+        .upload(fileName, uploadFile)
 
       if (error) {
         if (error.message.includes('Bucket not found') || error.message.includes('bucket')) {
@@ -193,10 +215,6 @@ export default function NewProperty() {
     const validFiles = files.filter(file => {
       if (!file.type.startsWith('image/')) {
         notifyError(`${file.name} is not an image file`)
-        return false
-      }
-      if (file.size > 5 * 1024 * 1024) {
-        notifyError(`${file.name} is too large (max 5MB)`)
         return false
       }
       return true
@@ -245,8 +263,8 @@ export default function NewProperty() {
       return
     }
 
-    if (file.size > 10 * 1024 * 1024) {
-      notifyError('PDF size must be less than 10MB')
+    if (file.size > 2 * 1024 * 1024) {
+      notifyError('PDF size must be less than 2MB')
       return
     }
 
@@ -288,6 +306,10 @@ export default function NewProperty() {
     }
 
     const validImageUrls = imageUrls.filter(url => url.trim() !== '')
+    if (validImageUrls.length === 0) {
+      notifyError('Please upload at least one photo before creating the property')
+      return
+    }
 
     setLoading(true)
 
@@ -297,6 +319,7 @@ export default function NewProperty() {
 
     const payload = {
       ...cleanedFormData,
+      amenities: normalizeAmenities(cleanedFormData.amenities),
       zip: sanitizeNumber(formData.zip),
       price: sanitizeNumber(formData.price),
       utilities_cost: sanitizeNumber(formData.utilities_cost),
@@ -326,6 +349,7 @@ export default function NewProperty() {
   }
 
   const isUploading = Object.values(uploadingImages).some(v => v) || uploadingTerms
+  const hasAtLeastOnePhoto = imageUrls.some(url => (url || '').trim() !== '')
 
   function validateStep() {
     const warn = (msg) => {
@@ -591,17 +615,20 @@ export default function NewProperty() {
           {/* STEP 4: Utilities */}
           {step === 4 && (
             <div className="space-y-6 animate-in fade-in duration-300">
+              {(() => {
+                const wifiMode = getWifiModeFromAmenities(formData.amenities)
+                return (
+                  <>
               <div>
                 <h3 className="text-sm font-bold text-gray-900 mb-2 flex items-center gap-2">
                   <span className="w-1.5 h-4 bg-black rounded-full"></span> Utilities
                 </h3>
-                <p className="text-xs text-gray-500 mb-5">Toggle which utilities are included free. Non-free utilities will require a due date when assigning a tenant.</p>
+                <p className="text-xs text-gray-500 mb-5">Toggle which utilities are included free. Water and electricity require due dates when not free. WiFi due date is needed only when WiFi is available and paid.</p>
               </div>
               <div className="space-y-3">
                 {[
                   { label: 'Water', amenity: 'Free Water', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 21c-3.866 0-7-3.134-7-7 0-4.97 7-11 7-11s7 6.03 7 11c0 3.866-3.134 7-7 7z" /></svg>, colorFree: 'bg-blue-100 text-blue-600', colorPaid: 'bg-blue-50 text-blue-400' },
-                  { label: 'Electricity', amenity: 'Free Electricity', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>, colorFree: 'bg-amber-100 text-amber-600', colorPaid: 'bg-amber-50 text-amber-400' },
-                  { label: 'WiFi', amenity: 'Free WiFi', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01M5.636 13.636a9 9 0 0112.728 0M1.393 10.393a14 14 0 0121.213 0" /></svg>, colorFree: 'bg-violet-100 text-violet-600', colorPaid: 'bg-violet-50 text-violet-400' }
+                  { label: 'Electricity', amenity: 'Free Electricity', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>, colorFree: 'bg-amber-100 text-amber-600', colorPaid: 'bg-amber-50 text-amber-400' }
                 ].map(u => {
                   const isFree = formData.amenities.includes(u.amenity)
                   return (
@@ -624,7 +651,45 @@ export default function NewProperty() {
                     </div>
                   )
                 })}
+
+                <div className={`flex items-center gap-4 p-4 rounded-xl border transition-all ${wifiMode === 'none' ? 'bg-gray-50 border-gray-200' : wifiMode === 'free' ? 'bg-green-50 border-green-200' : 'bg-violet-50 border-violet-200'}`}>
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${wifiMode === 'none' ? 'bg-gray-200 text-gray-500' : wifiMode === 'free' ? 'bg-green-100 text-green-600' : 'bg-violet-100 text-violet-600'}`}>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01M5.636 13.636a9 9 0 0112.728 0M1.393 10.393a14 14 0 0121.213 0" /></svg>
+                  </div>
+                  <div className="flex-1">
+                    <span className={`text-sm font-bold ${wifiMode === 'none' ? 'text-gray-700' : wifiMode === 'free' ? 'text-green-700' : 'text-violet-700'}`}>WiFi</span>
+                    <p className="text-[11px] text-gray-400">
+                      {wifiMode === 'none' ? 'Not available in this property' : wifiMode === 'free' ? 'Included free with rent' : 'Available with separate payment'}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setWifiMode('none')}
+                      className={`px-3 py-1.5 rounded-full text-[10px] font-bold cursor-pointer transition-all ${wifiMode === 'none' ? 'bg-gray-700 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
+                    >
+                      Not Available
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWifiMode('paid')}
+                      className={`px-3 py-1.5 rounded-full text-[10px] font-bold cursor-pointer transition-all ${wifiMode === 'paid' ? 'bg-violet-600 text-white' : 'bg-violet-100 text-violet-700 hover:bg-violet-200'}`}
+                    >
+                      Paid
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWifiMode('free')}
+                      className={`px-3 py-1.5 rounded-full text-[10px] font-bold cursor-pointer transition-all ${wifiMode === 'free' ? 'bg-green-600 text-white' : 'bg-green-100 text-green-700 hover:bg-green-200'}`}
+                    >
+                      Free
+                    </button>
+                  </div>
+                </div>
               </div>
+                  </>
+                )
+              })()}
             </div>
           )}
 
@@ -738,7 +803,7 @@ export default function NewProperty() {
                       )}
                       <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, index)} disabled={uploadingImages[index]} />
                     </label>
-                    {url && imageUrls.length > 1 && (
+                    {url && (
                       <button type="button" onClick={() => removeImageUrlField(index)} className="absolute -top-1.5 -right-1.5 w-6 h-6 bg-red-500 text-white text-xs rounded-full flex items-center justify-center cursor-pointer shadow border-2 border-white hover:bg-red-600 transition-colors">x</button>
                     )}
                   </div>
@@ -755,7 +820,7 @@ export default function NewProperty() {
                 Upload Multiple Photos
                 <input type="file" accept="image/*" multiple className="hidden" onChange={handleMultipleImageUpload} />
               </label>
-              <p className="text-[10px] text-gray-400 text-center">Max 5MB per image. Up to 10 photos.</p>
+              <p className="text-[10px] text-gray-400 text-center">Max 2MB per image. Up to 10 photos.</p>
             </div>
           )}
         </div>
@@ -782,10 +847,10 @@ export default function NewProperty() {
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={loading || isUploading}
+              disabled={loading || isUploading || !hasAtLeastOnePhoto}
               className="px-8 py-3 bg-black text-white text-sm font-bold disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer rounded-xl hover:bg-gray-800 transition-all"
             >
-              {loading ? 'Saving...' : isUploading ? 'Uploading...' : 'Create Property'}
+              {loading ? 'Saving...' : isUploading ? 'Uploading...' : !hasAtLeastOnePhoto ? 'Add At Least 1 Photo' : 'Add Property'}
             </button>
           )}
         </div>

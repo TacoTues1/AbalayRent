@@ -325,11 +325,6 @@ export default async function handler(req, res) {
                 });
             }
 
-            if (request.is_renewal_payment) {
-                await supabase.from('tenant_occupancies')
-                    .update({ renewal_status: null, renewal_requested: false })
-                    .eq('id', request.occupancy_id);
-            }
         }
 
         // Notifications

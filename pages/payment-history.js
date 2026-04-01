@@ -20,7 +20,7 @@ export default function PaymentHistoryPage() {
         setSession(result.data.session)
         loadUserRole(result.data.session.user.id)
       } else {
-        router.push('/auth')
+          router.push('/')
       }
     })
   }, [])

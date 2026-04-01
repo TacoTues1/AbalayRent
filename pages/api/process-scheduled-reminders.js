@@ -1,6 +1,6 @@
 // pages/api/process-scheduled-reminders.js
 // Processes any due reminders from the scheduled_reminders queue
-// Called automatically by Supabase pg_cron every 5 minutes, or by Navbar on user activity
+// Called automatically by Supabase pg_cron every minute, or by Navbar on user activity
 
 import { createClient } from '@supabase/supabase-js'
 import { sendNotificationEmail } from '../../lib/email'
@@ -10,6 +10,7 @@ const supabaseAdmin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
     process.env.SUPABASE_SERVICE_ROLE_KEY
 )
+const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000000'
 
 // Helper: Format Phone Number
 function formatPhoneNumber(phone) {
@@ -19,6 +20,73 @@ function formatPhoneNumber(phone) {
     if (clean.startsWith('09')) return '+63' + clean.substring(1);
     if (clean.startsWith('63')) return '+' + clean;
     return '+' + clean;
+}
+
+// Auto-transition due scheduled maintenance requests to in_progress.
+// This runs server-side (cron/API), so it works even when no user is logged in.
+async function autoStartDueMaintenanceRequests() {
+    const summary = { updated: 0, notified: 0 }
+    const nowISO = new Date().toISOString()
+
+    const { data: dueRequests, error: dueError } = await supabaseAdmin
+        .from('maintenance_requests')
+        .select('id, title, tenant, properties(landlord)')
+        .eq('status', 'scheduled')
+        .not('scheduled_date', 'is', null)
+        .lte('scheduled_date', nowISO)
+        .limit(200)
+
+    if (dueError) {
+        throw new Error(`Failed to fetch due maintenance requests: ${dueError.message}`)
+    }
+
+    if (!dueRequests || dueRequests.length === 0) {
+        return summary
+    }
+
+    const dueIds = dueRequests.map((row) => row.id)
+    const { data: updatedRows, error: updateError } = await supabaseAdmin
+        .from('maintenance_requests')
+        .update({ status: 'in_progress' })
+        .in('id', dueIds)
+        .eq('status', 'scheduled')
+        .select('id')
+
+    if (updateError) {
+        throw new Error(`Failed to update maintenance status: ${updateError.message}`)
+    }
+
+    const updatedIds = new Set((updatedRows || []).map((row) => row.id))
+    summary.updated = updatedIds.size
+
+    if (summary.updated === 0) {
+        return summary
+    }
+
+    const notificationRows = dueRequests
+        .filter((row) => updatedIds.has(row.id) && row.tenant)
+        .map((row) => ({
+            recipient: row.tenant,
+            actor: row.properties?.landlord || SYSTEM_USER_ID,
+            type: 'maintenance_status',
+            message: `The scheduled repair for "${row.title}" has now started!`,
+            link: '/maintenance',
+            read: false
+        }))
+
+    if (notificationRows.length > 0) {
+        const { error: notifError } = await supabaseAdmin
+            .from('notifications')
+            .insert(notificationRows)
+
+        if (notifError) {
+            console.error('[Maintenance Auto-Start] Notification insert failed:', notifError)
+        } else {
+            summary.notified = notificationRows.length
+        }
+    }
+
+    return summary
 }
 
 // Increase timeout for Vercel serverless
@@ -36,9 +104,26 @@ export default async function handler(req, res) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const results = { processed: 0, messages: 0, bookings: 0, errors: 0 }
+    const results = {
+        processed: 0,
+        messages: 0,
+        bookings: 0,
+        errors: 0,
+        maintenanceAutoStarted: 0,
+        maintenanceNotified: 0
+    }
 
     try {
+        // 0. Auto-start due maintenance requests regardless of user activity.
+        try {
+            const maintenance = await autoStartDueMaintenanceRequests()
+            results.maintenanceAutoStarted = maintenance.updated
+            results.maintenanceNotified = maintenance.notified
+        } catch (maintenanceErr) {
+            console.error('[Maintenance Auto-Start] Failed:', maintenanceErr)
+            results.errors++
+        }
+
         // 1. Fetch all due reminders (send_at <= NOW and not sent)
         const { data: dueReminders, error } = await supabaseAdmin
             .from('scheduled_reminders')
@@ -53,7 +138,11 @@ export default async function handler(req, res) {
         }
 
         if (!dueReminders || dueReminders.length === 0) {
-            return res.status(200).json({ success: true, message: 'No due reminders', results })
+            const message = results.maintenanceAutoStarted > 0
+                ? `No due reminders. Auto-started ${results.maintenanceAutoStarted} maintenance request(s).`
+                : 'No due reminders'
+
+            return res.status(200).json({ success: true, message, results })
         }
 
         // 2. Process each reminder

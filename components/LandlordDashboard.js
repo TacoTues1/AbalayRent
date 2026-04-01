@@ -73,10 +73,14 @@ export default function LandlordDashboard({ session, profile }) {
     isOpen: false,
     occupancy: null,
     members: [],
+    paymentHistory: [],
     loading: false,
-    internetDueDay: '',
-    waterDueDay: '',
-    electricityDueDay: '',
+    loadingPaymentHistory: false,
+    internetDueDate: '',
+    waterDueDate: '',
+    electricityDueDate: '',
+    internetAvailable: false,
+    internetIsFree: false,
     savingDueDates: false
   })
 
@@ -156,7 +160,6 @@ export default function LandlordDashboard({ session, profile }) {
         loadProperties(),
         loadOccupancies(),
         loadPendingEndRequests(),
-        loadPendingRenewalRequests(),
         loadDashboardTasks(),
         loadMonthlyIncome(),
         loadTotalIncome()
@@ -922,13 +925,7 @@ export default function LandlordDashboard({ session, profile }) {
   }
 
   async function loadPendingRenewalRequests() {
-    const { data } = await supabase
-      .from('tenant_occupancies')
-      .select(`*, tenant:profiles!tenant_occupancies_tenant_id_fkey(id, first_name, middle_name, last_name, phone), property:properties(id, title, address, price)`)
-      .eq('landlord_id', session.user.id)
-      .eq('renewal_requested', true)
-      .eq('renewal_status', 'pending')
-    setPendingRenewalRequests(data || [])
+    setPendingRenewalRequests([])
   }
 
   // Open renewal confirmation modal
@@ -1168,7 +1165,7 @@ export default function LandlordDashboard({ session, profile }) {
   }
 
   async function loadOccupancies() {
-    const { data } = await supabase.from('tenant_occupancies').select(`*, tenant:profiles!tenant_occupancies_tenant_id_fkey(id, first_name, middle_name, last_name, email, phone, avatar_url), property:properties(id, title, images, price)`).eq('landlord_id', session.user.id).eq('status', 'active')
+    const { data } = await supabase.from('tenant_occupancies').select(`*, tenant:profiles!tenant_occupancies_tenant_id_fkey(id, first_name, middle_name, last_name, email, phone, avatar_url), property:properties(id, title, images, price, amenities)`).eq('landlord_id', session.user.id).eq('status', 'active')
     setOccupancies(data || [])
   }
 
@@ -1316,11 +1313,9 @@ export default function LandlordDashboard({ session, profile }) {
     loadAcceptedApplicationsForProperty(property.id);
     setPenaltyDetails('');
     setStartDate(new Date().toISOString().split('T')[0]); // Default to today
-    setContractMonths(12); // Default to 12 months
-    // End date will be auto-calculated by useEffect
+    setEndDate('');
     setWifiDueDay(''); // Reset
     setElectricityDueDay(''); // Reset
-    setContractFile(null); // Reset contract file
     setShowAssignModal(true)
   }
 
@@ -1335,16 +1330,6 @@ export default function LandlordDashboard({ session, profile }) {
       return
     }
 
-    if (!endDate) {
-      showToast.error("Please select a contract end date", { duration: 4000, transition: "bounceIn" });
-      return
-    }
-
-    if (!contractMonths || parseInt(contractMonths) < 3) {
-      showToast.error("Minimum contract duration is 3 months", { duration: 4000, transition: "bounceIn" });
-      return
-    }
-
     if (!wifiDueDay || parseInt(wifiDueDay) <= 0 || parseInt(wifiDueDay) > 31) {
       showToast.error("Please enter a valid Wifi Due Day (1-31)", { duration: 4000, transition: "bounceIn" });
       return
@@ -1355,45 +1340,10 @@ export default function LandlordDashboard({ session, profile }) {
       return
     }
 
-    if (!contractFile) {
-      showToast.error("Please upload a contract PDF file", { duration: 4000, transition: "bounceIn" });
-      return
-    }
-
     // Security deposit equals one month's rent
     const securityDepositAmount = selectedProperty.price || 0;
 
-    // Upload contract PDF
-    setUploadingContract(true);
-    let contractUrl = null;
-    try {
-      const fileExt = contractFile.name.split('.').pop();
-      const fileName = `${selectedProperty.id}_${candidate.tenant}_${Date.now()}.${fileExt}`;
-      const filePath = `contracts/${fileName}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('contracts')
-        .upload(filePath, contractFile, { cacheControl: '3600', upsert: false });
-
-      if (uploadError) {
-        console.error('Contract upload error:', uploadError);
-        showToast.error('Failed to upload contract. Please try again.', { duration: 4000, transition: "bounceIn" });
-        setUploadingContract(false);
-        return;
-      }
-
-      // Get public URL
-      const { data: urlData } = supabase.storage.from('contracts').getPublicUrl(filePath);
-      contractUrl = urlData?.publicUrl;
-    } catch (err) {
-      console.error('Contract upload exception:', err);
-      showToast.error('Failed to upload contract. Please try again.', { duration: 4000, transition: "bounceIn" });
-      setUploadingContract(false);
-      return;
-    }
-    setUploadingContract(false);
-
-    // UPDATED: Use selected startDate, endDate, security deposit, and contract URL
+    // Use selected startDate and move-in billing details.
     // Note: electricity_due_day is not stored - electricity reminders are always sent for 1st week of month
     const { data: newOccupancy, error } = await supabase.from('tenant_occupancies').insert({
       property_id: selectedProperty.id,
@@ -1401,12 +1351,10 @@ export default function LandlordDashboard({ session, profile }) {
       landlord_id: session.user.id,
       status: 'active',
       start_date: new Date(startDate).toISOString(),
-      contract_end_date: endDate,
       security_deposit: securityDepositAmount,
       security_deposit_used: 0,
       wifi_due_day: wifiDueDay ? parseInt(wifiDueDay) : null,
-      late_payment_fee: penaltyDetails ? parseFloat(penaltyDetails) : 0,
-      contract_url: contractUrl
+      late_payment_fee: penaltyDetails ? parseFloat(penaltyDetails) : 0
     }).select('id').single()
 
     if (error) {
@@ -1436,7 +1384,6 @@ export default function LandlordDashboard({ session, profile }) {
           propertyTitle: selectedProperty.title,
           propertyAddress: selectedProperty.address || '',
           startDate: startDate,
-          endDate: endDate,
           landlordName: `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim(),
           landlordPhone: profile?.phone || '',
           securityDeposit: securityDepositAmount,
@@ -1506,7 +1453,6 @@ export default function LandlordDashboard({ session, profile }) {
 
     showToast.success('Tenant assigned! Move-in payment bill sent automatically.', { duration: 4000, transition: "bounceIn" });
     setShowAssignModal(false);
-    setContractFile(null); // Reset contract file
     loadProperties();
     loadOccupancies();
   }
@@ -1547,15 +1493,52 @@ export default function LandlordDashboard({ session, profile }) {
     setEndContractReason('')
   }
 
+  function formatDateInputValue(dateObj) {
+    const year = dateObj.getFullYear()
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0')
+    const day = String(dateObj.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+
+  function buildDateFromDueDay(dayValue, fallbackDay = null) {
+    if (dayValue === null || dayValue === undefined || dayValue === '') {
+      if (fallbackDay === null || fallbackDay === undefined) return ''
+      dayValue = fallbackDay
+    }
+
+    const today = new Date()
+    const year = today.getFullYear()
+    const month = today.getMonth()
+    const lastDayOfMonth = new Date(year, month + 1, 0).getDate()
+    const parsedDay = Number(dayValue)
+    if (Number.isNaN(parsedDay)) return ''
+    const clampedDay = Math.min(Math.max(parsedDay, 1), lastDayOfMonth)
+    return formatDateInputValue(new Date(year, month, clampedDay))
+  }
+
+  function extractDayFromDateInput(dateValue) {
+    if (!dateValue) return NaN
+    const date = new Date(dateValue)
+    return Number.isNaN(date.getTime()) ? NaN : date.getDate()
+  }
+
   async function openFamilyModal(occupancy) {
+    const amenities = Array.isArray(occupancy?.property?.amenities) ? occupancy.property.amenities : []
+    const isWifiAvailable = amenities.includes('Wifi') || amenities.includes('WiFi') || amenities.includes('Free WiFi')
+    const isWifiFree = amenities.includes('Free WiFi')
+
     setFamilyModal({
       isOpen: true,
       occupancy,
       members: [],
+      paymentHistory: [],
       loading: true,
-      internetDueDay: occupancy?.wifi_due_day || 10,
-      waterDueDay: occupancy?.water_due_day || 7,
-      electricityDueDay: occupancy?.electricity_due_day || 7,
+      loadingPaymentHistory: true,
+      internetDueDate: buildDateFromDueDay(occupancy?.wifi_due_day),
+      waterDueDate: buildDateFromDueDay(occupancy?.water_due_day),
+      electricityDueDate: buildDateFromDueDay(occupancy?.electricity_due_day),
+      internetAvailable: isWifiAvailable,
+      internetIsFree: isWifiFree,
       savingDueDates: false
     })
 
@@ -1567,9 +1550,23 @@ export default function LandlordDashboard({ session, profile }) {
       return data.members || []
     })
 
-    const [membersResult] = await Promise.allSettled([membersPromise])
+    const paymentHistoryPromise = supabase
+      .from('payment_requests')
+      .select('*')
+      .eq('occupancy_id', occupancy.id)
+      .eq('status', 'paid')
+      .order('due_date', { ascending: true })
+      .then(({ data, error }) => {
+        if (error) {
+          throw error
+        }
+        return data || []
+      })
+
+    const [membersResult, paymentHistoryResult] = await Promise.allSettled([membersPromise, paymentHistoryPromise])
 
     let members = []
+    let paymentHistory = []
 
     if (membersResult.status === 'fulfilled') {
       members = membersResult.value
@@ -1578,10 +1575,19 @@ export default function LandlordDashboard({ session, profile }) {
       showToast.error('An error occurred fetching family members', { duration: 3000, transition: "bounceIn" })
     }
 
+    if (paymentHistoryResult.status === 'fulfilled') {
+      paymentHistory = paymentHistoryResult.value
+    } else {
+      console.error(paymentHistoryResult.reason)
+      showToast.error('An error occurred fetching payment history', { duration: 3000, transition: "bounceIn" })
+    }
+
     setFamilyModal(prev => ({
       ...prev,
       members,
-      loading: false
+      paymentHistory,
+      loading: false,
+      loadingPaymentHistory: false
     }))
   }
 
@@ -1590,10 +1596,14 @@ export default function LandlordDashboard({ session, profile }) {
       isOpen: false,
       occupancy: null,
       members: [],
+      paymentHistory: [],
       loading: false,
-      internetDueDay: '',
-      waterDueDay: '',
-      electricityDueDay: '',
+      loadingPaymentHistory: false,
+      internetDueDate: '',
+      waterDueDate: '',
+      electricityDueDate: '',
+      internetAvailable: false,
+      internetIsFree: false,
       savingDueDates: false
     })
   }
@@ -1607,22 +1617,61 @@ export default function LandlordDashboard({ session, profile }) {
     const occupancy = familyModal.occupancy
     if (!occupancy?.id) return
 
-    const internetDueDay = Number(familyModal.internetDueDay)
-    const waterDueDay = Number(familyModal.waterDueDay)
-    const electricityDueDay = Number(familyModal.electricityDueDay)
+    const currentAmenities = Array.isArray(occupancy?.property?.amenities) ? occupancy.property.amenities : []
+    const normalizedAmenities = [...new Set(currentAmenities.map(a => (a === 'WiFi' ? 'Wifi' : a)))]
+    const isWaterFree = normalizedAmenities.includes('Free Water')
+    const isElectricityFree = normalizedAmenities.includes('Free Electricity')
 
-    const invalidDay = [internetDueDay, waterDueDay, electricityDueDay].some(day => Number.isNaN(day) || day < 1 || day > 31)
-    if (invalidDay) {
-      showToast.error('Utility due days must be between 1 and 31.', { duration: 3500, transition: 'bounceIn' })
+    const internetDueDay = familyModal.internetAvailable && !familyModal.internetIsFree
+      ? extractDayFromDateInput(familyModal.internetDueDate)
+      : null
+    const waterDueDay = isWaterFree ? null : extractDayFromDateInput(familyModal.waterDueDate)
+    const electricityDueDay = isElectricityFree ? null : extractDayFromDateInput(familyModal.electricityDueDate)
+
+    if (familyModal.internetAvailable && !familyModal.internetIsFree && (Number.isNaN(internetDueDay) || internetDueDay < 1 || internetDueDay > 31)) {
+      showToast.error('Internet is available. Please set a valid due date (1-31).', { duration: 3500, transition: 'bounceIn' })
+      return
+    }
+
+    if (!isWaterFree && (Number.isNaN(waterDueDay) || waterDueDay < 1 || waterDueDay > 31)) {
+      showToast.error('Please set a valid water due date (1-31).', { duration: 3500, transition: 'bounceIn' })
+      return
+    }
+
+    if (!isElectricityFree && (Number.isNaN(electricityDueDay) || electricityDueDay < 1 || electricityDueDay > 31)) {
+      showToast.error('Please set a valid electricity due date (1-31).', { duration: 3500, transition: 'bounceIn' })
       return
     }
 
     setFamilyModal(prev => ({ ...prev, savingDueDates: true }))
     try {
+      let nextAmenities = [...normalizedAmenities]
+      const currentlyWifiAvailable = nextAmenities.includes('Wifi') || nextAmenities.includes('Free WiFi')
+
+      if (familyModal.internetAvailable && !currentlyWifiAvailable) {
+        nextAmenities.push('Wifi')
+      }
+      if (!familyModal.internetAvailable) {
+        nextAmenities = nextAmenities.filter(a => a !== 'Wifi' && a !== 'Free WiFi')
+      }
+
+      const amenitiesChanged = JSON.stringify(nextAmenities) !== JSON.stringify(normalizedAmenities)
+      if (amenitiesChanged && occupancy?.property_id) {
+        const { error: propertyError } = await supabase
+          .from('properties')
+          .update({ amenities: nextAmenities })
+          .eq('id', occupancy.property_id)
+
+        if (propertyError) {
+          showToast.error('Failed to update internet availability.', { duration: 3500, transition: 'bounceIn' })
+          return
+        }
+      }
+
       const { error: occError } = await supabase
         .from('tenant_occupancies')
         .update({
-          wifi_due_day: internetDueDay,
+          wifi_due_day: familyModal.internetAvailable && !familyModal.internetIsFree ? internetDueDay : null,
           water_due_day: waterDueDay,
           electricity_due_day: electricityDueDay
         })
@@ -1634,6 +1683,21 @@ export default function LandlordDashboard({ session, profile }) {
       }
 
       showToast.success('Utility due dates updated.', { duration: 3000, transition: 'bounceIn' })
+      setFamilyModal(prev => ({
+        ...prev,
+        occupancy: prev.occupancy
+          ? {
+            ...prev.occupancy,
+            wifi_due_day: familyModal.internetAvailable && !familyModal.internetIsFree ? internetDueDay : null,
+            water_due_day: waterDueDay,
+            electricity_due_day: electricityDueDay,
+            property: {
+              ...prev.occupancy.property,
+              amenities: nextAmenities
+            }
+          }
+          : prev.occupancy
+      }))
       await Promise.all([calculateBillingSchedule(), loadDashboardTasks(), loadOccupancies()])
     } catch (err) {
       console.error('Due date update failed:', err)
@@ -1646,6 +1710,19 @@ export default function LandlordDashboard({ session, profile }) {
   async function confirmEndContract() {
     const occupancy = endContractModal.occupancy
     if (!occupancy) return
+
+    async function cancelOpenMaintenanceRequests(propertyId) {
+      if (!propertyId) return
+      const { error: maintenanceCancelError } = await supabase
+        .from('maintenance_requests')
+        .update({ status: 'cancelled', resolved_at: new Date().toISOString() })
+        .eq('property_id', propertyId)
+        .in('status', ['pending', 'scheduled', 'in_progress'])
+
+      if (maintenanceCancelError) {
+        console.error('Error auto-cancelling maintenance requests:', maintenanceCancelError)
+      }
+    }
 
     if (!endContractDate) {
       showToast.error('Please select an end date', { duration: 3000, transition: "bounceIn" })
@@ -1661,7 +1738,7 @@ export default function LandlordDashboard({ session, profile }) {
       .from('payment_requests')
       .select('id')
       .eq('occupancy_id', occupancy.id)
-      .eq('status', 'pending')
+      .in('status', ['pending', 'pending_confirmation'])
       .limit(1)
 
     if (pendingError) {
@@ -1677,7 +1754,7 @@ export default function LandlordDashboard({ session, profile }) {
 
     const { error } = await supabase
       .from('tenant_occupancies')
-      .update({ status: 'ended', end_date: new Date(endContractDate).toISOString() })
+      .update({ status: 'ended' })
       .eq('id', occupancy.id)
 
     if (error) {
@@ -1700,6 +1777,8 @@ export default function LandlordDashboard({ session, profile }) {
       .eq('tenant', occupancy.tenant_id)
       .eq('property_id', occupancy.property_id)
       .eq('status', 'accepted')
+
+    await cancelOpenMaintenanceRequests(occupancy.property_id)
 
     // Notification Message
     const formattedDate = new Date(endContractDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
@@ -1774,7 +1853,7 @@ export default function LandlordDashboard({ session, profile }) {
       .from('payment_requests')
       .select('id')
       .eq('occupancy_id', occupancyId)
-      .eq('status', 'pending')
+      .in('status', ['pending', 'pending_confirmation'])
       .limit(1)
 
     if (pendingError) {
@@ -1790,7 +1869,6 @@ export default function LandlordDashboard({ session, profile }) {
       .from('tenant_occupancies')
       .update({
         status: 'ended',
-        end_date: new Date().toISOString(),
         end_request_status: 'approved'
       })
       .eq('id', occupancyId)
@@ -1815,6 +1893,16 @@ export default function LandlordDashboard({ session, profile }) {
       .eq('tenant', occupancy.tenant_id)
       .eq('property_id', occupancy.property_id)
       .eq('status', 'accepted')
+
+    const { error: maintenanceCancelError } = await supabase
+      .from('maintenance_requests')
+      .update({ status: 'cancelled', resolved_at: new Date().toISOString() })
+      .eq('property_id', occupancy.property_id)
+      .in('status', ['pending', 'scheduled', 'in_progress'])
+
+    if (maintenanceCancelError) {
+      console.error('Error auto-cancelling maintenance requests:', maintenanceCancelError)
+    }
 
     // Notification Message
     const message = `Your request to move out of "${occupancy.property?.title}" has been APPROVED. The contract is now ended.`
@@ -1896,7 +1984,7 @@ export default function LandlordDashboard({ session, profile }) {
     return dateMatches && tenantMatches
   })
 
-  const isBillingRowsScrollable = filteredBillingSchedule.length > 8
+  const isBillingRowsScrollable = filteredBillingSchedule.length > 10
   const nonOccupiedProperties = properties.filter((property) => property.status !== 'occupied')
 
 
@@ -2181,7 +2269,7 @@ export default function LandlordDashboard({ session, profile }) {
                     </div>
                   ) : (
                     <>
-                      <div className={`sm:hidden space-y-3 ${isBillingRowsScrollable ? 'max-h-[560px] overflow-y-auto pr-1 my-scrollbar' : ''}`}>
+                      <div className={`sm:hidden space-y-3 ${isBillingRowsScrollable ? 'max-h-[720px] overflow-y-auto pr-1 my-scrollbar' : ''}`}>
                         {filteredBillingSchedule.map(item => {
                           const autoSendDate = new Date(item.nextDueDate)
                           autoSendDate.setDate(autoSendDate.getDate() - 3)
@@ -2276,7 +2364,7 @@ export default function LandlordDashboard({ session, profile }) {
                       </div>
 
                       <div className="hidden sm:block overflow-x-auto -mx-3 sm:mx-0 px-3 sm:px-0">
-                        <div className={isBillingRowsScrollable ? 'max-h-[520px] overflow-y-auto pr-1 my-scrollbar' : ''}>
+                        <div className={isBillingRowsScrollable ? 'max-h-[780px] overflow-y-auto pr-1 my-scrollbar' : ''}>
                           <table className="w-full text-left">
                             <thead className="text-[11px] text-gray-400 uppercase tracking-widest font-bold border-b border-gray-100">
                               <tr>
@@ -2638,37 +2726,6 @@ export default function LandlordDashboard({ session, profile }) {
                   <input type="date" className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-black" value={startDate} min={new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0]} onChange={(e) => setStartDate(e.target.value)} />
                 </div>
 
-                {/* Contract Duration */}
-                <div className="mb-3">
-                  <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Contract Duration (Months) <span className="text-red-500">*</span></label>
-                  <input
-                    type="number"
-                    min="3"
-                    max="120"
-                    className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-black"
-                    placeholder="e.g. 12"
-                    value={contractMonths}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value) || 0;
-                      setContractMonths(val < 3 ? 3 : e.target.value);
-                    }}
-                  />
-                  <p className="text-[10px] text-gray-400 mt-1">Minimum 3 months. Enter how many months the contract will last.</p>
-                </div>
-
-                {/* Auto-calculated End Date */}
-                <div className="mb-3">
-                  <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">End Date (Auto-calculated)</label>
-                  <input
-                    type="date"
-                    className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-black bg-gray-50 cursor-not-allowed"
-                    value={endDate}
-                    disabled
-                    readOnly
-                  />
-                  <p className="text-[10px] text-gray-400 mt-1">Automatically calculated based on start date and contract duration</p>
-                </div>
-
                 {/* Move-in Payment Summary */}
                 <div className="mb-3 p-3 bg-emerald-50 rounded-xl border border-emerald-200">
                   <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-2">Move-in Payment Summary</p>
@@ -2689,27 +2746,6 @@ export default function LandlordDashboard({ session, profile }) {
                       <span className="font-bold text-emerald-800">Total Move-in:</span>
                       <span className="font-black text-emerald-900">₱{Number((selectedProperty?.price || 0) * 3).toLocaleString()}</span>
                     </div>
-                  </div>
-                </div>
-
-                {/* Contract PDF Upload */}
-                <div className="mb-3">
-                  <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1">Contract PDF <span className="text-red-500">*</span></label>
-                  <div className="border-2 border-dashed border-gray-200 rounded-lg p-3 text-center hover:border-gray-400 transition-colors">
-                    <input type="file" accept=".pdf" id="contractFile" className="hidden" onChange={(e) => setContractFile(e.target.files[0])} />
-                    <label htmlFor="contractFile" className="cursor-pointer">
-                      {contractFile ? (
-                        <div className="flex items-center justify-center gap-2">
-                          <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                          <span className="text-sm font-medium text-gray-700">{contractFile.name}</span>
-                          <button type="button" onClick={(e) => { e.preventDefault(); setContractFile(null); }} className="text-red-500 hover:text-red-700">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                          </button>
-                        </div>
-                      ) : (
-                        <p className="text-sm text-gray-500">Click to upload contract PDF</p>
-                      )}
-                    </label>
                   </div>
                 </div>
 
@@ -3276,7 +3312,7 @@ export default function LandlordDashboard({ session, profile }) {
                     <div className="p-4 bg-white">
                       <div className="flex items-center justify-between mb-3">
                         <p className="text-[11px] uppercase tracking-[0.14em] text-gray-500 font-bold">Utility Due Date Schedule</p>
-                        <span className="text-[10px] text-gray-400">Set day in month</span>
+                        <span className="text-[10px] text-gray-400">Choose a date</span>
                       </div>
 
                       <div className="space-y-2.5">
@@ -3284,57 +3320,79 @@ export default function LandlordDashboard({ session, profile }) {
                           <span className="w-2.5 h-2.5 rounded-full bg-gray-400"></span>
                           <div>
                             <p className="text-sm font-bold text-gray-900">Internet</p>
-                            <p className="text-[11px] text-gray-600">Wifi reminder due day</p>
+                            <p className="text-[11px] text-gray-600">Wifi reminder due date</p>
                           </div>
-                          <div className="flex items-center gap-1">
-                            <input
-                              type="number"
-                              min="1"
-                              max="31"
-                              className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right bg-white"
-                              value={familyModal.internetDueDay}
-                              onChange={(e) => setFamilyModal(prev => ({ ...prev, internetDueDay: e.target.value }))}
-                            />
-                            <span className="text-[11px] text-gray-500 font-semibold">day</span>
-                          </div>
+                          {(() => {
+                            if (!familyModal.internetAvailable) {
+                              return (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 border border-gray-300">N/A - Not Available</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setFamilyModal(prev => ({ ...prev, internetAvailable: true, internetIsFree: false }))}
+                                    className="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-black text-white hover:bg-gray-800 transition-all cursor-pointer"
+                                  >
+                                    Set Available
+                                  </button>
+                                </div>
+                              )
+                            }
+
+                            if (familyModal.internetIsFree) {
+                              return <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">Free</span>
+                            }
+
+                            return (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="date"
+                                  className="w-40 border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white"
+                                  value={familyModal.internetDueDate}
+                                  onChange={(e) => setFamilyModal(prev => ({ ...prev, internetDueDate: e.target.value }))}
+                                />
+                              </div>
+                            )
+                          })()}
                         </div>
 
                         <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5">
                           <span className="w-2.5 h-2.5 rounded-full bg-gray-400"></span>
                           <div>
                             <p className="text-sm font-bold text-gray-900">Water</p>
-                            <p className="text-[11px] text-gray-600">Water reminder due day</p>
+                            <p className="text-[11px] text-gray-600">Water reminder due date</p>
                           </div>
-                          <div className="flex items-center gap-1">
-                            <input
-                              type="number"
-                              min="1"
-                              max="31"
-                              className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right bg-white"
-                              value={familyModal.waterDueDay}
-                              onChange={(e) => setFamilyModal(prev => ({ ...prev, waterDueDay: e.target.value }))}
-                            />
-                            <span className="text-[11px] text-gray-500 font-semibold">day</span>
-                          </div>
+                          {(Array.isArray(familyModal.occupancy?.property?.amenities) && familyModal.occupancy.property.amenities.includes('Free Water')) ? (
+                            <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">Free</span>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="date"
+                                className="w-40 border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white"
+                                value={familyModal.waterDueDate}
+                                onChange={(e) => setFamilyModal(prev => ({ ...prev, waterDueDate: e.target.value }))}
+                              />
+                            </div>
+                          )}
                         </div>
 
                         <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5">
                           <span className="w-2.5 h-2.5 rounded-full bg-gray-400"></span>
                           <div>
                             <p className="text-sm font-bold text-gray-900">Electricity</p>
-                            <p className="text-[11px] text-gray-600">Electric reminder due day</p>
+                            <p className="text-[11px] text-gray-600">Electric reminder due date</p>
                           </div>
-                          <div className="flex items-center gap-1">
-                            <input
-                              type="number"
-                              min="1"
-                              max="31"
-                              className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right bg-white"
-                              value={familyModal.electricityDueDay}
-                              onChange={(e) => setFamilyModal(prev => ({ ...prev, electricityDueDay: e.target.value }))}
-                            />
-                            <span className="text-[11px] text-gray-500 font-semibold">day</span>
-                          </div>
+                          {(Array.isArray(familyModal.occupancy?.property?.amenities) && familyModal.occupancy.property.amenities.includes('Free Electricity')) ? (
+                            <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">Free</span>
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="date"
+                                className="w-40 border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white"
+                                value={familyModal.electricityDueDate}
+                                onChange={(e) => setFamilyModal(prev => ({ ...prev, electricityDueDate: e.target.value }))}
+                              />
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -3347,9 +3405,85 @@ export default function LandlordDashboard({ session, profile }) {
                       </button>
 
                       <p className="text-[11px] text-gray-500 mt-2">
-                        Saves the monthly due day for internet, water, and electricity reminders.
+                        Internet due date is required when Internet is available. Water and Electricity show Free when included in rent.
                       </p>
                     </div>
+                  </div>
+                </div>
+
+                {/* Rent Payment History (Visual Tracker) */}
+                <div>
+                  <div className="flex items-center justify-between mb-3 pl-1">
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Rent Payment History ({new Date().getFullYear()})</h3>
+                  </div>
+
+                  <div className="bg-gray-50 rounded-2xl p-5 border border-slate-100">
+                    <div className="flex justify-between items-center mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-white text-slate-600 rounded-lg shadow-sm">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                        </div>
+                        <p className="font-bold text-slate-900 text-sm">Monthly Tracker</p>
+                      </div>
+                    </div>
+
+                    {familyModal.loadingPaymentHistory ? (
+                      <div className="flex items-center justify-center py-8">
+                        <svg className="w-6 h-6 text-gray-500 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3 mb-2">
+                        {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((month, index) => {
+                          const currentYear = new Date().getFullYear()
+                          const isPaid = familyModal.paymentHistory.some(p => {
+                            if (!p.due_date || parseFloat(p.rent_amount) <= 0) return false
+
+                            const d = new Date(p.due_date)
+                            const pMonth = d.getMonth()
+                            const pYear = d.getFullYear()
+
+                            const advance = parseFloat(p.advance_amount || 0)
+                            const rent = parseFloat(p.rent_amount || 0)
+                            let monthsCovered = 1
+
+                            // Any rent bill with advance (including move-in) covers extra months.
+                            if (advance > 0 && rent > 0) {
+                              monthsCovered += Math.floor(advance / rent)
+                            }
+
+                            const targetAbsoluteMonth = currentYear * 12 + index
+                            const paymentStartAbsoluteMonth = pYear * 12 + pMonth
+                            const paymentEndAbsoluteMonth = paymentStartAbsoluteMonth + monthsCovered - 1
+
+                            return targetAbsoluteMonth >= paymentStartAbsoluteMonth && targetAbsoluteMonth <= paymentEndAbsoluteMonth
+                          })
+
+                          const isActiveMonth = new Date().getMonth() === index
+
+                          return (
+                            <div key={month} className="flex flex-col items-center justify-center p-2">
+                              <span className={`text-[10px] font-bold uppercase mb-1.5 ${isPaid ? 'text-black' : 'text-gray-400'}`}>
+                                {month}
+                              </span>
+
+                              {isPaid ? (
+                                <div className="w-5 h-5 rounded-full bg-green-300 text-black flex items-center justify-center shadow-sm">
+                                  <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                </div>
+                              ) : isActiveMonth ? (
+                                <div className="w-5 h-5 rounded-full border-2 border-black flex items-center justify-center">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-black"></div>
+                                </div>
+                              ) : (
+                                <div className="w-5 h-5 rounded-full border border-gray-200"></div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
 

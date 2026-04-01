@@ -14,15 +14,29 @@
 -- =============================================================
 -- Step 1: Store secrets in Supabase Vault (secure, not hardcoded)
 -- =============================================================
-SELECT vault.create_secret(
-    'https://tessynted.vercel.app',
-    'site_url'
-);
+DO $$
+BEGIN
+    PERFORM vault.create_secret(
+        'https://tessynted.vercel.app',
+        'site_url'
+    );
+EXCEPTION
+    WHEN unique_violation THEN
+        RAISE NOTICE 'Vault secret "site_url" already exists. Skipping create.';
+END
+$$;
 
-SELECT vault.create_secret(
-    'abalay_cron_secret_2026_xK9mP4qR7wN2',
-    'cron_secret'
-);
+DO $$
+BEGIN
+    PERFORM vault.create_secret(
+        'abalay_cron_secret_2026_xK9mP4qR7wN2',
+        'cron_secret'
+    );
+EXCEPTION
+    WHEN unique_violation THEN
+        RAISE NOTICE 'Vault secret "cron_secret" already exists. Skipping create.';
+END
+$$;
 
 -- =============================================================
 -- Step 2: Remove old cron jobs if they exist (safe to re-run)
@@ -55,11 +69,11 @@ SELECT cron.schedule(
 
 -- =============================================================
 -- CRON JOB 2: Process Scheduled Reminders Queue
--- Runs every 5 minutes to check for due booking & message reminders
+-- Runs every minute to check for due booking/message reminders and maintenance auto-start
 -- =============================================================
 SELECT cron.schedule(
     'process-scheduled-reminders',
-    '*/5 * * * *',  -- Every 5 minutes
+    '* * * * *',  -- Every minute
     $$
     SELECT "net"."http_post"(
         url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'site_url') || '/api/process-scheduled-reminders',

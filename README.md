@@ -1,182 +1,74 @@
 # Abalay Rent Web
 
-Abalay Rent Web is a full-stack rental platform built with Next.js and Supabase. It helps landlords manage listings, tenants, billing, and reminders while giving tenants a smooth way to discover properties, book viewings, pay rent, and communicate with landlords.
+Abalay Rent Web is a rental operations platform where tenants, landlords, and admins interact through one connected workflow.
 
-## What This Project Does
+## How The Project Works
 
-- Property browsing, filtering, and search
-- Booking and tenant assignment workflow
-- In-app messaging and notifications
-- Maintenance request tracking
-- Rent billing and reminder automation
-- Multi-gateway payments (Stripe, PayPal, PayMongo)
+## 1. Access and Role Routing
 
-## Main User Roles
+- Users sign in through Supabase Auth.
+- The app resolves each user profile and role (tenant, landlord, admin).
+- Pages and dashboard actions are rendered based on role permissions.
 
-- Tenant:
-	- Discover and compare properties
-	- Request bookings
-	- Track payments and notifications
-	- Submit maintenance requests
-- Landlord:
-	- Manage listings and tenant interactions
-	- Review bookings and requests
-	- Trigger reminders and monitor billing
-	- Track payment confirmations
-- Admin:
-	- Access operational/admin routes and maintenance tools
+## 2. Property Discovery and Selection
 
-## Tech Stack
+- Tenants browse property listings, filters, and details.
+- Property cards show media, pricing, amenities, and landlord information.
+- Tenants can save favorites and compare options before booking.
 
-- Next.js
-- React
-- Supabase (Auth + DB + realtime)
-- Tailwind CSS
-- Stripe / PayPal / PayMongo integrations
-- Brevo email integration
+## 3. Booking Lifecycle
 
-## Repository Structure
+- A tenant submits a booking request for a property and schedule slot.
+- The landlord reviews and accepts/rejects requests.
+- Accepted requests move into assignment flow, where the tenant is linked to an occupancy record.
 
-- `pages/` - routes and API endpoints
-- `components/` - reusable UI and dashboard modules
-- `lib/` - service helpers (supabase, email, sms, notifications, pdf)
-- `public/` - static assets
-- `styles/` - global styles
-- `scripts/` - utility scripts
-- `supabase/` and `supabase_migrations/` - Supabase config and SQL migration assets
+## 4. Occupancy and Stay Management
 
-## Prerequisites
+- Once assigned, a tenant gets an active occupancy.
+- Occupancy tracks due-day settings, status, security deposit usage, and relation to property and landlord.
+- Family-member relationships can be linked to a parent occupancy for shared access to payment and maintenance context.
 
-- Node.js 20+
-- npm 10+
-- Supabase project (URL, anon key, service role key)
+## 5. Billing and Payment Flow
 
-## Quick Start
+- Bills are created as payment requests tied to tenant and occupancy.
+- The system supports house rent, utility bills, advance, security deposit, and other charges.
+- Tenants pay through supported gateways (Stripe, PayPal, PayMongo) or marked cash paths.
+- Landlords confirm receipts where needed, and statuses update billing history.
 
-1. Install dependencies:
+## 6. Reminder and Automation Engine
 
-```bash
-npm install
-```
+- Scheduled reminders process due billing and follow-up notifications.
+- Background jobs run periodic checks for pending reminders and status transitions.
+- Automated notifications are generated for key events (new bill, confirmations, maintenance updates, etc.).
 
-2. Create `.env.local` in the project root.
+## 7. Maintenance Workflow
 
-3. Add environment variables listed below.
+- Tenants submit maintenance requests with issue details and proof files.
+- Landlords manage status transitions: pending, scheduled, in progress, completed, closed/cancelled.
+- Completion can log maintenance costs and either:
+  - deduct from security deposit, or
+  - create a payment bill for the tenant.
 
-4. Start development server:
+## 8. Messaging Rules
 
-```bash
-npm run dev
-```
+- Messaging is conversation-based and permission-scoped.
+- Tenant users can contact only landlord accounts linked to their current occupancy context.
+- Landlord users can contact tenants under their occupancies and can also contact other landlords.
 
-5. Open:
+## 9. Notification Channels
 
-`http://localhost:3000`
+- In-app notifications are stored and shown in user dashboards.
+- API-triggered outbound channels send email/SMS updates for important events.
+- Notification events include bookings, payments, maintenance actions, and account-related updates.
 
-## Environment Variables
+## 10. Admin Operations
 
-Add these keys in `.env.local`.
+- Admin pages expose management tools for users, properties, and operational workflows.
+- Admin actions include high-level monitoring, moderation/deletion flows, and bulk communications.
 
-### Required Core
+## 11. Core Architecture
 
-```bash
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
-NEXT_PUBLIC_SITE_URL=http://localhost:3000
-```
-
-### Scheduler / Secured Routes
-
-```bash
-CRON_SECRET=
-TEST_SECRET=
-```
-
-### Email (Brevo)
-
-```bash
-BREVO_API_KEY=
-```
-
-### SMS (Optional)
-
-```bash
-SMS_GATEWAY_URL=https://api.sms-gate.app
-SMS_GATEWAY_USERNAME=
-SMS_GATEWAY_PASSWORD=
-SMS_GATEWAY_DEVICE_ID=
-```
-
-### Stripe (Optional)
-
-```bash
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
-STRIPE_SECRET_KEY=
-```
-
-### PayPal (Optional)
-
-```bash
-PAYPAL_MODE=sandbox
-PAYPAL_CLIENT_ID=
-PAYPAL_CLIENT_SECRET=
-```
-
-### PayMongo (Optional)
-
-```bash
-PAYMONGO_SECRET_KEY=
-PAYMONGO_SECRET_KEY_LIVE=
-```
-
-### Deployment Helpers (Optional)
-
-```bash
-NEXT_PUBLIC_APP_URL=
-VERCEL_URL=
-```
-
-## Scripts
-
-```bash
-npm run dev
-npm run build
-npm run start
-npm run lint
-```
-
-## Database and SQL
-
-Schema updates and policy changes are tracked via SQL files in the root and `supabase_migrations/`.
-
-Examples:
-- `CREATE_BOOKINGS_TABLE.sql`
-- `ADD_DELETE_POLICIES.sql`
-- `FIX_PROFILES_RLS_FOR_CHAT.sql`
-
-Use a staging database first before applying changes to production.
-
-## Deployment
-
-Deploy as a standard Next.js app (for example, Vercel), then configure environment variables in your hosting provider.
-
-Security notes:
-- Never expose `SUPABASE_SERVICE_ROLE_KEY` to the browser.
-- Only variables prefixed with `NEXT_PUBLIC_` are safe for client-side usage.
-
-## Contributing
-
-1. Create a feature branch.
-2. Keep changes scoped and focused.
-3. Run lint and test affected flows.
-4. Open a pull request with clear summary and screenshots for UI changes.
-
-## Known Notes
-
-- Multiple payment paths exist; configure only the gateways you actively use.
-- Reminder and admin APIs rely on secret-protected routes.
-
-## License
-
-No explicit license file is currently included.
+- Frontend: Next.js pages and React components.
+- Backend: Next.js API routes for server-side workflows and integrations.
+- Data/Auth/Realtime: Supabase tables, auth, and subscriptions.
+- Shared service layer: helper modules for notifications, email, SMS, payment logic, and utilities.

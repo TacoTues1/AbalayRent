@@ -22,6 +22,7 @@ export default function BookingsPage() {
   const [showCancelModal, setShowCancelModal] = useState(false)
   const [bookingToCancel, setBookingToCancel] = useState(null)
   const [processingAction, setProcessingAction] = useState(null) // tracks which booking.id + action is in progress
+  const [hasActiveOccupancy, setHasActiveOccupancy] = useState(false)
 
   // Assign Tenant Modal States
   const [showAssignModal, setShowAssignModal] = useState(false)
@@ -30,32 +31,19 @@ export default function BookingsPage() {
   const [selectedPropertyId, setSelectedPropertyId] = useState('')
   const [penaltyDetails, setPenaltyDetails] = useState('')
   const [startDate, setStartDate] = useState('')
-  const [contractMonths, setContractMonths] = useState(12)
-  const [endDate, setEndDate] = useState('')
   const [wifiDueDay, setWifiDueDay] = useState('')
   const [wifiPayment, setWifiPayment] = useState('')
   const [waterDueDay, setWaterDueDay] = useState('')
   const [waterPayment, setWaterPayment] = useState('')
   const [electricityDueDay, setElectricityDueDay] = useState('')
   const [electricityPayment, setElectricityPayment] = useState('')
-  const [apartmentDueDay, setApartmentDueDay] = useState('')
+  const [contractPdf, setContractPdf] = useState(null)
 
   const [showWifiDayPicker, setShowWifiDayPicker] = useState(false)
   const [showWaterDayPicker, setShowWaterDayPicker] = useState(false)
   const [showElectricityDayPicker, setShowElectricityDayPicker] = useState(false)
 
-  const [contractFile, setContractFile] = useState(null)
-  const [uploadingContract, setUploadingContract] = useState(false)
   const [showAssignWarning, setShowAssignWarning] = useState(false)
-
-  // Auto-calculate contract end date
-  useEffect(() => {
-    if (startDate && contractMonths) {
-      const start = new Date(startDate)
-      start.setMonth(start.getMonth() + parseInt(contractMonths))
-      setEndDate(start.toISOString().split('T')[0])
-    }
-  }, [startDate, contractMonths])
 
   useEffect(() => {
     supabase.auth.getSession().then(result => {
@@ -90,10 +78,12 @@ export default function BookingsPage() {
   async function loadBookings() {
     setLoading(true)
     let bookingsData = []
+    let hasActiveOccupancyNow = false
 
     const userRole = (profile.role || '').toLowerCase();
 
     if (userRole === 'landlord') {
+      setHasActiveOccupancy(false)
       const { data: myProperties, error: propError } = await supabase
         .from('properties')
         .select('id, title, landlord')
@@ -124,6 +114,17 @@ export default function BookingsPage() {
 
     } else {
       // --- TENANT LOGIC ---
+
+      const { data: activeOccupancy } = await supabase
+        .from('tenant_occupancies')
+        .select('id')
+        .eq('tenant_id', session.user.id)
+        .in('status', ['active', 'pending_end'])
+        .limit(1)
+        .maybeSingle()
+
+      hasActiveOccupancyNow = !!activeOccupancy
+      setHasActiveOccupancy(hasActiveOccupancyNow)
 
       // 1. Fetch Existing Bookings
       let query = supabase
@@ -201,6 +202,7 @@ export default function BookingsPage() {
     const hasActiveBooking = bookingsData.some(b =>
       ['pending', 'pending_approval', 'approved', 'accepted'].includes(b.status)
     );
+    const hasBookingLimit = hasActiveBooking || hasActiveOccupancyNow
 
     const getSortWeight = (booking) => {
       const s = (booking.status || '').toLowerCase();
@@ -214,7 +216,7 @@ export default function BookingsPage() {
       // 2. Ready to Book & Limit Reached
       if (s === 'ready_to_book') {
         // If user is tenant and has an active booking elsewhere, this is "Limit Reached"
-        if (userRole !== 'landlord' && hasActiveBooking) return 3; // Limit Reached
+        if (userRole !== 'landlord' && hasBookingLimit) return 3; // Limit Reached
         return 2; // Ready to Book
       }
 
@@ -329,15 +331,6 @@ export default function BookingsPage() {
     setLoading(false)
   }
 
-  // Auto-calculate end date
-  useEffect(() => {
-    if (startDate && contractMonths) {
-      const start = new Date(startDate)
-      start.setMonth(start.getMonth() + parseInt(contractMonths))
-      setEndDate(start.toISOString().split('T')[0])
-    }
-  }, [startDate, contractMonths])
-
   // --- ACTIONS ---
   async function approveBooking(booking) {
     setProcessingAction(`approve-${booking.id}`)
@@ -445,16 +438,15 @@ export default function BookingsPage() {
   // --- ASSIGN TENANT FUNCTIONS ---
   async function openAssignTenantModal(booking) {
     setAssignBooking(booking)
+    setContractPdf(null)
     setPenaltyDetails('')
     setStartDate(new Date().toISOString().split('T')[0])
-    setContractMonths(12)
     setWifiDueDay('')
     setWifiPayment('')
     setWaterDueDay('')
     setWaterPayment('')
     setElectricityDueDay('')
     setElectricityPayment('')
-    setContractFile(null)
     setSelectedPropertyId('')
     setShowAssignWarning(false)
     setShowWifiDayPicker(false)
@@ -492,12 +484,6 @@ export default function BookingsPage() {
     if (!startDate) {
       showToast.error('Please select a start date', { duration: 4000, position: "top-center", transition: "bounceIn" }); return
     }
-    if (!endDate) {
-      showToast.error('Please select a contract end date', { duration: 4000, position: "top-center", transition: "bounceIn" }); return
-    }
-    if (!contractMonths || parseInt(contractMonths) < 3) {
-      showToast.error('Minimum contract duration is 3 months', { duration: 4000, position: "top-center", transition: "bounceIn" }); return
-    }
 
     const selectedProp = availableProperties.find(p => p.id === selectedPropertyId)
     if (!selectedProp) return
@@ -505,12 +491,13 @@ export default function BookingsPage() {
     const selectedAmenities = selectedProp.amenities || []
     const isWaterFree = selectedAmenities.includes('Free Water')
     const isElecFree = selectedAmenities.includes('Free Electricity')
+    const isWifiAvailable = selectedAmenities.includes('Wifi') || selectedAmenities.includes('WiFi') || selectedAmenities.includes('Free WiFi')
     const isWifiFree = selectedAmenities.includes('Free WiFi')
 
-    if (!isWifiFree && (!wifiDueDay || parseInt(wifiDueDay) <= 0 || parseInt(wifiDueDay) > 31)) {
+    if (isWifiAvailable && !isWifiFree && (!wifiDueDay || parseInt(wifiDueDay) <= 0 || parseInt(wifiDueDay) > 31)) {
       showToast.error('Please enter a valid Wifi Due Day (1-31)', { duration: 4000, position: "top-center", transition: "bounceIn" }); return
     }
-    if (!isWifiFree && (!wifiPayment || parseFloat(wifiPayment) < 0)) {
+    if (isWifiAvailable && !isWifiFree && (!wifiPayment || parseFloat(wifiPayment) < 0)) {
       showToast.error('Please enter a valid monthly payment for Wifi', { duration: 4000, position: "top-center", transition: "bounceIn" }); return
     }
     if (!isWaterFree && (!waterDueDay || parseInt(waterDueDay) <= 0 || parseInt(waterDueDay) > 31)) {
@@ -529,35 +516,31 @@ export default function BookingsPage() {
     if (!penaltyDetails || parseFloat(penaltyDetails) <= 0) {
       showToast.error('Please enter a Late Payment Fee', { duration: 4000, position: "top-center", transition: "bounceIn" }); return
     }
-    if (!contractFile) {
-      showToast.error('Please upload a contract PDF file', { duration: 4000, position: "top-center", transition: "bounceIn" }); return
-    }
 
     if (!showAssignWarning) {
       setShowAssignWarning(true)
       return
     }
 
-    const securityDepositAmount = selectedProp.price || 0
+    let contractPdfUrl = null
+    if (contractPdf) {
+      const fileName = `contract_${Date.now()}_${contractPdf.name}`
+      const { error: uploadError } = await supabase.storage
+        .from('payment-files')
+        .upload(fileName, contractPdf)
 
-    setUploadingContract(true)
-    let contractUrl = null
-    try {
-      const fileExt = contractFile.name.split('.').pop()
-      const fileName = `${selectedPropertyId}_${assignBooking.tenant}_${Date.now()}.${fileExt}`
-      const filePath = `contracts/${fileName}`
-      const { error: uploadError } = await supabase.storage.from('contracts').upload(filePath, contractFile, { cacheControl: '3600', upsert: false })
       if (uploadError) {
-        showToast.error('Failed to upload contract.', { duration: 4000, position: "top-center", transition: "bounceIn" })
-        setUploadingContract(false); return
+        showToast.error('Failed to upload contract PDF', { duration: 4000, position: "top-center", transition: "bounceIn" });
+        return
       }
-      const { data: urlData } = supabase.storage.from('contracts').getPublicUrl(filePath)
-      contractUrl = urlData?.publicUrl
-    } catch (err) {
-      showToast.error('Failed to upload contract.', { duration: 4000, position: "top-center", transition: "bounceIn" })
-      setUploadingContract(false); return
+
+      const { data: contractPublic } = supabase.storage
+        .from('payment-files')
+        .getPublicUrl(fileName)
+      contractPdfUrl = contractPublic?.publicUrl || null
     }
-    setUploadingContract(false)
+
+    const securityDepositAmount = selectedProp.price || 0
 
     const { data: newOccupancy, error } = await supabase.from('tenant_occupancies').insert({
       property_id: selectedPropertyId,
@@ -565,20 +548,16 @@ export default function BookingsPage() {
       landlord_id: session.user.id,
       status: 'active',
       start_date: new Date(startDate).toISOString(),
-      contract_end_date: endDate,
       security_deposit: securityDepositAmount,
       security_deposit_used: 0,
-      wifi_due_day: wifiDueDay ? parseInt(wifiDueDay) : null,
-      electricity_due_day: electricityDueDay ? parseInt(electricityDueDay) : null,
-      rent_due_day: apartmentDueDay ? parseInt(apartmentDueDay) : null,
-      // IMPORTANT: To save the other utility values (water_due_day, water_monthly_payment, electricity_monthly_payment, wifi_monthly_payment) 
-      // you must first add those columns to your "tenant_occupancies" table via Supabase Dashboard. 
-      // water_due_day: waterDueDay ? parseInt(waterDueDay) : null,
+      wifi_due_day: isWifiAvailable && !isWifiFree ? (wifiDueDay ? parseInt(wifiDueDay) : null) : null,
+      water_due_day: isWaterFree ? null : (waterDueDay ? parseInt(waterDueDay) : null),
+      electricity_due_day: isElecFree ? null : (electricityDueDay ? parseInt(electricityDueDay) : null),
+      // NOTE: Keep monthly utility payment fields commented unless matching DB columns exist.
       // water_monthly_payment: waterPayment ? parseFloat(waterPayment) : 0,
       // electricity_monthly_payment: electricityPayment ? parseFloat(electricityPayment) : 0,
       // wifi_monthly_payment: wifiPayment ? parseFloat(wifiPayment) : 0,
-      late_payment_fee: penaltyDetails ? parseFloat(penaltyDetails) : 0,
-      contract_url: contractUrl
+      late_payment_fee: penaltyDetails ? parseFloat(penaltyDetails) : 0
     }).select('id').single()
 
     if (error) {
@@ -591,10 +570,11 @@ export default function BookingsPage() {
 
     const rentAmount = selectedProp.price || 0
     const advanceAmount = selectedProp.price || 0
-    let message = `You have been assigned to occupy "${selectedProp.title}" from ${new Date(startDate).toLocaleDateString('en-US')} to ${new Date(endDate).toLocaleDateString('en-US')}. Security deposit: ₱${Number(securityDepositAmount).toLocaleString()}.`
+    let message = `You have been assigned to occupy "${selectedProp.title}" starting ${new Date(startDate).toLocaleDateString('en-US')}. Security deposit: ₱${Number(securityDepositAmount).toLocaleString()}.`
     if (penaltyDetails && parseFloat(penaltyDetails) > 0) message += ` Late payment fee: ₱${Number(penaltyDetails).toLocaleString()}`
+    if (contractPdfUrl) message += ` Contract PDF: ${contractPdfUrl}`
 
-    await createNotification({ recipient: assignBooking.tenant, actor: session.user.id, type: 'occupancy_assigned', message, link: '/maintenance' })
+    await createNotification({ recipient: assignBooking.tenant, actor: session.user.id, type: 'occupancy_assigned', message, link: '/maintenance', data: { contract_pdf_url: contractPdfUrl } })
 
     if (assignBooking.tenant_profile?.phone) {
       fetch('/api/send-sms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phoneNumber: assignBooking.tenant_profile.phone, message }) }).catch(err => console.error('SMS Error:', err))
@@ -614,11 +594,11 @@ export default function BookingsPage() {
         propertyTitle: selectedProp.title,
         propertyAddress: '',
         startDate: startDate,
-        endDate: endDate,
         landlordName: `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim(),
         landlordPhone: profile?.phone || '',
         securityDeposit: securityDepositAmount,
-        rentAmount: rentAmount
+        rentAmount: rentAmount,
+        contractPdfUrl
       })
     }).catch(err => console.error('Move-in notification error:', err))
 
@@ -639,7 +619,6 @@ export default function BookingsPage() {
 
     showToast.success('Tenant assigned! Move-in payment bill sent.', { duration: 4000, position: "top-center", transition: "bounceIn" })
     setShowAssignModal(false)
-    setContractFile(null)
     setShowAssignWarning(false)
     loadBookings()
   }
@@ -725,6 +704,11 @@ export default function BookingsPage() {
 
   // --- MODAL FUNCTIONS ---
   async function openBookingModal(booking) {
+    if (hasActiveOccupancy) {
+      showToast.error('Booking limit reached: You already have an active property.')
+      return
+    }
+
     if (!booking.property?.landlord) {
       showToast.error("Cannot schedule: Landlord info missing")
       return
@@ -767,6 +751,14 @@ export default function BookingsPage() {
       .in('status', ['pending', 'pending_approval', 'approved', 'accepted'])
       .maybeSingle()
 
+    const { data: activeOccupancy } = await supabase
+      .from('tenant_occupancies')
+      .select('id')
+      .eq('tenant_id', session.user.id)
+      .in('status', ['active', 'pending_end'])
+      .limit(1)
+      .maybeSingle()
+
     // If there is ANY active booking in the system:
     if (globalActive) {
       // If we are trying to create a NEW one (even for a different property) -> BLOCK IT
@@ -776,6 +768,12 @@ export default function BookingsPage() {
         setSubmittingBooking(false)
         return
       }
+    }
+
+    if (activeOccupancy) {
+      showToast.error('Booking limit reached: You already have an active property.', { duration: 4000, transition: "bounceIn" })
+      setSubmittingBooking(false)
+      return
     }
 
     const slot = availableTimeSlots.find(s => s.id === selectedTimeSlot)
@@ -942,6 +940,7 @@ export default function BookingsPage() {
   const hasGlobalActive = bookings.some(b =>
     ['pending', 'pending_approval', 'approved', 'accepted'].includes(b.status)
   )
+  const hasBookingBlocked = hasGlobalActive || hasActiveOccupancy
 
   return (
     <div className="min-h-[calc(100vh-64px)] bg-[#F3F4F5] p-4 md:p-8 font-sans">
@@ -1041,7 +1040,7 @@ export default function BookingsPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-3 mb-2">
                         <h3 className="text-lg font-bold text-gray-900">{booking.property?.title}</h3>
-                        {getStatusBadge(booking.status, hasGlobalActive)}
+                        {getStatusBadge(booking.status, hasBookingBlocked)}
                       </div>
 
                       <div className="flex flex-col gap-1 text-sm text-gray-500 mb-4">
@@ -1080,7 +1079,7 @@ export default function BookingsPage() {
                           </p>
                           <div className="flex items-center justify-end gap-2 text-sm text-gray-600">
                             <span>{timeInfo.time}</span>
-                            {isPast && statusLower !== 'completed' && <span className="text-red-500 font-bold text-xs bg-red-50 px-1.5 py-0.5 rounded">PAST</span>}
+                            {isPast && !['completed', 'cancelled', 'rejected'].includes(statusLower) && <span className="text-red-500 font-bold text-xs bg-red-50 px-1.5 py-0.5 rounded">PAST</span>}
                           </div>
                         </div>
                       )}
@@ -1147,28 +1146,28 @@ export default function BookingsPage() {
                           {/* Case 1: Ready to Book (Accepted Application) */}
                           {booking.status === 'ready_to_book' && (
                             <button
-                              onClick={() => !hasGlobalActive && openBookingModal(booking)}
-                              disabled={hasGlobalActive}
-                              className={`flex-1 md:flex-none px-4 py-2.5 text-xs font-bold rounded-lg transition-colors shadow-sm ${hasGlobalActive
+                              onClick={() => !hasBookingBlocked && openBookingModal(booking)}
+                              disabled={hasBookingBlocked}
+                              className={`flex-1 md:flex-none px-4 py-2.5 text-xs font-bold rounded-lg transition-colors shadow-sm ${hasBookingBlocked
                                 ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
                                 : 'bg-black text-white cursor-pointer hover:bg-gray-800'
                                 }`}
                             >
-                              {hasGlobalActive ? 'Booking Limit Reached' : 'Schedule Viewing'}
+                              {hasBookingBlocked ? 'Booking Limit Reached' : 'Schedule Viewing'}
                             </button>
                           )}
 
                           {/* Case 2: Rejected/Cancelled - "Book Again" */}
                           {['rejected', 'cancelled'].includes(statusLower) && (
                             <button
-                              onClick={() => !hasGlobalActive && openBookingModal(booking)}
-                              disabled={hasGlobalActive}
-                              className={`flex-1 md:flex-none px-4 py-2.5 text-xs font-bold rounded-lg transition-colors shadow-sm ${hasGlobalActive
+                              onClick={() => !hasBookingBlocked && openBookingModal(booking)}
+                              disabled={hasBookingBlocked}
+                              className={`flex-1 md:flex-none px-4 py-2.5 text-xs font-bold rounded-lg transition-colors shadow-sm ${hasBookingBlocked
                                 ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
                                 : 'bg-black text-white cursor-pointer hover:bg-gray-800'
                                 }`}
                             >
-                              {hasGlobalActive ? 'Booking Limit Reached' : 'Book Again'}
+                              {hasBookingBlocked ? 'Booking Limit Reached' : 'Book Again'}
                             </button>
                           )}
 
@@ -1412,24 +1411,6 @@ export default function BookingsPage() {
                   <input type="date" value={startDate} min={new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0]} onChange={e => setStartDate(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:border-black outline-none" />
                 </div>
 
-                {/* Contract Duration */}
-                <div className="mb-3">
-                  <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">Contract Duration (months) <span className="text-red-500">*</span></label>
-                  <input type="number" min="3" value={contractMonths} onChange={e => setContractMonths(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:border-black outline-none" placeholder="e.g. 12" />
-                  <p className="text-[10px] text-gray-400 mt-1">Minimum 3 months</p>
-                </div>
-
-                {/* End Date (auto) */}
-                <div className="mb-3">
-                  <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">End Date (Auto-calculated)</label>
-                  <input
-                    type="text"
-                    value={endDate ? new Date(endDate).toLocaleDateString('en-US') : ''}
-                    readOnly
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50 text-gray-500 cursor-not-allowed"
-                  />
-                </div>
-
                 {/* Move-in Payment Summary */}
                 {selectedPropertyId && (() => {
                   const sp = availableProperties.find(p => p.id === selectedPropertyId)
@@ -1448,33 +1429,20 @@ export default function BookingsPage() {
                   )
                 })()}
 
-                {/* Contract PDF Upload */}
-                <div className="mb-3">
-                  <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">Contract PDF <span className="text-red-500">*</span></label>
-                  <div className="border-2 border-dashed border-gray-200 rounded-xl p-4 text-center hover:border-gray-400 transition-colors bg-gray-50/50">
-                    <input type="file" accept=".pdf" id="contractFileBookings" className="hidden" onChange={(e) => setContractFile(e.target.files?.[0] || null)} />
-                    <label htmlFor="contractFileBookings" className="cursor-pointer w-full flex flex-col items-center">
-                      {contractFile ? (
-                        <div className="flex items-center justify-center gap-2 bg-green-50 text-green-700 px-3 py-2 rounded-lg border border-green-200">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                          <span className="text-sm font-bold">{contractFile.name}</span>
-                          <button type="button" onClick={(e) => { e.preventDefault(); setContractFile(null); }} className="text-red-500 hover:text-red-700 ml-2">✕</button>
-                        </div>
-                      ) : (
-                        <>
-                          <svg className="w-6 h-6 text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                          <p className="text-sm font-bold text-gray-600">Click to upload contract PDF</p>
-                          <p className="text-xs text-gray-400 mt-1">PDF files only</p>
-                        </>
-                      )}
-                    </label>
-                  </div>
-                </div>
-
                 {/* Late Payment Fee */}
                 <div className="mb-3">
                   <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">Late Payment Fee (₱) <span className="text-red-500">*</span></label>
                   <input type="number" min="0" step="any" value={penaltyDetails} onChange={e => setPenaltyDetails(e.target.value)} placeholder="e.g. 500" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:border-black outline-none" />
+                </div>
+
+                <div className="mb-3">
+                  <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">Contract PDF (Optional)</label>
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    onChange={e => setContractPdf(e.target.files?.[0] || null)}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:border-black outline-none file:mr-3 file:px-3 file:py-1.5 file:rounded-md file:border-0 file:bg-gray-100 file:text-gray-700 file:font-semibold"
+                  />
                 </div>
 
                 {/* Utility Reminders */}
@@ -1490,6 +1458,7 @@ export default function BookingsPage() {
                       const amenities = sp.amenities || [];
                       const isWaterFree = amenities.includes('Free Water');
                       const isElecFree = amenities.includes('Free Electricity');
+                      const isWifiAvailable = amenities.includes('Wifi') || amenities.includes('WiFi') || amenities.includes('Free WiFi');
                       const isWifiFree = amenities.includes('Free WiFi');
 
                       return (
@@ -1531,7 +1500,11 @@ export default function BookingsPage() {
                           )}
 
                           {/* WiFi */}
-                          {!isWifiFree ? (
+                          {!isWifiAvailable ? (
+                            <div>
+                              <span className="text-sm font-bold text-gray-700 flex items-center gap-1"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01M5.636 13.636a9 9 0 0112.728 0M1.393 10.393a14 14 0 0121.213 0" /></svg> WiFi Not Available</span>
+                            </div>
+                          ) : !isWifiFree ? (
                             <div className="grid grid-cols-2 gap-3">
                               <div>
                                 <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">WiFi Due Day <span className="text-red-500">*</span></label>
@@ -1555,14 +1528,13 @@ export default function BookingsPage() {
 
                 <button
                   onClick={confirmAssignTenant}
-                  disabled={uploadingContract || !selectedPropertyId}
+                  disabled={!selectedPropertyId}
                   className="w-full py-3 bg-black text-white text-sm font-bold rounded-xl cursor-pointer hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg"
                 >
-                  {uploadingContract ? 'Uploading...' : 'Assign Tenant'}
+                  Assign Tenant
                 </button>
               </>
             ) : (
-              /* Confirmation Warning */
               <div className="text-center">
                 <div className="w-14 h-14 bg-yellow-50 rounded-full flex items-center justify-center mx-auto mb-4 text-yellow-500">
                   <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
@@ -1574,7 +1546,7 @@ export default function BookingsPage() {
                 <p className="text-xs text-yellow-700 bg-yellow-50 p-2 rounded-lg border border-yellow-200 mb-5">This will mark the property as occupied and create a move-in payment bill.</p>
                 <div className="flex gap-3">
                   <button onClick={() => setShowAssignWarning(false)} className="flex-1 py-2.5 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 transition-colors cursor-pointer">Go Back</button>
-                  <button onClick={confirmAssignTenant} disabled={uploadingContract} className="flex-1 py-2.5 bg-black text-white font-bold rounded-xl hover:bg-gray-900 transition-colors shadow-lg cursor-pointer disabled:opacity-50">{uploadingContract ? 'Processing...' : 'Yes, Assign'}</button>
+                  <button onClick={confirmAssignTenant} className="flex-1 py-2.5 bg-black text-white font-bold rounded-xl hover:bg-gray-900 transition-colors shadow-lg cursor-pointer">Yes, Assign</button>
                 </div>
               </div>
             )}

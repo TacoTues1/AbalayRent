@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { normalizeImageForUpload } from '../lib/imageCompression'
 import { useRouter } from 'next/router'
 import { showToast } from 'nextjs-toast-notify'
 import Lottie from "lottie-react"
@@ -12,6 +13,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState({ type: '', text: '' })
+  const [landlordReviewStats, setLandlordReviewStats] = useState({ avg: 0, count: 0 })
   const lastUserId = useRef(null)
 
   // Profile State
@@ -182,6 +184,12 @@ export default function Settings() {
         })
       }
 
+      if (data.role === 'landlord') {
+        await loadLandlordReviewStats(userId)
+      } else {
+        setLandlordReviewStats({ avg: 0, count: 0 })
+      }
+
       // Load payment methods
       if (data.accepted_payments) {
         const ap = data.accepted_payments
@@ -200,6 +208,26 @@ export default function Settings() {
       await loadLoginRecords(userId)
     }
     setLoading(false)
+  }
+
+  async function loadLandlordReviewStats(landlordId) {
+    const { data, error } = await supabase
+      .from('landlord_ratings')
+      .select('rating')
+      .eq('landlord_id', landlordId)
+
+    if (error) {
+      console.error('Error loading landlord review stats:', error)
+      setLandlordReviewStats({ avg: 0, count: 0 })
+      return
+    }
+
+    const count = (data || []).length
+    const avg = count > 0
+      ? (data.reduce((sum, item) => sum + Number(item.rating || 0), 0) / count)
+      : 0
+
+    setLandlordReviewStats({ avg, count })
   }
 
   async function loadLoginRecords(userId) {
@@ -239,20 +267,16 @@ export default function Settings() {
       return
     }
 
-    if (file.size > 2 * 1024 * 1024) {
-      showToast.error('Image must be less than 2MB')
-      return
-    }
-
     setUploadingAvatar(true)
 
     try {
-      const fileExt = file.name.split('.').pop()
+      const uploadFile = await normalizeImageForUpload(file)
+      const fileExt = uploadFile.name.split('.').pop()
       const fileName = `${session.user.id}/avatar-${Date.now()}.${fileExt}`
 
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('avatars')
-        .upload(fileName, file, { upsert: true })
+        .upload(fileName, uploadFile, { upsert: true })
 
       if (uploadError) throw uploadError
 
@@ -273,7 +297,7 @@ export default function Settings() {
       })
     } catch (error) {
       console.error('Error uploading avatar:', error)
-      showToast.error('Failed to upload profile picture')
+      showToast.error(error?.message || 'Failed to upload profile picture')
     } finally {
       setUploadingAvatar(false)
     }
@@ -525,14 +549,14 @@ export default function Settings() {
     const file = event.target.files?.[0]
     if (!file) return
     if (!file.type.startsWith('image/')) { showToast.error('Please select an image'); return }
-    if (file.size > 3 * 1024 * 1024) { showToast.error('Image must be under 3MB'); return }
     const setUploading = type === 'gcash' ? setGcashQrUploading : setMayaQrUploading
     const setQrUrl = type === 'gcash' ? setGcashQrUrl : setMayaQrUrl
     setUploading(true)
     try {
-      const ext = file.name.split('.').pop()
+      const uploadFile = await normalizeImageForUpload(file)
+      const ext = uploadFile.name.split('.').pop()
       const fileName = `${session.user.id}/${type}-qr-${Date.now()}.${ext}`
-      const { error: uploadErr } = await supabase.storage.from('payment-files').upload(fileName, file, { upsert: true })
+      const { error: uploadErr } = await supabase.storage.from('payment-files').upload(fileName, uploadFile, { upsert: true })
       if (uploadErr) throw uploadErr
       const { data: { publicUrl } } = supabase.storage.from('payment-files').getPublicUrl(fileName)
       setQrUrl(publicUrl)
@@ -544,7 +568,7 @@ export default function Settings() {
       )
     } catch (err) {
       console.error('QR upload error:', err)
-      showToast.error('Failed to upload QR code')
+      showToast.error(err?.message || 'Failed to upload QR code')
     } finally { setUploading(false) }
   }
 
@@ -786,6 +810,13 @@ export default function Settings() {
                       <input ref={fileInputRef} type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
                     </div>
                     <div>
+                      {profile?.role === 'landlord' && (
+                        <div className="flex items-center gap-1 mb-0.5">
+                          <svg className="w-4 h-4 text-yellow-400 fill-yellow-400" viewBox="0 0 24 24"><path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>
+                          <span className="text-sm font-bold text-gray-900">{landlordReviewStats.avg.toFixed(1)}</span>
+                          <span className="text-xs text-gray-500">({landlordReviewStats.count} reviews)</span>
+                        </div>
+                      )}
                       <h3 className="font-bold text-lg">{firstName || 'User'} {lastName}</h3>
                       <p className="text-sm text-gray-500">{session.user.email}</p>
                     </div>

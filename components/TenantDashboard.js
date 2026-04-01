@@ -2,6 +2,7 @@ import Lottie from "lottie-react"
 import { useRouter } from 'next/router'
 import { showToast } from 'nextjs-toast-notify'
 import { useEffect, useState, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import loadingAnimation from "../assets/loading.json"
 import { createNotification } from '../lib/notifications'
 import { supabase } from '../lib/supabaseClient'
@@ -46,8 +47,6 @@ export default function TenantDashboard({ session, profile }) {
   const [currentImageIndex, setCurrentImageIndex] = useState({})
   const [activePropertyImageIndex, setActivePropertyImageIndex] = useState(0)
   const [tenantOccupancy, setTenantOccupancy] = useState(null)
-  const [lastPayment, setLastPayment] = useState(null)
-  const [tenantBalance, setTenantBalance] = useState(0)
   const [pendingPayments, setPendingPayments] = useState([])
   const [paymentHistory, setPaymentHistory] = useState([])
   const [familyPaidBills, setFamilyPaidBills] = useState([])
@@ -60,10 +59,10 @@ export default function TenantDashboard({ session, profile }) {
   const [reviewComment, setReviewComment] = useState('')
   const [submittingReview, setSubmittingReview] = useState(false)
   const [dontShowReviewAgain, setDontShowReviewAgain] = useState(false)
-  const [submittingRenewal, setSubmittingRenewal] = useState(false)
   const [cleanlinessRating, setCleanlinessRating] = useState(5)
   const [communicationRating, setCommunicationRating] = useState(5)
   const [locationRating, setLocationRating] = useState(5)
+  const [landlordRating, setLandlordRating] = useState(5)
   const [comparisonList, setComparisonList] = useState([])
   const [favorites, setFavorites] = useState([])
   const [propertyStats, setPropertyStats] = useState({})
@@ -73,10 +72,6 @@ export default function TenantDashboard({ session, profile }) {
   const [locationPermission, setLocationPermission] = useState('prompt')
   const [nextPaymentDate, setNextPaymentDate] = useState(null)
   const [lastRentPeriod, setLastRentPeriod] = useState(null)
-  const [showRenewalModal, setShowRenewalModal] = useState(false)
-  const [renewalRequested, setRenewalRequested] = useState(false)
-  const [daysUntilContractEnd, setDaysUntilContractEnd] = useState(null)
-  const [canRenew, setCanRenew] = useState(false)
   const [securityDepositPaid, setSecurityDepositPaid] = useState(false)
   const [familyMembers, setFamilyMembers] = useState([])
   const [showFamilyModal, setShowFamilyModal] = useState(false)
@@ -85,6 +80,8 @@ export default function TenantDashboard({ session, profile }) {
   const [familySearching, setFamilySearching] = useState(false)
   const [addingMember, setAddingMember] = useState(null)
   const [removingMember, setRemovingMember] = useState(null)
+  const [leavingFamily, setLeavingFamily] = useState(false)
+  const [showLeaveFamilyModal, setShowLeaveFamilyModal] = useState(false)
   const [confirmRemoveMember, setConfirmRemoveMember] = useState(null)
   const [loadingFamily, setLoadingFamily] = useState(false)
   const [isFamilyMember, setIsFamilyMember] = useState(false)
@@ -95,6 +92,9 @@ export default function TenantDashboard({ session, profile }) {
   const [showSearchDropdown, setShowSearchDropdown] = useState(false)
   const [isSearching, setIsSearching] = useState(false)
   const searchRef = useRef(null)
+  const realtimeSyncTimerRef = useRef(null)
+  const realtimeSyncRunningRef = useRef(false)
+  const realtimeSyncQueuedRef = useRef(false)
   const mostFavoriteId = Object.entries(propertyStats).filter(([_, s]) => (s.favorite_count || 0) > 0).sort((a, b) => b[1].favorite_count - a[1].favorite_count)?.[0]?.[0];
   const topRatedId = Object.entries(propertyStats).filter(([_, s]) => (s.review_count || 0) > 0).sort((a, b) => b[1].avg_rating - a[1].avg_rating || b[1].review_count - a[1].review_count)?.[0]?.[0];
 
@@ -109,6 +109,25 @@ export default function TenantDashboard({ session, profile }) {
       nextDate.setDate(nextDate.getDate() + 31)
     }
     return nextDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  }
+
+  function getUpcomingDueDateByDay(dayValue) {
+    const parsedDay = Number(dayValue)
+    if (!Number.isFinite(parsedDay) || parsedDay < 1 || parsedDay > 31) return 'Not set'
+
+    const today = new Date()
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+
+    const currentMonthLastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate()
+    let dueDate = new Date(today.getFullYear(), today.getMonth(), Math.min(parsedDay, currentMonthLastDay))
+
+    if (dueDate < todayStart) {
+      const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1)
+      const nextMonthLastDay = new Date(nextMonth.getFullYear(), nextMonth.getMonth() + 1, 0).getDate()
+      dueDate = new Date(nextMonth.getFullYear(), nextMonth.getMonth(), Math.min(parsedDay, nextMonthLastDay))
+    }
+
+    return dueDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
   }
   useEffect(() => {
     setMounted(true)
@@ -206,7 +225,6 @@ export default function TenantDashboard({ session, profile }) {
 
     const isOwnOccupancy = occupancy && occupancy.tenant_id === session.user.id
     if (isOwnOccupancy) {
-      await loadTenantBalance(occupancy)
       await loadPendingPayments(occupancy)
       await loadPaymentHistory(occupancy)
     } else {
@@ -227,6 +245,157 @@ export default function TenantDashboard({ session, profile }) {
     }
     setLoading(false)
   }
+
+  async function syncTenantDashboardRealtime() {
+    if (!session?.user?.id) return
+
+    const refreshedOccupancy = await loadTenantOccupancy()
+    const isOwnOccupancy = refreshedOccupancy && refreshedOccupancy.tenant_id === session.user.id
+
+    if (isOwnOccupancy) {
+      await Promise.all([
+        loadPendingPayments(refreshedOccupancy),
+        loadPaymentHistory(refreshedOccupancy)
+      ])
+    } else if (!refreshedOccupancy) {
+      setPendingPayments([])
+      setPaymentHistory([])
+      setFamilyPaidBills([])
+    }
+
+    if (refreshedOccupancy) {
+      await loadFamilyMembers(refreshedOccupancy)
+      calculateNextPayment(refreshedOccupancy.id, refreshedOccupancy)
+    } else {
+      setNextPaymentDate(null)
+      setLastRentPeriod(null)
+    }
+
+    await Promise.all([
+      loadProperties(),
+      loadPropertyStats(),
+      loadUserFavorites(),
+      loadFeaturedSections()
+    ])
+  }
+
+  useEffect(() => {
+    if (!session?.user?.id) return
+
+    const userId = session.user.id
+
+    const runRealtimeSync = async () => {
+      if (realtimeSyncRunningRef.current) {
+        realtimeSyncQueuedRef.current = true
+        return
+      }
+
+      realtimeSyncRunningRef.current = true
+      try {
+        await syncTenantDashboardRealtime()
+      } catch (err) {
+        console.error('Realtime tenant sync failed:', err)
+      } finally {
+        realtimeSyncRunningRef.current = false
+        if (realtimeSyncQueuedRef.current) {
+          realtimeSyncQueuedRef.current = false
+          runRealtimeSync()
+        }
+      }
+    }
+
+    const scheduleRealtimeSync = () => {
+      if (realtimeSyncTimerRef.current) return
+      realtimeSyncTimerRef.current = setTimeout(() => {
+        realtimeSyncTimerRef.current = null
+        runRealtimeSync()
+      }, 300)
+    }
+
+    const channels = []
+    const subscribeToChanges = (name, config) => {
+      const channel = supabase
+        .channel(name)
+        .on('postgres_changes', config, () => {
+          scheduleRealtimeSync()
+        })
+        .subscribe()
+      channels.push(channel)
+    }
+
+    subscribeToChanges(`tenant-occ-by-tenant-${userId}`, {
+      event: '*',
+      schema: 'public',
+      table: 'tenant_occupancies',
+      filter: `tenant_id=eq.${userId}`
+    })
+
+    subscribeToChanges(`tenant-payments-${userId}`, {
+      event: '*',
+      schema: 'public',
+      table: 'payment_requests',
+      filter: `tenant=eq.${userId}`
+    })
+
+    subscribeToChanges(`tenant-family-self-${userId}`, {
+      event: '*',
+      schema: 'public',
+      table: 'family_members',
+      filter: `member_id=eq.${userId}`
+    })
+
+    subscribeToChanges(`tenant-favorites-${userId}`, {
+      event: '*',
+      schema: 'public',
+      table: 'favorites',
+      filter: `user_id=eq.${userId}`
+    })
+
+    if (tenantOccupancy?.id) {
+      subscribeToChanges(`tenant-occ-current-${tenantOccupancy.id}`, {
+        event: '*',
+        schema: 'public',
+        table: 'tenant_occupancies',
+        filter: `id=eq.${tenantOccupancy.id}`
+      })
+
+      subscribeToChanges(`tenant-family-parent-${tenantOccupancy.id}`, {
+        event: '*',
+        schema: 'public',
+        table: 'family_members',
+        filter: `parent_occupancy_id=eq.${tenantOccupancy.id}`
+      })
+
+      subscribeToChanges(`tenant-payments-occ-${tenantOccupancy.id}`, {
+        event: '*',
+        schema: 'public',
+        table: 'payment_requests',
+        filter: `occupancy_id=eq.${tenantOccupancy.id}`
+      })
+    }
+
+    subscribeToChanges('tenant-properties-live', {
+      event: '*',
+      schema: 'public',
+      table: 'properties'
+    })
+
+    subscribeToChanges('tenant-property-stats-live', {
+      event: '*',
+      schema: 'public',
+      table: 'property_stats'
+    })
+
+    return () => {
+      if (realtimeSyncTimerRef.current) {
+        clearTimeout(realtimeSyncTimerRef.current)
+        realtimeSyncTimerRef.current = null
+      }
+      channels.forEach((channel) => {
+        supabase.removeChannel(channel)
+      })
+    }
+  }, [session?.user?.id, tenantOccupancy?.id])
 
   async function checkLastMonthDepositLogic(occupancy) {
     if (!occupancy.contract_end_date) return;
@@ -961,11 +1130,27 @@ export default function TenantDashboard({ session, profile }) {
       showToast.error("Failed to submit review")
       console.error(error)
     } else {
+      const { error: landlordRatingError } = await supabase
+        .from('landlord_ratings')
+        .upsert({
+          landlord_id: reviewTarget.landlord_id,
+          tenant_id: session.user.id,
+          occupancy_id: reviewTarget.id,
+          rating: landlordRating,
+          created_at: new Date().toISOString()
+        }, { onConflict: 'tenant_id,occupancy_id' })
+
+      if (landlordRatingError) {
+        console.error('Failed to submit landlord rating:', landlordRatingError)
+        showToast.error('Property review saved, but landlord rating failed.')
+      }
+
       showToast.success("Review submitted successfully!")
       setShowReviewModal(false)
       setCleanlinessRating(5)
       setCommunicationRating(5)
       setLocationRating(5)
+      setLandlordRating(5)
       setReviewComment('')
       setDontShowReviewAgain(false)
       checkPendingReviews(session.user.id)
@@ -1005,7 +1190,7 @@ export default function TenantDashboard({ session, profile }) {
   async function loadTenantOccupancy() {
     const { data: occupancy, error } = await supabase
       .from('tenant_occupancies')
-      .select(`*, property:properties(id, title, address, city, images, price, terms_conditions), landlord:profiles!tenant_occupancies_landlord_id_fkey(id, first_name, middle_name, last_name)`)
+      .select(`*, property:properties(id, title, address, city, images, price, terms_conditions, amenities), landlord:profiles!tenant_occupancies_landlord_id_fkey(id, first_name, middle_name, last_name)`)
       .eq('tenant_id', session.user.id)
       .in('status', ['active', 'pending_end'])
       .order('created_at', { ascending: false })
@@ -1030,53 +1215,29 @@ export default function TenantDashboard({ session, profile }) {
           if (fmData.pendingPayments) setPendingPayments(fmData.pendingPayments)
           if (fmData.paymentHistory) setPaymentHistory(fmData.paymentHistory)
           if (fmData.allPaidBills) setFamilyPaidBills(fmData.allPaidBills)
-          if (fmData.tenantBalance !== undefined) setTenantBalance(fmData.tenantBalance)
-          if (fmData.lastPaidBill !== undefined) setLastPayment(fmData.lastPaidBill)
           if (fmData.securityDepositPaid !== undefined) setSecurityDepositPaid(fmData.securityDepositPaid)
         }
       } catch (err) {
         console.error('Family member check error:', err)
       }
-      if (!finalOccupancy) return null
+      if (!finalOccupancy) {
+        setTenantOccupancy(null)
+        setIsFamilyMember(false)
+        setFamilyMembers([])
+        setPendingPayments([])
+        setPaymentHistory([])
+        setFamilyPaidBills([])
+        setSecurityDepositPaid(false)
+        return null
+      }
     }
 
     setTenantOccupancy(finalOccupancy)
 
     if (finalOccupancy) {
-      // Calculate days until contract end for renewal
-      if (finalOccupancy.contract_end_date) {
-        const endDate = new Date(finalOccupancy.contract_end_date)
-        const today = new Date()
-        today.setHours(0, 0, 0, 0)
-        endDate.setHours(0, 0, 0, 0)
-        const diffTime = endDate - today
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-        setDaysUntilContractEnd(diffDays)
-        // Can only renew if:
-        // 1. More than 29 days remaining (not in the last month block)
-        // 2. Not already requested
-        // 3. User is the primary tenant (not a family member)
-        setCanRenew(diffDays > 29 && !finalOccupancy.renewal_requested && finalOccupancy.tenant_id === session?.user?.id)
-        setRenewalRequested(finalOccupancy.renewal_requested || false)
-      }
-
       const isOwn = finalOccupancy.tenant_id === session.user.id
 
       if (isOwn) {
-        // Primary tenant: query via client
-        // Fetch the LAST PAID BILL from payment_requests for proper due_date display
-        const { data: lastPaidBill } = await supabase
-          .from('payment_requests')
-          .select('*')
-          .eq('occupancy_id', finalOccupancy.id)
-          .eq('status', 'paid')
-          .gt('rent_amount', 0) // Only rent bills
-          .order('due_date', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-
-        setLastPayment(lastPaidBill)
-
         // Check if security deposit was actually paid (look for any paid payment with security_deposit_amount > 0)
         const { data: paidSecurityDeposit } = await supabase
           .from('payment_requests')
@@ -1098,85 +1259,51 @@ export default function TenantDashboard({ session, profile }) {
     return finalOccupancy
   }
 
-  // --- RENEWAL MEETING DATE STATE ---
-  const [renewalMeetingDate, setRenewalMeetingDate] = useState('')
+  async function leaveFamilyGroup() {
+    if (!isFamilyMember) return
 
-  async function requestContractRenewal() {
-    if (!tenantOccupancy || !canRenew) return
-
-    if (!renewalMeetingDate) {
-      showToast.error("Please select a date to meet the landlord");
-      return;
-    }
-
-    setSubmittingRenewal(true)
-
-    const { error } = await supabase
-      .from('tenant_occupancies')
-      .update({
-        renewal_requested: true,
-        renewal_requested_at: new Date().toISOString(),
-        renewal_status: 'pending',
-        renewal_meeting_date: renewalMeetingDate
-      })
-      .eq('id', tenantOccupancy.id)
-
-    setSubmittingRenewal(false)
-
-    if (error) {
-      showToast.error('Failed to request renewal')
-      return
-    }
-
-    // Notify landlord (Internal)
-    await createNotification({
-      recipient: tenantOccupancy.landlord_id,
-      actor: session.user.id,
-      type: 'contract_renewal_request',
-      message: `${profile.first_name} ${profile.last_name} has requested to renew contract. PROPOSED SIGNING DATE: ${new Date(renewalMeetingDate).toLocaleDateString()}.`,
-      link: '/dashboard'
-    })
-
-    showToast.success('Renewal request submitted!')
-
-    // Notify landlord (SMS & Email)
+    setLeavingFamily(true)
     try {
-      await fetch('/api/notify', {
+      const res = await fetch('/api/family-members', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          type: 'renewal_request',
-          recordId: tenantOccupancy.id, // REQUIRED by notify.js
-          landlordId: tenantOccupancy.landlord_id,
-          tenantName: `${profile.first_name} ${profile.last_name}`.trim(),
-          propertyTitle: tenantOccupancy.property?.title,
-          proposedDate: renewalMeetingDate
+          action: 'leave',
+          member_id: session.user.id
         })
       })
+
+      let data = {}
+      try {
+        data = await res.json()
+      } catch (_parseErr) {
+        data = {}
+      }
+
+      if (!res.ok || !data.success) {
+        showToast.error(data.error || `Failed to leave family group (Error ${res.status})`)
+        setLeavingFamily(false)
+        return
+      }
+
+      showToast.success('You have left the family group')
+      setShowLeaveFamilyModal(false)
+      await loadTenantOccupancy()
+      await loadProperties()
     } catch (err) {
-      console.error('Failed to send renewal notification:', err)
+      showToast.error('Failed to leave family group')
     }
-    setRenewalRequested(true)
-    setCanRenew(false)
-    setShowRenewalModal(false)
-    loadTenantOccupancy()
+    setLeavingFamily(false)
   }
 
-  async function loadTenantBalance(occupancy) {
-    const occupancyId = occupancy?.id
-    const tenantId = occupancy?.tenant_id || session?.user?.id
-    if (!session || !occupancyId) {
-      setTenantBalance(0)
-      return
-    }
-    // Try to get balance for current occupancy first
-    const { data } = await supabase.from('tenant_balances').select('amount').eq('tenant_id', tenantId).eq('occupancy_id', occupancyId).maybeSingle()
-    if (data) {
-      setTenantBalance(data.amount || 0)
-    } else {
-      // Fallback: no occupancy-specific balance, start fresh
-      setTenantBalance(0)
-    }
+  function openLeaveFamilyModal() {
+    if (!isFamilyMember || leavingFamily) return
+    setShowLeaveFamilyModal(true)
+  }
+
+  function closeLeaveFamilyModal() {
+    if (leavingFamily) return
+    setShowLeaveFamilyModal(false)
   }
 
   async function detectUserLocation() {
@@ -1291,7 +1418,7 @@ export default function TenantDashboard({ session, profile }) {
       .from('payment_requests')
       .select('id')
       .eq('occupancy_id', tenantOccupancy.id)
-      .eq('status', 'pending')
+      .in('status', ['pending', 'pending_confirmation'])
       .limit(1)
 
     if (pendingError) {
@@ -1317,11 +1444,12 @@ export default function TenantDashboard({ session, profile }) {
   }
 
   // ─── FAMILY MEMBERS FUNCTIONS ───
-  async function loadFamilyMembers() {
-    if (!tenantOccupancy) return
+  async function loadFamilyMembers(occupancyOverride = null) {
+    const occupancySource = occupancyOverride || tenantOccupancy
+    if (!occupancySource) return
     // Only load family for the primary tenant (not family members themselves)
     // But if they are a family member, we use their parent_occupancy_id
-    const occId = tenantOccupancy.is_family_member ? tenantOccupancy.parent_occupancy_id : tenantOccupancy.id
+    const occId = occupancySource.is_family_member ? occupancySource.parent_occupancy_id : occupancySource.id
     if (!occId) return
     setLoadingFamily(true)
     try {
@@ -1374,10 +1502,7 @@ export default function TenantDashboard({ session, profile }) {
 
     function handleFamilyModalKeydown(event) {
       if (event.key === 'Escape') {
-        setShowFamilyModal(false)
-        setFamilySearchQuery('')
-        setFamilySearchResults([])
-        setFamilySearching(false)
+        closeFamilyModal()
       }
     }
 
@@ -1395,11 +1520,33 @@ export default function TenantDashboard({ session, profile }) {
     setShowFamilyModal(true)
   }
 
-  function closeFamilyModal() {
+  function closeFamilyModal(options = {}) {
+    const { force = false } = options
+    const hasDraft = familySearchQuery.trim().length > 0
+
+    if (!force && hasDraft && typeof window !== 'undefined') {
+      const confirmed = window.confirm('Leave this modal? Your family member search input will be discarded.')
+      if (!confirmed) return
+    }
+
     setShowFamilyModal(false)
     setFamilySearchQuery('')
     setFamilySearchResults([])
     setFamilySearching(false)
+  }
+
+  function closeEndRequestModal(options = {}) {
+    const { force = false } = options
+    const hasDraft = Boolean(endRequestDate || endRequestReason.trim())
+
+    if (!force && hasDraft && typeof window !== 'undefined') {
+      const confirmed = window.confirm('Leave this modal? Your leave request details will be discarded.')
+      if (!confirmed) return
+    }
+
+    setShowEndRequestModal(false)
+    setEndRequestDate('')
+    setEndRequestReason('')
   }
 
   async function addFamilyMember(memberId) {
@@ -1565,6 +1712,16 @@ export default function TenantDashboard({ session, profile }) {
     )
   }
 
+  const propertyAmenities = Array.isArray(tenantOccupancy?.property?.amenities) ? tenantOccupancy.property.amenities : []
+  const normalizedAmenities = propertyAmenities.map(item => String(item).toLowerCase())
+  const isWaterFree = normalizedAmenities.includes('free water')
+  const isElectricityFree = normalizedAmenities.includes('free electricity')
+  const isInternetAvailable = normalizedAmenities.includes('wifi') || normalizedAmenities.includes('wi-fi') || normalizedAmenities.includes('free wifi') || normalizedAmenities.includes('free wi-fi') || normalizedAmenities.includes('internet')
+  const isInternetFree = normalizedAmenities.includes('free wifi') || normalizedAmenities.includes('free wi-fi') || normalizedAmenities.includes('free internet')
+  const nextInternetDueDate = isInternetFree ? 'Free' : getUpcomingDueDateByDay(tenantOccupancy?.wifi_due_day)
+  const nextWaterDueDate = isWaterFree ? 'Free' : getUpcomingDueDateByDay(tenantOccupancy?.water_due_day)
+  const nextElectricityDueDate = isElectricityFree ? 'Free' : getUpcomingDueDateByDay(tenantOccupancy?.electricity_due_day)
+
   return (
     <div className="min-h-screen bg-[#F5F5F5] flex flex-col scroll-smooth">
       <div className="max-w-[1800px] w-full mx-auto mt-0 px-4 sm:px-6 lg:px-8 pt-2 relative z-10 flex-1">
@@ -1613,37 +1770,27 @@ export default function TenantDashboard({ session, profile }) {
                           <span className="line-clamp-2 leading-snug">{tenantOccupancy.property?.city}, {tenantOccupancy.property?.address}</span>
                         </p>
                         <span className={`self-start px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide border ${tenantOccupancy.status === 'pending_end' ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-[#E3F6ED] text-[#1E9A5B] border-[#1E9A5B]/20'} shadow-sm`}>
-                          {tenantOccupancy.status === 'pending_end' ? 'Move-out Pending' : 'Active Lease'}
+                          {tenantOccupancy.status === 'pending_end' ? 'Move-out Pending' : 'Active Property'}
                         </span>
                       </div>
                     </div>
 
-                    {/* Expiration date */}
+                    {/* Rental start date */}
                     <div className="bg-gray-50 rounded-xl p-3 border border-gray-100 flex flex-col gap-1.5 mt-1">
                       <div className="flex justify-between items-center">
-                        <span className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Lease Start</span>
+                        <span className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Start Date</span>
                         <span className="text-gray-900 text-xs font-bold font-mono">
                           {new Date(tenantOccupancy.start_date || tenantOccupancy.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}
                         </span>
                       </div>
-                      {tenantOccupancy.contract_end_date && (
-                        <div className="flex justify-between items-center border-t border-gray-200 pt-1.5">
-                          <span className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Lease Ends</span>
-                          <span className="text-gray-900 text-xs font-bold font-mono">
-                            {new Date(tenantOccupancy.contract_end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}
-                          </span>
-                        </div>
-                      )}
                     </div>
 
                     {/* Buttons Grid */}
                     <div className="flex flex-col gap-2 mt-1">
                       <div className="grid grid-cols-2 gap-2">
                         <button onClick={() => router.push(`/properties/${tenantOccupancy.property?.id}`)} className="py-2.5 text-xs bg-white text-gray-800 font-bold rounded-xl border border-gray-200 hover:bg-gray-50 transition-colors shadow-sm cursor-pointer items-center justify-center flex text-center">Details</button>
-                        {tenantOccupancy?.contract_url && <a href={tenantOccupancy.contract_url} target="_blank" rel="noopener noreferrer" className="py-2.5 text-xs bg-white text-gray-800 font-bold rounded-xl border border-gray-200 hover:bg-gray-50 shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-1.5"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> Contract</a>}
                         {tenantOccupancy.property?.terms_conditions && <a href={tenantOccupancy.property.terms_conditions.startsWith('http') ? tenantOccupancy.property.terms_conditions : '/terms'} target="_blank" rel="noopener noreferrer" className="col-span-1 py-2.5 text-xs bg-white text-gray-800 font-bold rounded-xl border border-gray-200 hover:bg-gray-50 shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap"><svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> Terms</a>}
-                        {canRenew && !isFamilyMember && <button onClick={() => setShowRenewalModal(true)} className="col-span-1 py-2.5 text-xs bg-[#3B82F6] text-white font-bold rounded-xl hover:bg-blue-600 border border-transparent shadow-sm shadow-blue-500/30 transition-colors cursor-pointer whitespace-nowrap text-center">Renew</button>}
-                        {!isFamilyMember && <button onClick={() => setShowEndRequestModal(true)} className="col-span-1 py-2.5 text-[11px] uppercase tracking-wider bg-white text-red-500 font-bold rounded-xl border border-red-100 hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors cursor-pointer text-center">End Contract</button>}
+                        {!isFamilyMember && <button onClick={() => setShowEndRequestModal(true)} className="col-span-1 py-2.5 text-[11px] uppercase tracking-wider bg-white text-red-500 font-bold rounded-xl border border-red-100 hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-colors cursor-pointer text-center">End Stay</button>}
                       </div>
                     </div>
                   </div>
@@ -1678,15 +1825,10 @@ export default function TenantDashboard({ session, profile }) {
                       <p className="text-xs text-gray-400 mt-1">Required: ₱{Number(tenantOccupancy?.security_deposit || 0).toLocaleString()}</p>
                     </div>
                   )}
-                  {securityDepositPaid && daysUntilContractEnd !== null && daysUntilContractEnd <= 30 && daysUntilContractEnd > 0 && (
-                    <p className="text-[10px] text-gray-600 mt-3 bg-gray-100 p-2 rounded-lg">
-                      💡 Your security deposit can be used as payment in your last month if unused.
-                    </p>
-                  )}
                 </div>
 
                 {/* Family Members Section */}
-                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm">
+                <div className="bg-white rounded-3xl p-5 border border-gray-200 shadow-sm mb-6">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                       <div className="w-8 h-8 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center">
@@ -1697,14 +1839,25 @@ export default function TenantDashboard({ session, profile }) {
                         <p className="text-[10px] text-gray-400">{familyMembers.length + 1}/5 members</p>
                       </div>
                     </div>
-                    {!isFamilyMember && familyMembers.length < 4 && (
-                      <button
-                        onClick={openFamilyModal}
-                        className="text-[10px] font-bold text-black-600 bg-gray-50 hover:bg-gray-100 px-3 py-1.5 rounded-full transition-colors cursor-pointer border border-gray-200"
-                      >
-                        + Add Member
-                      </button>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {!isFamilyMember && familyMembers.length < 4 && (
+                        <button
+                          onClick={openFamilyModal}
+                          className="text-[10px] font-bold text-black-600 bg-gray-50 hover:bg-gray-100 px-3 py-1.5 rounded-full transition-colors cursor-pointer border border-gray-200"
+                        >
+                          + Add Member
+                        </button>
+                      )}
+                      {isFamilyMember && (
+                        <button
+                          onClick={openLeaveFamilyModal}
+                          disabled={leavingFamily}
+                          className="text-[10px] font-bold text-red-600 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-full transition-colors cursor-pointer border border-red-200 disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          {leavingFamily ? 'Leaving...' : 'Leave Family'}
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {/* Primary Tenant (Mother) */}
@@ -1740,7 +1893,7 @@ export default function TenantDashboard({ session, profile }) {
                   ) : familyMembers.length > 0 ? (
                     <div className="space-y-1.5">
                       {familyMembers.map((fm) => (
-                        <div key={fm.id} className="p-2.5 bg-gray-50 rounded-xl border border-gray-100 hover:border-gray-200 transition-all group">
+                        <div key={fm.id} className="p-2.5 bg-gray-50 rounded-xl border border-gray-100 hover:border-gray-200 transition-all">
                           <div className="flex items-center gap-2.5">
                             <div className="w-8 h-8 rounded-full bg-gray-200 text-gray-700 flex items-center justify-center font-bold text-[10px] shadow-sm">
                               {fm.member_profile?.avatar_url ? (
@@ -1775,10 +1928,10 @@ export default function TenantDashboard({ session, profile }) {
                               ) : (
                                 <button
                                   onClick={() => setConfirmRemoveMember(fm.id)}
-                                  className="opacity-0 group-hover:opacity-100 text-[10px] font-bold text-red-500 hover:text-red-700 transition-all cursor-pointer p-1"
+                                  className="text-[10px] font-bold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-md transition-all cursor-pointer px-2 py-1"
                                   title="Remove family member"
                                 >
-                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                  Kick
                                 </button>
                               )
                             )}
@@ -1796,14 +1949,14 @@ export default function TenantDashboard({ session, profile }) {
                     <div className="mt-3 p-2.5 bg-amber-50 border border-amber-200 rounded-xl">
                       <p className="text-[10px] text-amber-700 font-medium flex items-center gap-1">
                         <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                        You are a family member. Only the primary tenant can manage family members and end the contract.
+                        You are a family member. Only the primary tenant can manage members, but you can leave the family group anytime.
                       </p>
                     </div>
                   )}
                 </div>
 
                 {/* Add Family Member Modal */}
-                {showFamilyModal && (
+                {showFamilyModal && typeof window !== 'undefined' && createPortal(
                   <div
                     className="fixed inset-0 z-[9999] flex items-start justify-center overflow-y-auto px-4 py-5 sm:items-center sm:px-6 sm:py-8"
                     onClick={closeFamilyModal}
@@ -1921,11 +2074,12 @@ export default function TenantDashboard({ session, profile }) {
                       <div className="border-t border-gray-100 bg-white px-5 py-4 sm:px-6 sm:py-5">
                         <p className="text-center text-[13px] font-medium leading-[1.6] text-[#64748b]">
                           Note: Family members will have access to payments and maintenance for this property.
-                          They cannot end the contract, renew contract.
+                          They cannot submit end-of-stay requests.
                         </p>
                       </div>
                     </div>
-                  </div>
+                  </div>,
+                  document.body
                 )}
 
               </div>
@@ -2020,24 +2174,11 @@ export default function TenantDashboard({ session, profile }) {
                   <p className="text-sm text-slate-500 font-medium">Note: Please ensure all electricity and wifi bills are paid before the due date. The landlord is not liable for late payments.</p>
 
 
-                  <div className="border-t border-gray-100 pt-6">
+                  <div className="border-t border-gray-100 pt-6 pb-4 mb-6">
                     <h4 className="font-bold text-slate-900 text-sm mb-4">Payment Overview</h4>
 
-                    {/* 2. Next Due Date & Last Payment Date Row */}
+                    {/* 2. Next Due Date */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-
-                      {/* Advance Payment / Credit Balance Card - Always visible */}
-                      <div className={`col-span-1 md:col-span-2 rounded-2xl p-4 border flex items-center justify-between ${tenantBalance > 0 ? 'bg-gray-50/50 border-black-100' : 'bg-gray-50/50 border-gray-100'}`}>
-                        <div>
-                          <p className={`text-xs font-bold uppercase tracking-wider mb-1 ${tenantBalance > 0 ? 'text-black-600' : 'text-gray-500'}`}>Credit Balance</p>
-                          <p className={`text-sm font-medium ${tenantBalance > 0 ? 'text-black-700' : 'text-gray-500'}`}>
-                            {tenantBalance > 0 ? 'Available for next bill' : 'No credit available'}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className={`text-2xl font-black ${tenantBalance > 0 ? 'text-black-700' : 'text-gray-400'}`}>₱{tenantBalance.toLocaleString()}</p>
-                        </div>
-                      </div>
 
                       {/* Next Due Date */}
                       <div className="bg-gray-50/50 rounded-2xl p-4 border border-indigo-50">
@@ -2057,180 +2198,109 @@ export default function TenantDashboard({ session, profile }) {
                             {tenantOccupancy?.property?.price && !String(nextPaymentDate).includes('All Paid') && (
                               <div className="mt-0.5">
                                 <p className="text-xs text-black-500 font-semibold">
-                                  Expected Bill: ₱{Math.max(0, Number(tenantOccupancy.property.price) - (tenantBalance || 0)).toLocaleString()}
+                                  Expected Bill: ₱{Number(tenantOccupancy.property.price).toLocaleString()}
                                 </p>
-                                {tenantBalance > 0 && (
-                                  <p className="text-[10px] text-green-600 font-medium">
-                                    (₱{Number(tenantOccupancy.property.price).toLocaleString()} - ₱{tenantBalance.toLocaleString()} credit)
-                                  </p>
-                                )}
                               </div>
                             )}
                             {tenantOccupancy?.property?.price && String(nextPaymentDate).includes('All Paid') && (
                               <p className="text-xs text-green-600 font-semibold mt-0.5">All bills settled!</p>
                             )}
-                            {/* Contract Expiry Warning */}
-                            {tenantOccupancy?.contract_end_date && (() => {
-                              const endDate = new Date(tenantOccupancy.contract_end_date);
-                              const today = new Date();
-                              const daysUntilEnd = Math.floor((endDate - today) / (1000 * 60 * 60 * 24));
-
-                              // Check if we are in the renewal window (at least 29 days before end)
-                              if (daysUntilEnd > 29) {
-                                return (
-                                  <div className="mt-1">
-                                    <p className="text-xs text-orange-600 font-bold flex items-center gap-1 mb-1">
-                                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                                      Contract ends in {daysUntilEnd} days
-                                    </p>
-                                    {canRenew && !isFamilyMember && (
-                                      <p
-                                        onClick={() => setShowRenewalModal(true)}
-                                        className="text-xs font-bold flex items-center gap-1 text-indigo-600 cursor-pointer hover:underline"
-                                      >
-                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                                        Renew Contract Available
-                                      </p>
-                                    )}
-                                  </div>
-                                );
-                              }
-
-                              // Fallback normal warning
-                              if (daysUntilEnd <= 60 && daysUntilEnd > 0) {
-                                return (
-                                  <p className="text-xs text-orange-600 font-bold mt-1 flex items-center gap-1">
-                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                                    Contract ends in {daysUntilEnd} day{daysUntilEnd > 1 ? 's' : ''}
-                                  </p>
-                                );
-                              }
-                              return null;
-                            })()}
                           </div>
                         </div>
                       </div>
 
-                      {/* Last House Due Date - ENHANCED with breakdown inside */}
-                      <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 flex flex-col justify-between">
-                        <div>
-                          <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mb-2">Last House Due Date</p>
-                          <div className="flex items-start gap-3 mb-3">
-                            <div className="w-10 h-10 rounded-full bg-slate-200 text-slate-500 flex items-center justify-center shrink-0">
-                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      <div className="bg-gray-50/50 rounded-2xl p-4 border border-emerald-50">
+                        <p className="text-xs text-black-400 font-bold uppercase tracking-wider mb-2">Utility Next Due Date</p>
+                        <div className="space-y-3">
+                          {isInternetAvailable && (
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-bold text-slate-700">Internet</span>
+                              </div>
+                              <span className="text-sm font-black text-slate-900">{nextInternetDueDate}</span>
                             </div>
-                            <div>
-                              <p className="text-lg font-black text-slate-900">
-                                {lastPayment ? new Date(lastPayment.due_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : 'N/A'}
-                              </p>
-                              <p className="text-xs text-slate-500 font-semibold">Total Paid: ₱{lastPayment ? Number(lastPayment.amount_paid || (parseFloat(lastPayment.rent_amount || 0) + parseFloat(lastPayment.security_deposit_amount || 0) + parseFloat(lastPayment.advance_amount || 0) + parseFloat(lastPayment.water_bill || 0) + parseFloat(lastPayment.electrical_bill || 0) + parseFloat(lastPayment.wifi_bill || 0) + parseFloat(lastPayment.other_bills || 0))).toLocaleString() : '0'}</p>
+                          )}
+
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-slate-700">Water</span>
                             </div>
+                            <span className="text-sm font-black text-slate-900">{nextWaterDueDate}</span>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-slate-700">Electricity</span>
+                            </div>
+                            <span className="text-sm font-black text-slate-900">{nextElectricityDueDate}</span>
                           </div>
                         </div>
-
-                        {/* Breakdown List INSIDE the card */}
-                        {lastPayment && (
-                          <div className="mt-2 space-y-1 bg-white/50 p-2 rounded-lg border border-slate-100/50">
-                            {Number(lastPayment.rent_amount) > 0 && (
-                              <div className="flex justify-between text-xs">
-                                <span className="text-slate-500 font-medium">House Rent</span>
-                                <span className="font-bold text-slate-700">₱{Number(lastPayment.rent_amount).toLocaleString()}</span>
-                              </div>
-                            )}
-                            {Number(lastPayment.security_deposit_amount) > 0 && (
-                              <div className="flex justify-between text-xs">
-                                <span className="text-slate-500 font-medium">Sec. Dep.</span>
-                                <span className="font-bold text-slate-700">₱{Number(lastPayment.security_deposit_amount).toLocaleString()}</span>
-                              </div>
-                            )}
-                            {Number(lastPayment.advance_amount) > 0 && (
-                              <div className="flex justify-between text-xs">
-                                <span className="text-slate-500 font-medium">Advance</span>
-                                <span className="font-bold text-slate-700">₱{Number(lastPayment.advance_amount).toLocaleString()}</span>
-                              </div>
-                            )}
-                            {(Number(lastPayment.water_bill) > 0 || Number(lastPayment.electrical_bill) > 0) && (
-                              <div className="flex justify-between text-xs">
-                                <span className="text-slate-500 font-medium">Utilities</span>
-                                <span className="font-bold text-slate-700">₱{(Number(lastPayment.water_bill || 0) + Number(lastPayment.electrical_bill || 0)).toLocaleString()}</span>
-                              </div>
-                            )}
-                            {Number(lastPayment.other_bills) > 0 && (
-                              <div className="flex justify-between text-xs">
-                                <span className="text-slate-500 font-medium">Other / Penalty</span>
-                                <span className="font-bold text-slate-700">₱{Number(lastPayment.other_bills).toLocaleString()}</span>
-                              </div>
-                            )}
-                          </div>
-                        )}
                       </div>
                     </div>
 
                     {/* 3. Rent Payment History (Visual Tracker) */}
-                    {/* <div className="bg-gray-50 rounded-2xl p-5 border border-slate-100"> */}
-                    {/* <div className="flex justify-between items-center mb-4">
+                    <div className="bg-gray-50 rounded-2xl p-5 border border-slate-100">
+                      <div className="flex justify-between items-center mb-4">
                         <div className="flex items-center gap-2">
                           <div className="p-1.5 bg-white text-slate-600 rounded-lg shadow-sm">
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                           </div>
                           <h3 className="font-bold text-slate-900 text-sm">Rent Payment History ({new Date().getFullYear()})</h3>
                         </div>
-                      </div> */}
+                      </div>
 
-                    {/* Redesigned Month Tracker */}
-                    {/* <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3 mb-2"> */}
-                    {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((month, index) => {
-                      // const currentYear = new Date().getFullYear();
-                      // const isPaid = paymentHistory.some(p => {
-                      //   if (!p.due_date || parseFloat(p.rent_amount) <= 0) return false;
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3 mb-2">
+                        {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((month, index) => {
+                          const currentYear = new Date().getFullYear();
+                          const isPaid = paymentHistory.some(p => {
+                            if (!p.due_date || parseFloat(p.rent_amount) <= 0) return false;
 
-                      //   const d = new Date(p.due_date);
-                      //   const pMonth = d.getMonth();
-                      //   const pYear = d.getFullYear();
+                            const d = new Date(p.due_date);
+                            const pMonth = d.getMonth();
+                            const pYear = d.getFullYear();
 
-                      //   // Use advance_amount to determine if this bill covers future months
-                      //   const advance = parseFloat(p.advance_amount || 0);
-                      //   const rent = parseFloat(p.rent_amount || 0);
-                      //   let monthsCovered = 1; // Default covers the due_date month
+                            const advance = parseFloat(p.advance_amount || 0);
+                            const rent = parseFloat(p.rent_amount || 0);
+                            let monthsCovered = 1;
 
-                      //   if (advance > 0 && rent > 0) {
-                      //     monthsCovered += Math.floor(advance / rent);
-                      //   }
+                            // Any rent bill with advance (including move-in) covers extra months.
+                            if (advance > 0 && rent > 0) {
+                              monthsCovered += Math.floor(advance / rent);
+                            }
 
-                      //   // Calculate start and end month indices relative to the payment start
-                      //   const targetAbsoluteMonth = currentYear * 12 + index;
-                      //   const paymentStartAbsoluteMonth = pYear * 12 + pMonth;
-                      //   const paymentEndAbsoluteMonth = paymentStartAbsoluteMonth + monthsCovered - 1;
+                            const targetAbsoluteMonth = currentYear * 12 + index;
+                            const paymentStartAbsoluteMonth = pYear * 12 + pMonth;
+                            const paymentEndAbsoluteMonth = paymentStartAbsoluteMonth + monthsCovered - 1;
 
-                      //   return targetAbsoluteMonth >= paymentStartAbsoluteMonth && targetAbsoluteMonth <= paymentEndAbsoluteMonth;
-                      // });
+                            return targetAbsoluteMonth >= paymentStartAbsoluteMonth && targetAbsoluteMonth <= paymentEndAbsoluteMonth;
+                          });
 
-                      // const isActiveMonth = new Date().getMonth() === index;
+                          const isActiveMonth = new Date().getMonth() === index;
 
-                      // return (
-                      //   <div key={month} className="flex flex-col items-center justify-center p-2">
-                      //     <span className={`text-[10px] font-bold uppercase mb-1.5 ${isPaid ? 'text-black' : 'text-gray-400'}`}>
-                      //       {month}
-                      //     </span>
+                          return (
+                            <div key={month} className="flex flex-col items-center justify-center p-2">
+                              <span className={`text-[10px] font-bold uppercase mb-1.5 ${isPaid ? 'text-black' : 'text-gray-400'}`}>
+                                {month}
+                              </span>
 
-                      //     {isPaid ? (
-                      //       <div className="w-5 h-5 rounded-full bg-green-300 text-black flex items-center justify-center shadow-sm">
-                      //         <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      //           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                      //         </svg>
-                      //       </div>
-                      //     ) : isActiveMonth ? (
-                      //       <div className="w-5 h-5 rounded-full border-2 border-black flex items-center justify-center">
-                      //         <div className="w-1.5 h-1.5 rounded-full bg-black"></div>
-                      //       </div>
-                      //     ) : (
-                      //       <div className="w-5 h-5 rounded-full border border-gray-200"></div>
-                      //     )}
-                      //   </div>
-                      // )
-                    })}
-                    {/* </div> */}
-                    {/* </div> */}
+                              {isPaid ? (
+                                <div className="w-5 h-5 rounded-full bg-green-300 text-black flex items-center justify-center shadow-sm">
+                                  <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                </div>
+                              ) : isActiveMonth ? (
+                                <div className="w-5 h-5 rounded-full border-2 border-black flex items-center justify-center">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-black"></div>
+                                </div>
+                              ) : (
+                                <div className="w-5 h-5 rounded-full border border-gray-200"></div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2485,7 +2555,7 @@ export default function TenantDashboard({ session, profile }) {
               </div>
 
               <div className="flex gap-2">
-                <button onClick={() => setShowEndRequestModal(false)} className="flex-1 py-2 bg-gray-100 rounded-xl cursor-pointer hover:bg-gray-200 transition-colors">Cancel</button>
+                <button onClick={() => closeEndRequestModal()} className="flex-1 py-2 bg-gray-100 rounded-xl cursor-pointer hover:bg-gray-200 transition-colors">Cancel</button>
                 <button
                   onClick={requestEndOccupancy}
                   disabled={submittingEndRequest}
@@ -2497,6 +2567,43 @@ export default function TenantDashboard({ session, profile }) {
                       Submitting...
                     </>
                   ) : 'Submit'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      }
+
+      {/* Leave Family Modal */}
+      {
+        showLeaveFamilyModal && (
+          <div className="fixed inset-0 bg-black/55 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={closeLeaveFamilyModal}>
+            <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+              <div className="w-12 h-12 rounded-full bg-red-50 text-red-600 flex items-center justify-center mb-4">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">Leave Family Group?</h3>
+              <p className="text-sm text-gray-600 mb-5">You will lose access to this active stay and related family member privileges.</p>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={closeLeaveFamilyModal}
+                  disabled={leavingFamily}
+                  className="flex-1 py-2 bg-gray-100 rounded-xl cursor-pointer hover:bg-gray-200 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={leaveFamilyGroup}
+                  disabled={leavingFamily}
+                  className={`flex-1 py-2 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors ${leavingFamily ? 'bg-red-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700 cursor-pointer'}`}
+                >
+                  {leavingFamily ? (
+                    <>
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                      Leaving...
+                    </>
+                  ) : 'Yes, Leave'}
                 </button>
               </div>
             </div>
@@ -2525,7 +2632,7 @@ export default function TenantDashboard({ session, profile }) {
                   <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>
                 </div>
                 <h2 className="text-2xl font-bold text-gray-900 mb-2">How was your stay?</h2>
-                <p className="text-gray-500 text-sm">You recently ended your contract at <strong>{reviewTarget.property?.title}</strong> ({new Date(reviewTarget.start_date || reviewTarget.created_at).toLocaleDateString()} - {new Date(reviewTarget.contract_end_date || reviewTarget.end_date || new Date()).toLocaleDateString()}). We&apos;d love to hear your feedback!</p>
+                <p className="text-gray-500 text-sm">You recently ended your stay at <strong>{reviewTarget.property?.title}</strong> ({new Date(reviewTarget.start_date || reviewTarget.created_at).toLocaleDateString()} - {new Date(reviewTarget.end_date || new Date()).toLocaleDateString()}). We&apos;d love to hear your feedback!</p>
               </div>
 
               {/* Rating Categories */}
@@ -2585,6 +2692,26 @@ export default function TenantDashboard({ session, profile }) {
                     {[1, 2, 3, 4, 5].map((star) => (
                       <button key={star} onClick={() => setLocationRating(star)} className="focus:outline-none transition-transform hover:scale-110 cursor-pointer">
                         <svg className={`w-8 h-8 ${star <= locationRating ? 'text-yellow-400 fill-yellow-400' : 'text-gray-300'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Landlord Rating */}
+                <div className="bg-gray-50 rounded-2xl p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center text-purple-600">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.121 17.804A3 3 0 016 17h12a3 3 0 01.879.132M15 11a3 3 0 11-6 0 3 3 0 016 0zM19 21v-1a4 4 0 00-4-4H9a4 4 0 00-4 4v1" /></svg>
+                      </div>
+                      <span className="font-bold text-gray-800">Landlord</span>
+                    </div>
+                    <span className="text-sm font-bold text-gray-500">{landlordRating}/5</span>
+                  </div>
+                  <div className="flex justify-center gap-2">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button key={star} onClick={() => setLandlordRating(star)} className="focus:outline-none transition-transform hover:scale-110 cursor-pointer">
+                        <svg className={`w-8 h-8 ${star <= landlordRating ? 'text-yellow-400 fill-yellow-400' : 'text-gray-300'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>
                       </button>
                     ))}
                   </div>
@@ -2656,73 +2783,6 @@ export default function TenantDashboard({ session, profile }) {
           to { opacity: 1; transform: scale(1) translateY(0); }
         }
       `}</style>
-
-      {/* Contract Renewal Modal */}
-      {
-        showRenewalModal && tenantOccupancy && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-            <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 border border-gray-200">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-12 h-12 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-gray-900">Request Contract Renewal</h3>
-                  <p className="text-sm text-gray-500">{tenantOccupancy.property?.title}</p>
-                </div>
-              </div>
-
-              <div className="bg-indigo-50 rounded-xl p-4 mb-4 border border-indigo-100">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs text-indigo-600 font-bold">Current Contract Ends</span>
-                  <span className="font-bold text-indigo-900">{new Date(tenantOccupancy.contract_end_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-indigo-600 font-bold">Days Remaining</span>
-                  <span className="font-bold text-indigo-900">{daysUntilContractEnd} days</span>
-                </div>
-              </div>
-
-              <div className="mb-6">
-                <label className="block text-sm font-bold text-gray-700 mb-2">Select Meeting Date for Contract Signing <span className="text-red-500">*</span></label>
-                <input
-                  type="date"
-                  required
-                  min={new Date().toISOString().split('T')[0]}
-                  className="w-full border-2 border-gray-200 focus:border-indigo-500 rounded-xl px-4 py-3 text-sm font-medium outline-none transition-colors"
-                  value={renewalMeetingDate}
-                  onChange={(e) => setRenewalMeetingDate(e.target.value)}
-                />
-                <p className="text-xs text-gray-500 mt-1">Please choose a date to meet the landlord for signing the new contract.</p>
-              </div>
-
-              <p className="text-sm text-gray-600 mb-6">
-                By requesting a renewal, your landlord will be notified and can approve or propose new terms for your continued stay.
-              </p>
-
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setShowRenewalModal(false)}
-                  className="flex-1 py-3 border border-gray-200 rounded-xl font-bold cursor-pointer hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={requestContractRenewal}
-                  className={`flex-1 py-3 text-white rounded-xl font-bold shadow-lg flex items-center justify-center gap-2 transition-all ${submittingRenewal ? 'bg-indigo-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 cursor-pointer'}`}
-                >
-                  {submittingRenewal ? (
-                    <>
-                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-                      Sending Request...
-                    </>
-                  ) : 'Submit Request'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )
-      }
 
       <Footer />
     </div >

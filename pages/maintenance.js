@@ -19,12 +19,15 @@ export default function MaintenancePage() {
   const [responseText, setResponseText] = useState('')
   const [showCancelModal, setShowCancelModal] = useState(false)
   const [requestToCancel, setRequestToCancel] = useState(null)
+  const [showDoneConfirmModal, setShowDoneConfirmModal] = useState(false)
+  const [requestToMarkDone, setRequestToMarkDone] = useState(null)
   const [statusFilter, setStatusFilter] = useState('all')
   const [searchId, setSearchId] = useState('')
   const [proofFiles, setProofFiles] = useState([])
   const [uploading, setUploading] = useState(false)
   const [showScheduleModal, setShowScheduleModal] = useState(false)
   const [requestToSchedule, setRequestToSchedule] = useState(null)
+  const [scheduleModalMode, setScheduleModalMode] = useState('schedule')
   const [scheduleDate, setScheduleDate] = useState('')
   const [repairmanName, setRepairmanName] = useState('')
   const [formData, setFormData] = useState({
@@ -37,11 +40,23 @@ export default function MaintenancePage() {
   const [requestForFeedback, setRequestForFeedback] = useState(null)
   const [feedbackText, setFeedbackText] = useState('')
   const [submittingFeedback, setSubmittingFeedback] = useState(false)
+  const [showEditRequestModal, setShowEditRequestModal] = useState(false)
+  const [requestToEdit, setRequestToEdit] = useState(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editPriority, setEditPriority] = useState('normal')
+  const [editExistingProofs, setEditExistingProofs] = useState([])
+  const [editNewFiles, setEditNewFiles] = useState([])
+  const [savingEditRequest, setSavingEditRequest] = useState(false)
   // Maintenance cost states
   const [showCostModal, setShowCostModal] = useState(false)
   const [requestToComplete, setRequestToComplete] = useState(null)
   const [maintenanceCost, setMaintenanceCost] = useState('')
   const [deductFromDeposit, setDeductFromDeposit] = useState(true)
+  const [depositCheckLoading, setDepositCheckLoading] = useState(false)
+  const [depositAvailableAmount, setDepositAvailableAmount] = useState(0)
+  const [depositOccupancyId, setDepositOccupancyId] = useState(null)
+  const [billingTenantId, setBillingTenantId] = useState(null)
   const statusColors = {
     pending: 'bg-yellow-100 text-yellow-800',
     scheduled: 'bg-blue-100 text-blue-800',
@@ -57,7 +72,7 @@ export default function MaintenancePage() {
         setSession(result.data.session)
         loadProfile(result.data.session.user.id)
       } else {
-        router.push('/auth')
+        router.push('/')
       }
     })
   }, [])
@@ -78,6 +93,58 @@ export default function MaintenancePage() {
       loadProperties()
     }
   }, [session, profile])
+
+  useEffect(() => {
+    if (!session || !profile) return
+
+    const interval = setInterval(() => {
+      loadRequests()
+    }, 30000)
+
+    return () => clearInterval(interval)
+  }, [session, profile])
+
+  async function autoStartDueMaintenanceForLandlord(propertyIds) {
+    if (!propertyIds || propertyIds.length === 0) return
+
+    const nowISO = new Date().toISOString()
+
+    const { data: dueRequests, error: dueError } = await supabase
+      .from('maintenance_requests')
+      .select('id, title, tenant')
+      .in('property_id', propertyIds)
+      .eq('status', 'scheduled')
+      .lte('scheduled_date', nowISO)
+
+    if (dueError) {
+      console.error('Auto-start due maintenance check failed:', dueError)
+      return
+    }
+
+    if (!dueRequests || dueRequests.length === 0) return
+
+    const dueIds = dueRequests.map(r => r.id)
+    const { error: updateError } = await supabase
+      .from('maintenance_requests')
+      .update({ status: 'in_progress' })
+      .in('id', dueIds)
+
+    if (updateError) {
+      console.error('Auto-start due maintenance update failed:', updateError)
+      return
+    }
+
+    for (const req of dueRequests) {
+      if (!req.tenant) continue
+      await createNotification({
+        recipient: req.tenant,
+        actor: session.user.id,
+        type: 'maintenance_status',
+        message: `The scheduled repair for "${req.title}" has now started!`,
+        link: '/maintenance'
+      })
+    }
+  }
 
   async function loadRequests() {
     let query = supabase
@@ -122,6 +189,10 @@ export default function MaintenancePage() {
 
       if (myProps && myProps.length > 0) {
         const propIds = myProps.map(p => p.id)
+
+        // Auto-transition due scheduled tasks when time has arrived.
+        await autoStartDueMaintenanceForLandlord(propIds)
+
         query = query.in('property_id', propIds)
       } else {
         setRequests([])
@@ -280,19 +351,112 @@ export default function MaintenancePage() {
     }
   }
 
+  async function resolveBillingOccupancy(request) {
+    if (!request?.tenant) return null
+
+    let query = supabase
+      .from('tenant_occupancies')
+      .select('id, tenant_id, property_id, security_deposit, security_deposit_used')
+      .eq('tenant_id', request.tenant)
+      .in('status', ['active', 'pending_end'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    if (request?.property_id) {
+      query = query.eq('property_id', request.property_id)
+    }
+
+    const { data: directOccupancy, error } = await query.maybeSingle()
+    if (error) {
+      console.error('Failed to load direct tenant occupancy for billing:', error)
+    }
+    if (directOccupancy) return directOccupancy
+
+    // Family-member fallback: use parent occupancy (primary tenant billing account).
+    try {
+      const fmRes = await fetch(`/api/family-members?member_id=${request.tenant}`, { cache: 'no-store' })
+      const fmData = await fmRes.json()
+      const parentOcc = fmData?.occupancy || null
+
+      if (!parentOcc) return null
+      if (request?.property_id && parentOcc.property_id && parentOcc.property_id !== request.property_id) {
+        return null
+      }
+
+      return {
+        id: parentOcc.id,
+        tenant_id: parentOcc.tenant_id,
+        property_id: parentOcc.property_id,
+        security_deposit: parentOcc.security_deposit,
+        security_deposit_used: parentOcc.security_deposit_used
+      }
+    } catch (fmErr) {
+      console.error('Failed to resolve family member parent occupancy:', fmErr)
+      return null
+    }
+  }
+
   // Open cost modal before completing maintenance
-  function openCostModal(request) {
+  async function openCostModal(request) {
     setRequestToComplete(request)
     setMaintenanceCost('')
-    setDeductFromDeposit(true)
+    setDeductFromDeposit(false)
+    setDepositAvailableAmount(0)
+    setDepositOccupancyId(null)
+    setBillingTenantId(null)
+    setDepositCheckLoading(true)
     setShowCostModal(true)
+
+    try {
+      if (!request?.tenant) return
+
+      const occupancy = await resolveBillingOccupancy(request)
+
+      if (!occupancy) {
+        setBillingTenantId(request.tenant)
+        return
+      }
+
+      const available = Math.max(
+        0,
+        (parseFloat(occupancy.security_deposit || 0) - parseFloat(occupancy.security_deposit_used || 0))
+      )
+      setDepositAvailableAmount(available)
+      setDepositOccupancyId(occupancy.id)
+      setBillingTenantId(occupancy.tenant_id || request.tenant)
+    } finally {
+      setDepositCheckLoading(false)
+    }
   }
 
   // Complete maintenance with cost
   async function completeWithCost() {
     if (!requestToComplete) return
 
+    if (depositCheckLoading) {
+      showToast.error('Please wait while checking security deposit availability')
+      return
+    }
+
     const cost = parseFloat(maintenanceCost) || 0
+    let effectiveOccupancyId = depositOccupancyId
+    let effectiveTenantId = billingTenantId || requestToComplete.tenant
+
+    if ((!effectiveOccupancyId || !effectiveTenantId) && requestToComplete?.tenant) {
+      const resolved = await resolveBillingOccupancy(requestToComplete)
+      if (resolved) {
+        effectiveOccupancyId = resolved.id
+        effectiveTenantId = resolved.tenant_id || effectiveTenantId
+      }
+    }
+
+    const canDeductExactAmount = cost > 0 && !!depositOccupancyId && depositAvailableAmount >= cost
+    const shouldDeductFromDeposit = deductFromDeposit && canDeductExactAmount
+
+    if (deductFromDeposit && !canDeductExactAmount) {
+      showToast.error('Security deposit is not enough for exact deduction. Send as payment cost instead.')
+      return
+    }
 
     // Update maintenance request with cost
     const { error: updateError } = await supabase
@@ -301,7 +465,7 @@ export default function MaintenancePage() {
         status: 'completed',
         resolved_at: new Date().toISOString(),
         maintenance_cost: cost,
-        cost_deducted_from_deposit: deductFromDeposit && cost > 0
+        cost_deducted_from_deposit: shouldDeductFromDeposit
       })
       .eq('id', requestToComplete.id)
 
@@ -311,30 +475,93 @@ export default function MaintenancePage() {
     }
 
     // If deducting from security deposit
-    if (deductFromDeposit && cost > 0 && requestToComplete.tenant) {
-      // Find the tenant's active occupancy
-      const { data: occupancy } = await supabase
+    if (shouldDeductFromDeposit && cost > 0 && effectiveTenantId && effectiveOccupancyId) {
+      const { data: latestOcc, error: latestOccError } = await supabase
         .from('tenant_occupancies')
         .select('id, security_deposit, security_deposit_used')
-        .eq('tenant_id', requestToComplete.tenant)
-        .eq('status', 'active')
+        .eq('id', effectiveOccupancyId)
         .maybeSingle()
 
-      if (occupancy) {
-        const newUsed = (occupancy.security_deposit_used || 0) + cost
-        await supabase
-          .from('tenant_occupancies')
-          .update({ security_deposit_used: newUsed })
-          .eq('id', occupancy.id)
+      if (latestOccError || !latestOcc) {
+        showToast.error('Failed to read tenant security deposit. Please try again.')
+        return
+      }
 
+      const latestAvailable = Math.max(
+        0,
+        (parseFloat(latestOcc.security_deposit || 0) - parseFloat(latestOcc.security_deposit_used || 0))
+      )
+
+      if (latestAvailable < cost) {
+        showToast.error('Security deposit is no longer enough for exact deduction. Send as payment cost instead.')
+        return
+      }
+
+      const newUsed = (parseFloat(latestOcc.security_deposit_used || 0)) + cost
+      const { error: depositUpdateError } = await supabase
+        .from('tenant_occupancies')
+        .update({ security_deposit_used: newUsed })
+        .eq('id', effectiveOccupancyId)
+
+      if (depositUpdateError) {
+        console.error('Failed to update security deposit usage:', depositUpdateError)
+      } else {
         // Notify tenant about deduction
         await createNotification({
-          recipient: requestToComplete.tenant,
+          recipient: effectiveTenantId,
           actor: session.user.id,
           type: 'security_deposit_deduction',
           message: `₱${cost.toLocaleString()} has been deducted from your security deposit for maintenance: "${requestToComplete.title}"`,
           link: '/dashboard'
         })
+      }
+    }
+
+    // If landlord chooses not to deduct, send maintenance cost as a payment bill to tenant.
+    if (!shouldDeductFromDeposit && cost > 0 && effectiveTenantId) {
+      const dueDate = new Date()
+      dueDate.setDate(dueDate.getDate() + 7)
+
+      const { data: bill, error: billError } = await supabase
+        .from('payment_requests')
+        .insert({
+          landlord: session.user.id,
+          tenant: effectiveTenantId,
+          property_id: requestToComplete.property_id,
+          occupancy_id: effectiveOccupancyId,
+          rent_amount: 0,
+          water_bill: 0,
+          electrical_bill: 0,
+          wifi_bill: 0,
+          other_bills: cost,
+          bills_description: `Maintenance cost for "${requestToComplete.title}"`,
+          due_date: dueDate.toISOString(),
+          status: 'pending'
+        })
+        .select('id')
+        .single()
+
+      if (billError) {
+        console.error('Failed to create maintenance payment bill:', billError)
+        showToast.error('Maintenance completed, but failed to create payment bill. Please retry.')
+      } else if (bill?.id) {
+        await createNotification({
+          recipient: effectiveTenantId,
+          actor: session.user.id,
+          type: 'payment_request',
+          message: `A maintenance cost bill of ₱${cost.toLocaleString()} was issued for "${requestToComplete.title}".`,
+          link: '/payments'
+        })
+
+        fetch('/api/notify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'payment_bill',
+            recordId: bill.id,
+            actorId: session.user.id
+          })
+        }).catch(err => console.error('Failed to trigger payment bill notify:', err))
       }
     }
 
@@ -351,7 +578,7 @@ export default function MaintenancePage() {
 
     if (requestToComplete.tenant) {
       const costMessage = cost > 0
-        ? ` Maintenance cost: ₱${cost.toLocaleString()}${deductFromDeposit ? ' (deducted from security deposit)' : ''}.`
+        ? ` Maintenance cost: ₱${cost.toLocaleString()}${shouldDeductFromDeposit ? ' (deducted from security deposit)' : ' (sent as payment cost)'}.`
         : ''
       await createNotification({
         recipient: requestToComplete.tenant,
@@ -360,6 +587,17 @@ export default function MaintenancePage() {
         message: `Maintenance "${requestToComplete.title}" has been completed.${costMessage}`,
         link: '/maintenance'
       })
+
+      // Ensure tenant receives SMS + email whenever landlord logs maintenance cost.
+      fetch('/api/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'maintenance_cost_logged',
+          recordId: requestToComplete.id,
+          actorId: session.user.id
+        })
+      }).catch(err => console.error('Failed to trigger maintenance cost notify:', err))
     }
 
     showToast.success('Maintenance completed!', {
@@ -371,8 +609,24 @@ export default function MaintenancePage() {
 
     setShowCostModal(false)
     setRequestToComplete(null)
+    setMaintenanceCost('')
+    setDeductFromDeposit(false)
+    setDepositAvailableAmount(0)
+    setDepositOccupancyId(null)
+    setBillingTenantId(null)
     loadRequests()
   }
+
+  useEffect(() => {
+    if (!showCostModal) return
+
+    const enteredCost = parseFloat(maintenanceCost) || 0
+    const canDeduct = enteredCost > 0 && !!depositOccupancyId && depositAvailableAmount >= enteredCost
+
+    if (!canDeduct && deductFromDeposit) {
+      setDeductFromDeposit(false)
+    }
+  }, [showCostModal, maintenanceCost, depositOccupancyId, depositAvailableAmount, deductFromDeposit])
 
   async function addResponse(requestId) {
     if (!responseText.trim()) return
@@ -403,10 +657,10 @@ export default function MaintenancePage() {
   }
 
   // --- File Upload Logic (Multiple Files) ---
-  async function uploadProofFiles() {
-    if (proofFiles.length === 0) return []
+  async function uploadProofFiles(files = proofFiles) {
+    if (files.length === 0) return []
 
-    const uploadPromises = proofFiles.map(async (file) => {
+    const uploadPromises = files.map(async (file) => {
       const fileExt = file.name.split('.').pop()
       const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`
       const filePath = `${session.user.id}/${fileName}`
@@ -454,6 +708,126 @@ export default function MaintenancePage() {
 
   function removeFile(index) {
     setProofFiles(prev => prev.filter((_, i) => i !== index))
+  }
+
+  function openEditRequestModal(request) {
+    if (request?.tenant !== session?.user?.id) {
+      showToast.error('You can only edit your own request')
+      return
+    }
+
+    if (!['pending', 'scheduled'].includes(request?.status)) {
+      showToast.error('You can only edit request details before work is in progress')
+      return
+    }
+
+    setRequestToEdit(request)
+    setEditTitle(request.title || '')
+    setEditDescription(request.description || '')
+    setEditPriority(request.priority || 'normal')
+    setEditExistingProofs(Array.isArray(request.attachment_urls) ? request.attachment_urls : [])
+    setEditNewFiles([])
+    setShowEditRequestModal(true)
+  }
+
+  function closeEditRequestModal() {
+    if (savingEditRequest) return
+    setShowEditRequestModal(false)
+    setRequestToEdit(null)
+    setEditTitle('')
+    setEditDescription('')
+    setEditPriority('normal')
+    setEditExistingProofs([])
+    setEditNewFiles([])
+  }
+
+  function handleEditFileSelect(e) {
+    const newFiles = Array.from(e.target.files || [])
+    const maxFiles = 10
+    const maxSize = 50 * 1024 * 1024 // 50MB per file
+
+    const validFiles = newFiles.filter(file => {
+      if (file.size > maxSize) {
+        showToast.warning(`${file.name} exceeds 50MB limit`)
+        return false
+      }
+      return true
+    })
+
+    if (editExistingProofs.length + editNewFiles.length + validFiles.length > maxFiles) {
+      showToast.error(`Maximum ${maxFiles} files allowed`)
+      return
+    }
+
+    setEditNewFiles(prev => [...prev, ...validFiles])
+  }
+
+  function removeExistingEditProof(index) {
+    setEditExistingProofs(prev => prev.filter((_, i) => i !== index))
+  }
+
+  function removeEditNewFile(index) {
+    setEditNewFiles(prev => prev.filter((_, i) => i !== index))
+  }
+
+  async function saveEditedRequest() {
+    if (!requestToEdit) return
+
+    const cleanTitle = editTitle.trim()
+    const cleanDescription = editDescription.trim()
+
+    if (!cleanTitle || !cleanDescription) {
+      showToast.error('Title and description are required')
+      return
+    }
+
+    setSavingEditRequest(true)
+    try {
+      const uploadedUrls = await uploadProofFiles(editNewFiles)
+      const finalAttachmentUrls = [...editExistingProofs, ...uploadedUrls]
+
+      if (finalAttachmentUrls.length === 0) {
+        showToast.error('At least one proof file is required')
+        setSavingEditRequest(false)
+        return
+      }
+
+      const { error } = await supabase
+        .from('maintenance_requests')
+        .update({
+          title: cleanTitle,
+          description: cleanDescription,
+          priority: editPriority,
+          attachment_urls: finalAttachmentUrls
+        })
+        .eq('id', requestToEdit.id)
+        .eq('tenant', session.user.id)
+        .in('status', ['pending', 'scheduled'])
+
+      if (error) {
+        showToast.error('Failed to update request details')
+        setSavingEditRequest(false)
+        return
+      }
+
+      if (requestToEdit?.properties?.landlord) {
+        await createNotification({
+          recipient: requestToEdit.properties.landlord,
+          actor: session.user.id,
+          type: 'maintenance_request',
+          message: `${profile.first_name} ${profile.last_name} updated maintenance request: "${cleanTitle}"`,
+          link: '/maintenance'
+        })
+      }
+
+      showToast.success('Maintenance request updated')
+      closeEditRequestModal()
+      loadRequests()
+    } catch (err) {
+      console.error('Edit maintenance request failed:', err)
+      showToast.error('Failed to update request details')
+    }
+    setSavingEditRequest(false)
   }
 
   async function handleSubmit(e) {
@@ -600,6 +974,19 @@ export default function MaintenancePage() {
     setShowCancelModal(true)
   }
 
+  function promptMarkAsDone(request) {
+    if (!request) return
+    setRequestToMarkDone(request)
+    setShowDoneConfirmModal(true)
+  }
+
+  async function confirmMarkAsDone() {
+    if (!requestToMarkDone) return
+    await updateRequestStatus(requestToMarkDone.id, 'completed')
+    setShowDoneConfirmModal(false)
+    setRequestToMarkDone(null)
+  }
+
   async function confirmCancel() {
     if (!requestToCancel) return
     await updateRequestStatus(requestToCancel.id, 'cancelled')
@@ -607,27 +994,55 @@ export default function MaintenancePage() {
     setRequestToCancel(null)
   }
 
+  function toDateTimeLocalValue(dateStr) {
+    if (!dateStr) return ''
+    const d = new Date(dateStr)
+    if (Number.isNaN(d.getTime())) return ''
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    const hours = String(d.getHours()).padStart(2, '0')
+    const mins = String(d.getMinutes()).padStart(2, '0')
+    return `${year}-${month}-${day}T${hours}:${mins}`
+  }
+
   function openStartWorkModal(request) {
     setRequestToSchedule(request)
+    setScheduleModalMode('schedule')
     setScheduleDate('') // Reset date
     setRepairmanName('') // Reset repairman name
+    setShowScheduleModal(true)
+  }
+
+  function openEditDetailsModal(request) {
+    if (request?.status !== 'scheduled') {
+      showToast.error('You can only edit details while request is scheduled.')
+      return
+    }
+    setRequestToSchedule(request)
+    setScheduleModalMode('edit')
+    setScheduleDate(toDateTimeLocalValue(request.scheduled_date))
+    setRepairmanName(request.repairman_name || '')
     setShowScheduleModal(true)
   }
 
   async function confirmStartWork() {
     if (!requestToSchedule || !scheduleDate) return
 
+    const nextStatus = requestToSchedule.status === 'pending' ? 'scheduled' : requestToSchedule.status
+
     const { error } = await supabase
       .from('maintenance_requests')
       .update({
-        status: 'scheduled',
+        status: nextStatus,
         scheduled_date: new Date(scheduleDate).toISOString(),
         repairman_name: repairmanName.trim() || null
       })
       .eq('id', requestToSchedule.id)
 
     if (!error) {
-      showToast.success("Work Scheduled!");
+      const isEditing = scheduleModalMode === 'edit'
+      showToast.success(isEditing ? 'Maintenance details updated!' : 'Work Scheduled!')
 
       const formattedDate = new Date(scheduleDate).toLocaleString();
       const repairmanInfo = repairmanName.trim() ? ` Assigned repairman: ${repairmanName.trim()}.` : '';
@@ -635,7 +1050,9 @@ export default function MaintenancePage() {
         recipient: requestToSchedule.tenant,
         actor: session.user.id,
         type: 'maintenance',
-        message: `Work on "${requestToSchedule.title}" is scheduled to start on ${formattedDate}.${repairmanInfo}`,
+        message: isEditing
+          ? `Maintenance details for "${requestToSchedule.title}" were updated. New schedule: ${formattedDate}.${repairmanInfo}`
+          : `Work on "${requestToSchedule.title}" is scheduled to start on ${formattedDate}.${repairmanInfo}`,
         link: '/maintenance'
       })
 
@@ -643,10 +1060,14 @@ export default function MaintenancePage() {
       setShowScheduleModal(false)
       setRequestToSchedule(null)
       setRepairmanName('')
+      setScheduleModalMode('schedule')
     } else {
       showToast.error("Failed to update request");
     }
   }
+
+  const maintenanceCostValue = parseFloat(maintenanceCost) || 0
+  const canDeductExactForEnteredCost = maintenanceCostValue > 0 && !!depositOccupancyId && depositAvailableAmount >= maintenanceCostValue
 
   return (
     <div className="min-h-screen bg-[#F3F4F5] p-4 sm:p-8 font-sans text-black">
@@ -789,8 +1210,8 @@ export default function MaintenancePage() {
                         )}
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${req.priority === 'high' ? 'bg-red-50 text-red-700 border-red-100' :
                           req.priority === 'normal' ? 'bg-green-50 text-green-700 border-green-100' :
-                            q.priority === 'low' ? 'bg-blue-50 text-blue-700 border-blue-100' :
-                              'bgray-50 text-gray-700 border-gray-200'
+                            req.priority === 'low' ? 'bg-blue-50 text-blue-700 border-blue-100' :
+                              'bg-gray-50 text-gray-700 border-gray-200'
                           }`}>
                           {req.priority} Priority
                         </span>
@@ -831,13 +1252,18 @@ export default function MaintenancePage() {
                       {/* Tenant Actions */}
                       {profile?.role === 'tenant' && !['completed', 'closed', 'cancelled'].includes(req.status) && (
                         <div className="mt-4 pt-4 border-t border-gray-100 flex justify-end gap-2">
+                          {req.tenant === session?.user?.id && ['pending', 'scheduled'].includes(req.status) && (
+                            <button onClick={() => openEditRequestModal(req)} className="px-4 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-bold rounded-lg hover:bg-indigo-100 transition-colors cursor-pointer">
+                              Edit Request
+                            </button>
+                          )}
                           {req.status === 'in_progress' && (
-                            <button onClick={() => updateRequestStatus(req.id, 'completed')} className="px-4 py-2 bg-green-50 border border-green-200 text-green-700 text-xs font-bold rounded-lg hover:bg-green-100 transition-colors cursor-pointer flex items-center gap-1.5">
+                            <button onClick={() => promptMarkAsDone(req)} className="px-4 py-2 bg-green-50 border border-green-200 text-green-700 text-xs font-bold rounded-lg hover:bg-green-100 transition-colors cursor-pointer flex items-center gap-1.5">
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
                               Mark as Done
                             </button>
                           )}
-                          {!req.scheduled_date && (
+                          {(req.status === 'in_progress' || !req.scheduled_date) && (
                             <button onClick={() => promptCancel(req)} className="px-4 py-2 bg-white border border-red-200 text-red-600 text-xs font-bold rounded-lg hover:bg-red-50 transition-colors cursor-pointer">
                               Cancel Request
                             </button>
@@ -862,17 +1288,23 @@ export default function MaintenancePage() {
                               {req.status === 'pending' && (
                                 <button onClick={() => openStartWorkModal(req)} className="px-4 py-2 bg-blue-50 text-blue-700 text-xs font-bold rounded-lg hover:bg-blue-100 cursor-pointer">Mark Scheduled</button>
                               )}
-                              {req.status === 'scheduled' && (
-                                <button onClick={() => updateRequestStatus(req.id, 'in_progress')} className="px-4 py-2 bg-orange-50 text-orange-700 text-xs font-bold rounded-lg hover:bg-orange-100 cursor-pointer">Start Working</button>
+                              {req.status === 'pending' && (
+                                <button onClick={() => promptCancel(req)} className="px-4 py-2 bg-red-50 text-red-700 text-xs font-bold rounded-lg hover:bg-red-100 cursor-pointer">Rejected</button>
                               )}
-                              {(req.status === 'in_progress' || (req.status === 'completed' && req.maintenance_cost == null)) && (
+                              {req.status === 'scheduled' && (
+                                <button onClick={() => openEditDetailsModal(req)} className="px-4 py-2 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-lg hover:bg-indigo-100 cursor-pointer">Edit Details</button>
+                              )}
+                              {req.status === 'scheduled' && (
+                                <button onClick={() => promptCancel(req)} className="px-4 py-2 bg-red-50 text-red-700 text-xs font-bold rounded-lg hover:bg-red-100 cursor-pointer">Cancel</button>
+                              )}
+                              {(['completed', 'complete'].includes(String(req.status || '').toLowerCase()) && (req.maintenance_cost == null || Number(req.maintenance_cost) <= 0)) && (
                                 <button onClick={() => openCostModal(req)} className="px-4 py-2 bg-green-50 text-green-700 text-xs font-bold rounded-lg hover:bg-green-100 cursor-pointer">Log Maintenance Cost</button>
                               )}
                               {(req.status === 'completed' || req.status === 'resolved') && (
                                 <button onClick={() => updateRequestStatus(req.id, 'closed')} className="px-4 py-2 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg hover:bg-gray-200 cursor-pointer">Archive/Close</button>
                               )}
-                              {!['completed', 'closed', 'cancelled'].includes(req.status) && (
-                                <button onClick={() => promptCancel(req)} className="px-4 py-2 bg-red-50 text-red-700 text-xs font-bold rounded-lg hover:bg-red-100 cursor-pointer">Cancel/Reject</button>
+                              {req.status === 'in_progress' && (
+                                <button onClick={() => promptCancel(req)} className="px-4 py-2 bg-red-50 text-red-700 text-xs font-bold rounded-lg hover:bg-red-100 cursor-pointer">Cancel</button>
                               )}
                               <button
                                 onClick={() => setSelectedRequest(selectedRequest === req.id ? null : req.id)}
@@ -1119,11 +1551,135 @@ export default function MaintenancePage() {
         </div>
       )}
 
+      {/* Tenant Edit Request Modal */}
+      {showEditRequestModal && requestToEdit && (
+        <div className="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+          <div className="bg-white border border-gray-100 shadow-2xl rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-gray-100 px-6 py-4 flex justify-between items-center">
+              <h2 className="text-lg font-bold">Edit Maintenance Request</h2>
+              <button onClick={closeEditRequestModal} className="p-2 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer" disabled={savingEditRequest}>
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-500 mb-1.5">Issue Title</label>
+                <input
+                  type="text"
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-2 focus:ring-black focus:border-transparent outline-none"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-500 mb-1.5">Description</label>
+                <textarea
+                  rows="4"
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-2 focus:ring-black focus:border-transparent outline-none resize-none"
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-500 mb-1.5">Priority</label>
+                <select
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-2 focus:ring-black outline-none bg-white cursor-pointer"
+                  value={editPriority}
+                  onChange={(e) => setEditPriority(e.target.value)}
+                >
+                  <option value="low">Low (Cosmetic)</option>
+                  <option value="normal">Normal (Functional)</option>
+                  <option value="high">High (Urgent)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-500 mb-1.5">
+                  Proof Files <span className="text-gray-400 ml-2">({editExistingProofs.length + editNewFiles.length}/10 files)</span>
+                </label>
+
+                {editExistingProofs.length > 0 && (
+                  <div className="mb-3 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                    {editExistingProofs.map((url, index) => {
+                      const isVideo = /\.(mp4|mov|webm|avi|mkv|ogg)$/i.test(url)
+                      return (
+                        <div key={`existing-${index}`} className="relative group">
+                          <div className="aspect-square rounded-lg overflow-hidden border border-gray-200 bg-gray-100">
+                            {isVideo ? (
+                              <video src={url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                            ) : (
+                              <img src={url} alt={`Existing Proof ${index + 1}`} className="w-full h-full object-cover" />
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeExistingEditProof(index)}
+                            className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-md hover:bg-red-600"
+                          >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {editNewFiles.length > 0 && (
+                  <div className="mb-3 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                    {editNewFiles.map((file, index) => {
+                      const isVideo = file.type.startsWith('video/')
+                      return (
+                        <div key={`new-${index}`} className="relative group">
+                          <div className="aspect-square rounded-lg overflow-hidden border border-gray-200 bg-gray-100">
+                            {isVideo ? (
+                              <video src={URL.createObjectURL(file)} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                            ) : (
+                              <img src={URL.createObjectURL(file)} alt={`New Proof ${index + 1}`} className="w-full h-full object-cover" />
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeEditNewFile(index)}
+                            className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-md hover:bg-red-600"
+                          >
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                <div className="border-2 border-dashed rounded-xl p-4 text-center cursor-pointer transition-colors border-gray-300 hover:border-black">
+                  <input type="file" accept="image/*,video/*" id="edit-proof-upload" className="hidden" multiple onChange={handleEditFileSelect} />
+                  <label htmlFor="edit-proof-upload" className="cursor-pointer w-full h-full block">
+                    <div className="flex flex-col items-center gap-1 text-gray-500">
+                      <svg className="w-7 h-7 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                      <span className="text-sm font-bold">Add more photos or videos</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                <button onClick={closeEditRequestModal} className="px-6 py-3 border border-gray-300 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-50 cursor-pointer" disabled={savingEditRequest}>Cancel</button>
+                <button onClick={saveEditedRequest} disabled={savingEditRequest} className="px-8 py-3 bg-black text-white rounded-xl font-bold text-sm hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg cursor-pointer">
+                  {savingEditRequest ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Cancel Modal */}
       {showCancelModal && requestToCancel && (
         <div className="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
           <div className="bg-white border border-gray-100 shadow-2xl rounded-2xl max-w-sm w-full p-6 text-center">
-            <h3 className="text-lg font-bold text-gray-900 mb-2">Cancel Maintenance Request?</h3>
+            <h3 className="text-lg font-bold text-gray-900 mb-2 cursor-pointer">Cancel Maintenance Request?</h3>
             <p className="text-gray-500 text-sm mb-6">Are you sure you want to cancel: "{requestToCancel.title}"?</p>
             <div className="flex gap-3">
               <button onClick={() => setShowCancelModal(false)} className="flex-1 py-2.5 border border-gray-200 rounded-xl font-bold cursor-pointer">No</button>
@@ -1132,11 +1688,40 @@ export default function MaintenancePage() {
           </div>
         </div>
       )}
+
+      {/* Mark as Done Confirmation Modal */}
+      {showDoneConfirmModal && requestToMarkDone && (
+        <div className="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+          <div className="bg-white border border-gray-100 shadow-2xl rounded-2xl max-w-sm w-full p-6 text-center">
+            <h3 className="text-lg font-bold text-gray-900 mb-2">Mark as Done?</h3>
+            <p className="text-gray-500 text-sm mb-6">
+              This will mark "{requestToMarkDone.title}" as completed. Continue?
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowDoneConfirmModal(false)
+                  setRequestToMarkDone(null)
+                }}
+                className="flex-1 py-2.5 border border-gray-200 rounded-xl font-bold cursor-pointer"
+              >
+                No
+              </button>
+              <button
+                onClick={confirmMarkAsDone}
+                className="flex-1 py-2.5 bg-green-600 text-white rounded-xl font-bold cursor-pointer"
+              >
+                Yes, Mark Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Schedule Modal */}
       {showScheduleModal && requestToSchedule && (
         <div className="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
           <div className="bg-white border border-gray-100 shadow-2xl rounded-2xl max-w-sm w-full p-6">
-            <h3 className="text-lg font-bold mb-4">Set Start Date & Assign Repairman</h3>
+            <h3 className="text-lg font-bold mb-4">{scheduleModalMode === 'edit' ? 'Edit Maintenance Details' : 'Set Start Date & Assign Repairman'}</h3>
             <div className="space-y-4 mb-6">
               <div>
                 <label className="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Start Date & Time</label>
@@ -1155,8 +1740,8 @@ export default function MaintenancePage() {
               </div>
             </div>
             <div className="flex gap-3">
-              <button onClick={() => setShowScheduleModal(false)} className="flex-1 py-2.5 border rounded-xl font-bold">Cancel</button>
-              <button onClick={confirmStartWork} className="flex-1 py-2.5 bg-black text-white rounded-xl font-bold">Confirm</button>
+              <button onClick={() => { setShowScheduleModal(false); setRequestToSchedule(null); setScheduleModalMode('schedule'); }} className="flex-1 py-2.5 border rounded-xl font-bold cursor-pointer">Cancel</button>
+              <button onClick={confirmStartWork} className="flex-1 py-2.5 bg-black text-white rounded-xl font-bold cursor-pointer">{scheduleModalMode === 'edit' ? 'Save Changes' : 'Confirm'}</button>
             </div>
           </div>
         </div>
@@ -1171,7 +1756,7 @@ export default function MaintenancePage() {
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
               </div>
               <div>
-                <h3 className="text-lg font-bold text-gray-900">Complete Maintenance</h3>
+                <h3 className="text-lg font-bold text-gray-900">Log Maintenance Cost</h3>
                 <p className="text-sm text-gray-500">{requestToComplete.title}</p>
               </div>
             </div>
@@ -1193,35 +1778,52 @@ export default function MaintenancePage() {
               <p className="text-[10px] text-gray-400 mt-1">Leave as 0 if there&apos;s no cost to the tenant.</p>
             </div>
 
-            {parseFloat(maintenanceCost) > 0 && (
-              <div className="mb-4 p-3 bg-amber-50 rounded-xl border border-amber-100">
-                <label className="flex items-start gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={deductFromDeposit}
-                    onChange={(e) => setDeductFromDeposit(e.target.checked)}
-                    className="mt-1 w-4 h-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
-                  />
-                  <div>
-                    <span className="text-sm font-bold text-amber-800">Deduct from Security Deposit</span>
-                    <p className="text-[10px] text-amber-600 mt-0.5">This amount will be deducted from the tenant&apos;s security deposit.</p>
-                  </div>
-                </label>
-              </div>
-            )}
+            <div className="mb-4 p-3 rounded-xl border border-gray-200 bg-gray-50">
+              {depositCheckLoading ? (
+                <p className="text-xs text-gray-600 font-semibold">Checking tenant security deposit...</p>
+              ) : (
+                <>
+                  <p className="text-xs text-gray-700 font-semibold">
+                    Available Security Deposit: ₱{depositAvailableAmount.toLocaleString()}
+                  </p>
+                  {maintenanceCostValue > 0 && (
+                    <div className="mt-2">
+                      <label className="block text-xs font-bold text-gray-600 uppercase mb-1">Cost Handling</label>
+                      <select
+                        value={deductFromDeposit ? 'deposit' : 'payment'}
+                        onChange={(e) => setDeductFromDeposit(e.target.value === 'deposit')}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-black"
+                      >
+                        <option value="payment">Send as Payment Cost</option>
+                        <option value="deposit" disabled={!canDeductExactForEnteredCost}>
+                          Deduct from Security Deposit{!canDeductExactForEnteredCost ? ' (Unavailable)' : ''}
+                        </option>
+                      </select>
+
+                      {!canDeductExactForEnteredCost && (
+                        <p className="text-[11px] text-gray-500 mt-1 font-semibold">
+                          Deduct from security deposit is disabled because available deposit is not enough for this exact cost.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
 
             <div className="flex gap-3">
               <button
                 onClick={() => { setShowCostModal(false); setRequestToComplete(null); }}
-                className="flex-1 py-3 border border-gray-200 rounded-xl font-bold cursor-pointer hover:bg-gray-50"
+                className="flex-1 py-3 border border-gray-200 rounded-xl font-bold cursor-pointer hover:bg-gray-50 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 onClick={completeWithCost}
+                disabled={depositCheckLoading}
                 className="flex-1 py-3 bg-green-600 text-white rounded-xl font-bold cursor-pointer hover:bg-green-700 shadow-lg"
               >
-                Complete
+                Save Cost
               </button>
             </div>
           </div>

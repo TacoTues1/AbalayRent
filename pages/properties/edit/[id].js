@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../../../lib/supabaseClient'
+import { normalizeImageForUpload } from '../../../lib/imageCompression'
 import { useRouter } from 'next/router'
 import { showToast } from 'nextjs-toast-notify'
 
@@ -55,10 +56,35 @@ export default function EditProperty() {
   const [showAllAmenities, setShowAllAmenities] = useState(false)
 
   const availableAmenities = [
-    'Kitchen', 'Wifi', 'Pool', 'TV', 'Elevator', 'Air conditioning', 'Heating',
+    'Kitchen', 'Pool', 'TV', 'Elevator', 'Air conditioning', 'Heating',
     'Washing machine', 'Dryer', 'Parking', 'Gym', 'Security', 'Balcony', 'Garden',
     'Pet friendly', 'Furnished', 'Carbon monoxide alarm', 'Smoke alarm', 'Fire extinguisher', 'First aid kit'
   ]
+
+  const normalizeAmenities = (amenities = []) => {
+    const mapped = (amenities || []).map(a => (a === 'WiFi' ? 'Wifi' : a))
+    const unique = [...new Set(mapped)]
+    if (unique.includes('Free WiFi') && !unique.includes('Wifi')) unique.push('Wifi')
+    return unique
+  }
+
+  const getWifiModeFromAmenities = (amenities = []) => {
+    const normalized = normalizeAmenities(amenities)
+    if (normalized.includes('Free WiFi')) return 'free'
+    if (normalized.includes('Wifi')) return 'paid'
+    return 'none'
+  }
+
+  const setWifiMode = (mode) => {
+    setFormData(prev => {
+      const normalized = normalizeAmenities(prev.amenities)
+      const withoutWifi = normalized.filter(a => a !== 'Wifi' && a !== 'Free WiFi')
+
+      if (mode === 'paid') return { ...prev, amenities: [...withoutWifi, 'Wifi'] }
+      if (mode === 'free') return { ...prev, amenities: [...withoutWifi, 'Wifi', 'Free WiFi'] }
+      return { ...prev, amenities: withoutWifi }
+    })
+  }
 
   const toggleAmenity = (amenity) => {
     setFormData(prev => ({
@@ -147,7 +173,7 @@ export default function EditProperty() {
       bed_type: data.bed_type || 'Single Bed',
       max_occupancy: data.max_occupancy || 1,
       terms_conditions: data.terms_conditions || '',
-      amenities: data.amenities || [],
+      amenities: normalizeAmenities(data.amenities || []),
       has_security_deposit: data.has_security_deposit !== false,
       security_deposit_amount: data.security_deposit_amount || '',
       deposit_same_as_rent: data.security_deposit_amount ? (Number(data.security_deposit_amount) === Number(data.price)) : true,
@@ -196,20 +222,16 @@ export default function EditProperty() {
       return
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      setMessage('Image size must be less than 5MB')
-      return
-    }
-
     setUploadingImages(prev => ({ ...prev, [index]: true }))
     try {
-      const fileExt = file.name.split('.').pop()
+      const uploadFile = await normalizeImageForUpload(file)
+      const fileExt = uploadFile.name.split('.').pop()
       const randomId = Math.random().toString(36).substring(2, 10)
       const fileName = `${session.user.id}/${Date.now()}_${randomId}.${fileExt}`
 
       const { data, error } = await supabase.storage
         .from('property-images')
-        .upload(fileName, file)
+        .upload(fileName, uploadFile)
 
       if (error) {
         if (error.message.includes('Bucket not found') || error.message.includes('bucket')) {
@@ -250,10 +272,6 @@ export default function EditProperty() {
     const validFiles = files.filter(file => {
       if (!file.type.startsWith('image/')) {
         setMessage(`${file.name} is not an image file`)
-        return false
-      }
-      if (file.size > 5 * 1024 * 1024) {
-        setMessage(`${file.name} is too large (max 5MB)`)
         return false
       }
       return true
@@ -309,8 +327,8 @@ export default function EditProperty() {
       return
     }
 
-    if (file.size > 10 * 1024 * 1024) { // 10MB limit
-      setMessage('PDF size must be less than 10MB')
+    if (file.size > 2 * 1024 * 1024) { // 2MB limit
+      setMessage('PDF size must be less than 2MB')
       return
     }
 
@@ -366,6 +384,7 @@ export default function EditProperty() {
 
     const payload = {
       ...cleanedFormData,
+      amenities: normalizeAmenities(cleanedFormData.amenities),
       zip: sanitizeNumber(formData.zip),
       price: sanitizeNumber(formData.price),
       utilities_cost: sanitizeNumber(formData.utilities_cost),
@@ -432,6 +451,7 @@ export default function EditProperty() {
 
   // Check if any uploads are in progress
   const isUploading = Object.values(uploadingImages).some(v => v) || uploadingTerms
+  const wifiMode = getWifiModeFromAmenities(formData.amenities)
 
   if (!session || !profile) return <div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-500">Loading...</div>
 
@@ -726,11 +746,10 @@ export default function EditProperty() {
                 <h3 className="text-sm font-bold text-gray-900 mb-5 flex items-center gap-2">
                   <span className="w-1.5 h-4 bg-black rounded-full"></span> Utilities
                 </h3>
-                <p className="text-[10px] text-gray-400 mb-3">Toggle which utilities are included free. Non-free utilities will require a due date when assigning a tenant.</p>
+                <p className="text-[10px] text-gray-400 mb-3">Toggle which utilities are included free. Water and electricity require due dates when not free. WiFi due date is needed only when WiFi is available and paid.</p>
                 <div className="space-y-2">
                   {[{ label: 'Water', amenity: 'Free Water', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 21c-3.866 0-7-3.134-7-7 0-4.97 7-11 7-11s7 6.03 7 11c0 3.866-3.134 7-7 7z" /></svg>, color: 'blue' },
-                  { label: 'Electricity', amenity: 'Free Electricity', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>, color: 'amber' },
-                  { label: 'WiFi', amenity: 'Free WiFi', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01M5.636 13.636a9 9 0 0112.728 0M1.393 10.393a14 14 0 0121.213 0" /></svg>, color: 'violet' }
+                  { label: 'Electricity', amenity: 'Free Electricity', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>, color: 'amber' }
                   ].map(u => {
                     const isFree = formData.amenities.includes(u.amenity)
                     const iconBg = { blue: 'bg-blue-100 text-blue-600', amber: 'bg-amber-100 text-amber-600', violet: 'bg-violet-100 text-violet-600' }
@@ -749,6 +768,41 @@ export default function EditProperty() {
                       </div>
                     )
                   })}
+
+                  <div className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${wifiMode === 'none' ? 'bg-gray-50 border-gray-200' : wifiMode === 'free' ? 'bg-gradient-to-r from-green-50 to-emerald-50 border-green-200' : 'bg-gradient-to-r from-violet-50 to-purple-50 border-violet-200'}`}>
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${wifiMode === 'none' ? 'bg-gray-200 text-gray-500' : wifiMode === 'free' ? 'bg-green-100 text-green-600' : 'bg-violet-100 text-violet-600'}`}>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01M5.636 13.636a9 9 0 0112.728 0M1.393 10.393a14 14 0 0121.213 0" /></svg>
+                    </div>
+                    <div className="flex-1">
+                      <span className={`text-sm font-bold ${wifiMode === 'none' ? 'text-gray-700' : wifiMode === 'free' ? 'text-green-700' : 'text-violet-700'}`}>WiFi</span>
+                      <p className="text-[11px] text-gray-400">
+                        {wifiMode === 'none' ? 'Not available in this property' : wifiMode === 'free' ? 'Included free with rent' : 'Available with separate payment'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setWifiMode('none')}
+                        className={`px-2.5 py-1.5 rounded-full text-[10px] font-bold transition-all cursor-pointer ${wifiMode === 'none' ? 'bg-gray-700 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
+                      >
+                        Not Available
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWifiMode('paid')}
+                        className={`px-2.5 py-1.5 rounded-full text-[10px] font-bold transition-all cursor-pointer ${wifiMode === 'paid' ? 'bg-violet-600 text-white' : 'bg-violet-100 text-violet-700 hover:bg-violet-200'}`}
+                      >
+                        Paid
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWifiMode('free')}
+                        className={`px-2.5 py-1.5 rounded-full text-[10px] font-bold transition-all cursor-pointer ${wifiMode === 'free' ? 'bg-green-500 text-white hover:bg-green-600' : 'bg-green-100 text-green-700 hover:bg-green-200'}`}
+                      >
+                        Free
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -879,7 +933,7 @@ export default function EditProperty() {
                   onChange={handleMultipleImageUpload}
                 />
               </label>
-              <p className="text-[10px] text-gray-400 mt-2 text-center">Max 5MB per image. Up to 10 photos.</p>
+              <p className="text-[10px] text-gray-400 mt-2 text-center">Max 2MB per image. Up to 10 photos.</p>
             </div>
 
             {/* Amenities Card */}

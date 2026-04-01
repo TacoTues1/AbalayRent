@@ -428,7 +428,6 @@ export default async function handler(req, res) {
                         .from('tenant_occupancies')
                         .update({
                             status: 'ended',
-                            end_date: new Date().toISOString(),
                             is_family_member: false,
                             parent_occupancy_id: null
                         })
@@ -472,6 +471,101 @@ export default async function handler(req, res) {
             return res.status(200).json({ success: true, cleaned: cleanedCount })
         }
 
+        // ─── SELF-LEAVE FOR FAMILY MEMBERS ───
+        if (action === 'leave') {
+            const { member_id } = req.body
+            if (!member_id) {
+                return res.status(400).json({ error: 'member_id required' })
+            }
+            try {
+                // Read as a list to safely handle duplicate rows.
+                const { data: familyRows, error: familyErr } = await supabaseAdmin
+                    .from('family_members')
+                    .select('id, parent_occupancy_id, member_occupancy_id, created_at')
+                    .eq('member_id', member_id)
+                    .order('created_at', { ascending: false })
+
+                if (familyErr) {
+                    return res.status(500).json({ error: familyErr.message })
+                }
+
+                if (!familyRows || familyRows.length === 0) {
+                    return res.status(404).json({ error: 'Family membership not found' })
+                }
+
+                const latestMembership = familyRows[0]
+
+                let parentTenantId = null
+                let landlordId = null
+                if (latestMembership.parent_occupancy_id) {
+                    const { data: parentOcc, error: parentOccError } = await supabaseAdmin
+                        .from('tenant_occupancies')
+                        .select('tenant_id, landlord_id')
+                        .eq('id', latestMembership.parent_occupancy_id)
+                        .maybeSingle()
+
+                    if (parentOccError) {
+                        console.error('Failed loading parent occupancy for leave:', parentOccError)
+                    } else {
+                        parentTenantId = parentOcc?.tenant_id || null
+                        landlordId = parentOcc?.landlord_id || null
+                    }
+                }
+
+                if (latestMembership.member_occupancy_id) {
+                    const { error: memberOccError } = await supabaseAdmin
+                        .from('tenant_occupancies')
+                        .update({
+                            status: 'ended',
+                            is_family_member: false,
+                            parent_occupancy_id: null
+                        })
+                        .eq('id', latestMembership.member_occupancy_id)
+
+                    if (memberOccError) {
+                        return res.status(500).json({ error: memberOccError.message })
+                    }
+                }
+
+                // Remove all membership rows for this user to prevent stuck duplicates.
+                const { error: deleteErr } = await supabaseAdmin
+                    .from('family_members')
+                    .delete()
+                    .eq('member_id', member_id)
+
+                if (deleteErr) {
+                    return res.status(500).json({ error: deleteErr.message })
+                }
+
+                if (parentTenantId) {
+                    supabaseAdmin.from('notifications').insert({
+                        recipient: parentTenantId,
+                        actor: member_id,
+                        type: 'family_member_left',
+                        message: 'A family member left your household.',
+                        data: {},
+                        read: false
+                    }).catch(err => console.error('Primary tenant leave notification failed:', err))
+                }
+
+                if (landlordId) {
+                    supabaseAdmin.from('notifications').insert({
+                        recipient: landlordId,
+                        actor: member_id,
+                        type: 'family_member_left',
+                        message: 'A tenant family member left the household.',
+                        data: {},
+                        read: false
+                    }).catch(err => console.error('Landlord leave notification failed:', err))
+                }
+
+                return res.status(200).json({ success: true, removed_rows: familyRows.length })
+            } catch (err) {
+                console.error('Self-leave error:', err)
+                return res.status(500).json({ error: 'Failed to leave family group' })
+            }
+        }
+
         return res.status(400).json({ error: 'Invalid action' })
     }
 
@@ -501,7 +595,7 @@ export default async function handler(req, res) {
         if (fm.member_occupancy_id) {
             await supabaseAdmin
                 .from('tenant_occupancies')
-                .update({ status: 'ended', end_date: new Date().toISOString() })
+                .update({ status: 'ended' })
                 .eq('id', fm.member_occupancy_id)
         }
 

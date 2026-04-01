@@ -279,7 +279,7 @@ export default async function handler(req, res) {
         rent_due_day,
         landlord_profile:profiles!tenant_occupancies_landlord_id_fkey(accepted_payments),
         tenant:profiles!tenant_occupancies_tenant_id_fkey(id, first_name, last_name, phone),
-        property:properties(id, title, price)
+        property:properties(id, title, price, amenities)
       `)
         .eq('status', 'active');
 
@@ -292,6 +292,11 @@ export default async function handler(req, res) {
       const isUtilityEnabled = (occ, utilityKey) => {
         const utilitySettings = occ?.landlord_profile?.accepted_payments?.utility_reminders || {};
         return utilitySettings[utilityKey] !== false;
+      };
+
+      const isWifiAvailableAtProperty = (occ) => {
+        const amenities = Array.isArray(occ?.property?.amenities) ? occ.property.amenities : [];
+        return amenities.includes('Wifi') || amenities.includes('WiFi') || amenities.includes('Free WiFi');
       };
 
       // Filter occupancies where today is 1, 2, or 3 days before the due date
@@ -504,6 +509,7 @@ export default async function handler(req, res) {
       // Filter occupancies where today is 1, 2, or 3 days before the WiFi due date
       const wifiOccupancies = (allOccupancies || []).filter(occ => {
         if (!isUtilityEnabled(occ, 'internet')) return false;
+        if (!isWifiAvailableAtProperty(occ)) return false;
         if (!occ.wifi_due_day) return false;
 
         const wifiDueDay = occ.wifi_due_day;
@@ -699,133 +705,10 @@ export default async function handler(req, res) {
     } // End of shouldSendBillReminders check
 
     // ====================================================
-    // G. CONTRACT NEARING END REMINDERS (40 Days Before End)
-    // Sends once when contract is exactly 40 days from expiry
+    // G. Contract-reminder section disabled
+    // Contract/renewal columns were removed from tenant_occupancies.
     // ====================================================
-    console.log(`[Contract Nearing End] ========================================`);
-    console.log(`[Contract Nearing End] Checking for contracts ending in 40 days...`);
-
-    try {
-      // Calculate the date 40 days from now
-      const reminderDate = new Date();
-      reminderDate.setDate(reminderDate.getDate() + 40);
-      const reminderDateStr = reminderDate.toISOString().split('T')[0];
-
-      // Find active occupancies expiring in exactly 40 days
-      const { data: expiringOccupancies, error: expiryError } = await supabaseAdmin
-        .from('tenant_occupancies')
-        .select(`
-          id,
-          tenant_id,
-          landlord_id,
-          contract_end_date,
-          property:properties(id, title),
-          tenant:profiles!tenant_occupancies_tenant_id_fkey(id, first_name, last_name, phone, email),
-          landlord:profiles!tenant_occupancies_landlord_id_fkey(first_name, last_name)
-        `)
-        .eq('status', 'active')
-        .gte('contract_end_date', reminderDateStr)
-        .lte('contract_end_date', reminderDateStr + 'T23:59:59');
-
-      if (expiryError) {
-        console.error('[Contract Nearing End] Error:', expiryError);
-      } else if (expiringOccupancies && expiringOccupancies.length > 0) {
-        results.contract_expiry_reminders_sent = 0;
-
-        for (const occupancy of expiringOccupancies) {
-          const tenantName = `${occupancy.tenant?.first_name || ''} ${occupancy.tenant?.last_name || ''}`.trim();
-          const landlordName = `${occupancy.landlord?.first_name || ''} ${occupancy.landlord?.last_name || ''}`.trim();
-          const propertyTitle = occupancy.property?.title || 'your rental property';
-          const endDateFormatted = new Date(occupancy.contract_end_date).toLocaleDateString('en-US', {
-            month: 'long', day: 'numeric', year: 'numeric'
-          });
-          const daysRemaining = 40;
-
-          // Check if already sent this reminder today
-          const todayStr = new Date().toISOString().split('T')[0];
-          const { data: existingNotif } = await supabaseAdmin
-            .from('notifications')
-            .select('id')
-            .eq('recipient', occupancy.tenant_id)
-            .eq('type', 'contract_nearing_end')
-            .gte('created_at', todayStr)
-            .maybeSingle();
-
-          if (existingNotif) {
-            console.log(`[Contract Nearing End] Already reminded ${tenantName} today, skipping`);
-            continue;
-          }
-
-          // 1. Create in-app notification
-          await supabaseAdmin.from('notifications').insert({
-            recipient: occupancy.tenant_id,
-            actor: occupancy.landlord_id,
-            type: 'contract_nearing_end',
-            message: `Your rental contract for "${propertyTitle}" will end on ${endDateFormatted} (${daysRemaining} days from now). Please contact your landlord if you wish to renew or extend your contract.`,
-            link: '/dashboard'
-          });
-
-          // Also notify the LANDLORD
-          await supabaseAdmin.from('notifications').insert({
-            recipient: occupancy.landlord_id,
-            actor: occupancy.tenant_id,
-            type: 'contract_nearing_end',
-            message: `Tenant ${tenantName}'s contract for "${propertyTitle}" will end on ${endDateFormatted} (${daysRemaining} days from now). You may want to discuss renewal.`,
-            link: '/dashboard'
-          });
-
-          // 2. Send SMS to tenant using dedicated template
-          const phone = formatPhoneNumber(occupancy.tenant?.phone);
-          if (phone) {
-            try {
-              await sendContractNearingEnd(phone, {
-                propertyName: propertyTitle,
-                endDate: endDateFormatted,
-                daysRemaining: daysRemaining
-              });
-              console.log(`[Contract Nearing End] SMS sent to ${phone}`);
-            } catch (smsErr) {
-              console.error('[Contract Nearing End] SMS error:', smsErr);
-            }
-          }
-
-          // 3. Send Email to tenant using dedicated template
-          let email = occupancy.tenant?.email;
-          if (!email) {
-            try {
-              const { data: userData } = await supabaseAdmin.auth.admin.getUserById(occupancy.tenant_id);
-              email = userData?.user?.email;
-            } catch (e) {
-              console.error('[Contract Nearing End] Failed to fetch email:', e);
-            }
-          }
-          if (email) {
-            try {
-              await sendContractNearingEndEmail({
-                to: email,
-                tenantName: tenantName,
-                propertyTitle: propertyTitle,
-                endDate: occupancy.contract_end_date,
-                daysRemaining: daysRemaining,
-                landlordName: landlordName
-              });
-              console.log(`[Contract Nearing End] Email sent to ${email}`);
-            } catch (emailErr) {
-              console.error('[Contract Nearing End] Email error:', emailErr);
-            }
-          }
-
-          results.contract_expiry_reminders_sent++;
-          console.log(`[Contract Nearing End] ✅ Reminder sent to ${tenantName}`);
-        }
-      } else {
-        console.log(`[Contract Nearing End] No contracts ending in 40 days`);
-      }
-    } catch (expiryErr) {
-      console.error('[Contract Nearing End] Error:', expiryErr);
-    }
-
-    console.log(`[Contract Nearing End] ========================================`);
+    console.log(`[Contract Nearing End] Skipped (contract fields removed).`);
 
     // ====================================================
     // H. APPLY LATE FEES (Day after due date)

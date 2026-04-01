@@ -7,6 +7,7 @@ import Footer from '@/components/Footer'
 
 export default function LandlordList() {
   const [landlords, setLandlords] = useState([])
+  const [landlordReviewMap, setLandlordReviewMap] = useState({})
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
 
@@ -22,7 +23,41 @@ export default function LandlordList() {
       .eq('role', 'landlord')
       .order('created_at', { ascending: false })
     
-    if (data) setLandlords(data)
+    if (data) {
+      setLandlords(data)
+
+      const landlordIds = data.map(ll => ll.id)
+      if (landlordIds.length > 0) {
+        const { data: ratingRows } = await supabase
+          .from('landlord_ratings')
+          .select('landlord_id, rating')
+          .in('landlord_id', landlordIds)
+
+        const stats = {}
+        landlordIds.forEach(id => {
+          stats[id] = { avg: 0, count: 0 }
+        })
+
+        ;(ratingRows || []).forEach(row => {
+          if (!stats[row.landlord_id]) {
+            stats[row.landlord_id] = { avg: 0, count: 0, total: 0 }
+          }
+          stats[row.landlord_id].count += 1
+          stats[row.landlord_id].total = (stats[row.landlord_id].total || 0) + Number(row.rating || 0)
+        })
+
+        Object.keys(stats).forEach(id => {
+          const count = stats[id].count || 0
+          const total = stats[id].total || 0
+          stats[id].avg = count > 0 ? total / count : 0
+          delete stats[id].total
+        })
+
+        setLandlordReviewMap(stats)
+      } else {
+        setLandlordReviewMap({})
+      }
+    }
     setLoading(false)
   }
 
@@ -109,6 +144,11 @@ export default function LandlordList() {
                         <h2 className="text-lg font-bold text-gray-900 truncate">
                           {ll.first_name} {ll.last_name || ''}
                         </h2>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <svg className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400" viewBox="0 0 24 24"><path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>
+                          <span className="text-xs font-bold text-gray-800">{(landlordReviewMap[ll.id]?.avg || 0).toFixed(1)}</span>
+                          <span className="text-xs text-gray-500">({landlordReviewMap[ll.id]?.count || 0} reviews)</span>
+                        </div>
                         {ll.city && (
                           <div className="flex items-center gap-1 text-sm text-gray-500 mt-0.5">
                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>

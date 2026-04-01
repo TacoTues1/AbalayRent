@@ -2,8 +2,8 @@
 // Centralized API for sending SMS and Email notifications
 
 import { createClient } from '@supabase/supabase-js'
-import { sendBillNotification, sendNewBookingNotification, sendMoveInNotification, sendRenewalStatus, sendRenewalRequest, sendEndContractNotification, sendPaymentReceivedNotification, sendPaymentConfirmedNotification, sendMaintenanceDoneNotification } from '../../lib/sms'
-import { sendNewPaymentBillEmail, sendNewBookingNotificationEmail, sendCashPaymentNotificationEmail, sendMoveInEmail, sendRenewalStatusEmail, sendRenewalRequestEmail, sendEndContractEmail, sendOnlinePaymentReceivedEmail, sendPaymentConfirmedEmail } from '../../lib/email'
+import { sendBillNotification, sendNewBookingNotification, sendMoveInNotification, sendRenewalStatus, sendRenewalRequest, sendEndContractNotification, sendPaymentReceivedNotification, sendPaymentConfirmedNotification, sendMaintenanceDoneNotification, sendMaintenanceUpdate } from '../../lib/sms'
+import { sendNewPaymentBillEmail, sendNewBookingNotificationEmail, sendCashPaymentNotificationEmail, sendMoveInEmail, sendRenewalStatusEmail, sendRenewalRequestEmail, sendEndContractEmail, sendOnlinePaymentReceivedEmail, sendPaymentConfirmedEmail, sendNotificationEmail } from '../../lib/email'
 
 const supabaseAdmin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -1033,6 +1033,84 @@ export default async function handler(req, res) {
             }
 
             return res.status(200).json({ success: true, type: 'end_contract', results })
+        }
+
+        // ============================================
+        // NOTIFICATION TYPE: MAINTENANCE COST LOGGED (For Tenant)
+        // ============================================
+        if (type === 'maintenance_cost_logged') {
+            const { data: request, error } = await supabaseAdmin
+                .from('maintenance_requests')
+                .select(`
+                    id,
+                    title,
+                    tenant,
+                    maintenance_cost,
+                    cost_deducted_from_deposit,
+                    properties(title),
+                    tenant_profile:profiles!maintenance_requests_tenant_fkey(first_name, last_name, phone)
+                `)
+                .eq('id', recordId)
+                .single()
+
+            if (error || !request) {
+                console.error('Maintenance request not found for maintenance_cost_logged:', error)
+                return res.status(404).json({ error: 'Maintenance request not found' })
+            }
+
+            const tenantPhone = formatPhoneNumber(request.tenant_profile?.phone)
+            let tenantEmail = null
+            try {
+                const { data: userData } = await supabaseAdmin.auth.admin.getUserById(request.tenant)
+                tenantEmail = userData?.user?.email || null
+            } catch (e) {
+                console.error('Failed to fetch tenant email for maintenance cost logged:', e)
+            }
+
+            const tenantName = `${request.tenant_profile?.first_name || ''} ${request.tenant_profile?.last_name || ''}`.trim() || 'Tenant'
+            const propertyTitle = request.properties?.title || 'Property'
+            const amount = Number(request.maintenance_cost || 0)
+            const wasDeducted = !!request.cost_deducted_from_deposit
+            const modeLabel = wasDeducted ? 'deducted from your security deposit' : 'sent as a payment cost bill'
+
+            const results = { sms: false, email: false }
+
+            if (tenantPhone) {
+                try {
+                    await sendMaintenanceUpdate(tenantPhone, {
+                        title: request.title,
+                        status: 'completed',
+                        note: `Cost ₱${amount.toLocaleString()} was ${modeLabel}.`
+                    })
+                    results.sms = true
+                } catch (err) {
+                    console.error(`Maintenance cost SMS failed for ${tenantPhone}:`, err.message)
+                }
+            }
+
+            if (tenantEmail) {
+                try {
+                    await sendNotificationEmail({
+                        to: tenantEmail,
+                        subject: `Maintenance Cost Logged - ${propertyTitle}`,
+                        message: `
+                            <div style="font-family: Helvetica, Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto;">
+                                <h2 style="margin-bottom: 8px; color: #111;">Maintenance Cost Logged</h2>
+                                <p>Hi <strong>${tenantName}</strong>,</p>
+                                <p>Your landlord logged a maintenance cost for <strong>${request.title}</strong> at <strong>${propertyTitle}</strong>.</p>
+                                <p style="margin: 12px 0;"><strong>Amount:</strong> ₱${amount.toLocaleString()}</p>
+                                <p style="margin: 12px 0;"><strong>Handling:</strong> ${wasDeducted ? 'Deducted from your security deposit' : 'Sent as a payment cost bill'}</p>
+                                <p>Please check your dashboard for details.</p>
+                            </div>
+                        `
+                    })
+                    results.email = true
+                } catch (err) {
+                    console.error(`Maintenance cost email failed for ${tenantEmail}:`, err.message)
+                }
+            }
+
+            return res.status(200).json({ success: true, type: 'maintenance_cost_logged', results })
         }
 
         // ============================================

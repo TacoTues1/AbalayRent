@@ -6,8 +6,8 @@ import { createNotification } from '../lib/notifications'
 
 const STEPS = [
     { label: 'Property', icon: '1' },
-    { label: 'Contract', icon: '2' },
-    { label: 'Documents', icon: '3' },
+    { label: 'Schedule', icon: '2' },
+    { label: 'Charges', icon: '3' },
     { label: 'Utilities', icon: '4' },
 ]
 
@@ -31,21 +31,17 @@ export default function AssignTenantPage() {
     const [selectedPropertyId, setSelectedPropertyId] = useState('')
     const [selectedProp, setSelectedProp] = useState(null)
 
-    // Step 2 - Contract
+    // Step 2 - Schedule
     const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0])
-    const [contractMonths, setContractMonths] = useState(12)
-    const [endDate, setEndDate] = useState('')
 
-    // Step 3 - Documents
-    const [contractFile, setContractFile] = useState(null)
+    // Step 3 - Charges
     const [penaltyDetails, setPenaltyDetails] = useState('')
-    const [uploadingContract, setUploadingContract] = useState(false)
+    const [contractPdf, setContractPdf] = useState(null)
 
     // Step 4 - Utilities & Payment
     const [wifiDueDay, setWifiDueDay] = useState('')
     const [waterDueDay, setWaterDueDay] = useState('')
     const [electricityDueDay, setElectricityDueDay] = useState('')
-    const [apartmentDueDay, setApartmentDueDay] = useState('')
     const [alreadyPaid, setAlreadyPaid] = useState(false)
 
     // Confirmation
@@ -123,19 +119,7 @@ export default function AssignTenantPage() {
     useEffect(() => {
         const prop = availableProperties.find(p => p.id === selectedPropertyId)
         setSelectedProp(prop || null)
-        if (prop?.min_contract_months && contractMonths < prop.min_contract_months) {
-            setContractMonths(prop.min_contract_months)
-        }
     }, [selectedPropertyId, availableProperties])
-
-    // Auto-calculate end date
-    useEffect(() => {
-        if (startDate && contractMonths) {
-            const start = new Date(startDate)
-            start.setMonth(start.getMonth() + parseInt(contractMonths))
-            setEndDate(start.toISOString().split('T')[0])
-        }
-    }, [startDate, contractMonths])
 
     const toast = (type, msg) => {
         showToast[type](msg, { duration: 4000, progress: true, position: 'top-center', transition: 'bounceIn' })
@@ -145,13 +129,7 @@ export default function AssignTenantPage() {
         if (step === 0) {
             if (!selectedPropertyId) return toast('error', 'Please select a property')
         }
-        if (step === 1) {
-            if (!startDate) return toast('error', 'Please select a start date')
-            if (selectedProp?.min_contract_months && contractMonths < selectedProp.min_contract_months) {
-                return toast('error', `Minimum contract duration for this property is ${selectedProp.min_contract_months} months`)
-            }
-            if (!contractMonths || parseInt(contractMonths) < 1) return toast('error', 'Contract duration must be at least 1 month')
-        }
+        if (step === 1 && !startDate) return toast('error', 'Please select a start date')
         if (step === 2) {
             // Late payment fee is optional
         }
@@ -165,12 +143,8 @@ export default function AssignTenantPage() {
         const amenities = selectedProp?.amenities || []
         const isWaterFree = amenities.includes('Free Water')
         const isElecFree = amenities.includes('Free Electricity')
+        const isWifiAvailable = amenities.includes('Wifi') || amenities.includes('WiFi') || amenities.includes('Free WiFi')
         const isWifiFree = amenities.includes('Free WiFi')
-
-        // Validate apartment due date
-        if (!apartmentDueDay || parseInt(apartmentDueDay) < 1 || parseInt(apartmentDueDay) > 31) {
-            return toast('error', 'Please enter a valid Apartment Bill Due Day (1-31)')
-        }
 
         // Validate utility due dates if not free
         if (!isWaterFree && (!waterDueDay || parseInt(waterDueDay) < 1 || parseInt(waterDueDay) > 31)) {
@@ -179,26 +153,29 @@ export default function AssignTenantPage() {
         if (!isElecFree && (!electricityDueDay || parseInt(electricityDueDay) < 1 || parseInt(electricityDueDay) > 31)) {
             return toast('error', 'Please enter a valid Electricity Due Day (1-31)')
         }
-        if (!isWifiFree && (!wifiDueDay || parseInt(wifiDueDay) < 1 || parseInt(wifiDueDay) > 31)) {
+        if (isWifiAvailable && !isWifiFree && (!wifiDueDay || parseInt(wifiDueDay) < 1 || parseInt(wifiDueDay) > 31)) {
             return toast('error', 'Please enter a valid WiFi Due Day (1-31)')
         }
 
         setSubmitting(true)
 
-        // Upload contract if provided
-        let contractUrl = null
-        if (contractFile) {
-            setUploadingContract(true)
-            try {
-                const fileExt = contractFile.name.split('.').pop()
-                const fileName = `${selectedPropertyId}_${booking.tenant}_${Date.now()}.${fileExt}`
-                const filePath = `contracts/${fileName}`
-                const { error: uploadError } = await supabase.storage.from('contracts').upload(filePath, contractFile, { cacheControl: '3600', upsert: false })
-                if (uploadError) { toast('error', 'Failed to upload contract.'); setSubmitting(false); setUploadingContract(false); return }
-                const { data: urlData } = supabase.storage.from('contracts').getPublicUrl(filePath)
-                contractUrl = urlData?.publicUrl
-            } catch (err) { toast('error', 'Failed to upload contract.'); setSubmitting(false); setUploadingContract(false); return }
-            setUploadingContract(false)
+        let contractPdfUrl = null
+        if (contractPdf) {
+            const fileName = `contract_${Date.now()}_${contractPdf.name}`
+            const { error: uploadError } = await supabase.storage
+                .from('payment-files')
+                .upload(fileName, contractPdf)
+
+            if (uploadError) {
+                toast('error', 'Failed to upload contract PDF')
+                setSubmitting(false)
+                return
+            }
+
+            const { data: contractPublic } = supabase.storage
+                .from('payment-files')
+                .getPublicUrl(fileName)
+            contractPdfUrl = contractPublic?.publicUrl || null
         }
 
         // Calculate amounts from property settings
@@ -213,14 +190,12 @@ export default function AssignTenantPage() {
             landlord_id: session.user.id,
             status: 'active',
             start_date: new Date(startDate).toISOString(),
-            contract_end_date: endDate,
             security_deposit: securityDepositAmount,
             security_deposit_used: 0,
-            wifi_due_day: isWifiFree ? null : (wifiDueDay ? parseInt(wifiDueDay) : null),
+            wifi_due_day: isWifiAvailable && !isWifiFree ? (wifiDueDay ? parseInt(wifiDueDay) : null) : null,
+            water_due_day: isWaterFree ? null : (waterDueDay ? parseInt(waterDueDay) : null),
             electricity_due_day: isElecFree ? null : (electricityDueDay ? parseInt(electricityDueDay) : null),
-            rent_due_day: apartmentDueDay ? parseInt(apartmentDueDay) : null,
             late_payment_fee: penaltyDetails ? parseFloat(penaltyDetails) : 0,
-            contract_url: contractUrl
         }).select('id').single()
 
         if (error) { toast('error', 'Failed to assign tenant: ' + error.message); setSubmitting(false); return }
@@ -230,11 +205,12 @@ export default function AssignTenantPage() {
         await supabase.from('bookings').update({ status: 'completed' }).eq('id', booking.id)
 
         // Notifications
-        let message = `You have been assigned to occupy "${selectedProp.title}" from ${new Date(startDate).toLocaleDateString('en-US')} to ${new Date(endDate).toLocaleDateString('en-US')}.`
+        let message = `You have been assigned to occupy "${selectedProp.title}" starting ${new Date(startDate).toLocaleDateString('en-US')}.`
         if (securityDepositAmount > 0) message += ` Security deposit: ₱${Number(securityDepositAmount).toLocaleString()}.`
         if (penaltyDetails && parseFloat(penaltyDetails) > 0) message += ` Late payment fee: ₱${Number(penaltyDetails).toLocaleString()}`
+        if (contractPdfUrl) message += ` Contract PDF: ${contractPdfUrl}`
 
-        await createNotification({ recipient: booking.tenant, actor: session.user.id, type: 'occupancy_assigned', message, link: '/maintenance' })
+        await createNotification({ recipient: booking.tenant, actor: session.user.id, type: 'occupancy_assigned', message, link: '/maintenance', data: { contract_pdf_url: contractPdfUrl } })
 
         if (tenantProfile?.phone) {
             fetch('/api/send-sms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phoneNumber: tenantProfile.phone, message }) }).catch(err => console.error('SMS Error:', err))
@@ -249,10 +225,11 @@ export default function AssignTenantPage() {
                 tenantName: `${tenantProfile?.first_name || ''} ${tenantProfile?.last_name || ''}`.trim(),
                 tenantPhone: tenantProfile?.phone, tenantEmail: null,
                 propertyTitle: selectedProp.title, propertyAddress: '',
-                startDate, endDate,
+                startDate,
                 landlordName: `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim(),
                 landlordPhone: profile?.phone || '',
-                securityDeposit: securityDepositAmount, rentAmount
+                securityDeposit: securityDepositAmount, rentAmount,
+                contractPdfUrl
             })
         }).catch(err => console.error('Move-in notification error:', err))
 
@@ -361,7 +338,6 @@ export default function AssignTenantPage() {
                                 <div className="mt-2 flex flex-wrap gap-1">
                                     {p.has_security_deposit !== false && <span className="text-[10px] bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full font-medium">Deposit: ₱{Number(p.security_deposit_amount || p.price).toLocaleString()}</span>}
                                     {p.has_advance !== false && <span className="text-[10px] bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full font-medium">Advance: ₱{Number(p.advance_amount || p.price).toLocaleString()}</span>}
-                                    {p.min_contract_months && <span className="text-[10px] bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-medium">Min {p.min_contract_months} months</span>}
                                     {(p.amenities || []).includes('Free Water') && <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Free Water</span>}
                                     {(p.amenities || []).includes('Free Electricity') && <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Free Electricity</span>}
                                     {(p.amenities || []).includes('Free WiFi') && <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Free WiFi</span>}
@@ -380,25 +356,6 @@ export default function AssignTenantPage() {
                 <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Start Date *</label>
                 <input type="date" value={startDate} min={todayStr} onChange={e => setStartDate(e.target.value)}
                     className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-gray-900 focus:border-transparent outline-none" />
-            </div>
-
-            <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">
-                    Contract Duration (months) *
-                    {selectedProp?.min_contract_months && (
-                        <span className="text-yellow-600 font-normal ml-1">— minimum {selectedProp.min_contract_months} months</span>
-                    )}
-                </label>
-                <input type="number" value={contractMonths} min={selectedProp?.min_contract_months || 1}
-                    onChange={e => setContractMonths(e.target.value)}
-                    className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-gray-900 focus:border-transparent outline-none" />
-            </div>
-
-            <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">End Date (auto-calculated)</label>
-                <div className="px-3 py-2.5 border border-gray-200 rounded-lg bg-gray-50 text-sm font-medium text-gray-700">
-                    {endDate ? new Date(endDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '—'}
-                </div>
             </div>
 
             {/* Summary */}
@@ -434,36 +391,21 @@ export default function AssignTenantPage() {
     const renderStep3 = () => (
         <div className="space-y-4">
             <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Contract PDF (optional)</label>
-                <div className="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center hover:border-gray-400 transition-colors">
-                    {contractFile ? (
-                        <div className="flex items-center justify-center gap-2">
-                            <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                            <span className="text-sm font-medium text-gray-700">{contractFile.name}</span>
-                            <button type="button" onClick={() => setContractFile(null)} className="text-red-500 text-xs font-bold ml-2 cursor-pointer">Remove</button>
-                        </div>
-                    ) : (
-                        <label className="cursor-pointer">
-                            <svg className="w-8 h-8 mx-auto text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                            <p className="text-sm font-medium text-gray-600">Click to upload PDF</p>
-                            <p className="text-[10px] text-gray-400 mt-1">PDF files only, max 10MB</p>
-                            <input type="file" accept="application/pdf" className="hidden" onChange={e => {
-                                const file = e.target.files?.[0]
-                                if (file) {
-                                    if (file.size > 10 * 1024 * 1024) { toast('error', 'File size must be less than 10MB'); return }
-                                    setContractFile(file)
-                                }
-                            }} />
-                        </label>
-                    )}
-                </div>
-            </div>
-
-            <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Late Payment Fee (₱)</label>
                 <input type="number" min="0" value={penaltyDetails} onChange={e => setPenaltyDetails(e.target.value)} placeholder="e.g. 500"
                     className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-gray-900 focus:border-transparent outline-none" />
                 <p className="text-[10px] text-gray-400 mt-1 ml-1">Amount charged when rent is paid late.</p>
+            </div>
+
+            <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1 ml-1">Contract PDF (Optional)</label>
+                <input
+                    type="file"
+                    accept="application/pdf"
+                    onChange={e => setContractPdf(e.target.files?.[0] || null)}
+                    className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white file:mr-3 file:px-3 file:py-1.5 file:rounded-md file:border-0 file:bg-gray-100 file:text-gray-700 file:font-semibold"
+                />
+                <p className="text-[10px] text-gray-400 mt-1 ml-1">You can continue without uploading a contract PDF.</p>
             </div>
         </div>
     )
@@ -554,7 +496,6 @@ export default function AssignTenantPage() {
         )
     }
 
-    const apartmentIcon = <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
     const waterIcon = <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 21c-3.866 0-7-3.134-7-7 0-4.97 7-11 7-11s7 6.03 7 11c0 3.866-3.134 7-7 7z" /></svg>
     const elecIcon = <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
     const wifiIcon = <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01M5.636 13.636a9 9 0 0112.728 0M1.393 10.393a14 14 0 0121.213 0" /></svg>
@@ -563,6 +504,7 @@ export default function AssignTenantPage() {
         const amenities = selectedProp?.amenities || []
         const isWaterFree = amenities.includes('Free Water')
         const isElecFree = amenities.includes('Free Electricity')
+        const isWifiAvailable = amenities.includes('Wifi') || amenities.includes('WiFi') || amenities.includes('Free WiFi')
         const isWifiFree = amenities.includes('Free WiFi')
         const FreeBadge = ({ label, icon }) => (
             <div className="flex items-center gap-3 p-3.5 bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl border border-green-200">
@@ -571,13 +513,19 @@ export default function AssignTenantPage() {
                 <span className="ml-auto text-[10px] font-bold bg-green-200 text-green-800 px-2 py-0.5 rounded-full">Included</span>
             </div>
         )
+        const UnavailableBadge = ({ label, icon }) => (
+            <div className="flex items-center gap-3 p-3.5 bg-gray-50 rounded-2xl border border-gray-200">
+                <div className="w-8 h-8 rounded-lg bg-gray-200 text-gray-500 flex items-center justify-center">{icon}</div>
+                <span className="text-sm font-bold text-gray-700">{label}</span>
+                <span className="ml-auto text-[10px] font-bold bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full">Not Available</span>
+            </div>
+        )
         return (
             <div className="space-y-3">
-                <p className="text-xs text-gray-500 font-medium leading-relaxed">Select a due day for each bill. A 4-day notification window will be highlighted.</p>
-                <DayPickerModal label="Apartment Bill" icon={apartmentIcon} selectedDay={apartmentDueDay} onSelect={setApartmentDueDay} accentColor="rose" pickerKey="apartment" />
+                <p className="text-xs text-gray-500 font-medium leading-relaxed">Select utility due days. A 4-day notification window will be highlighted.</p>
                 {!isWaterFree ? <DayPickerModal label="Water" icon={waterIcon} selectedDay={waterDueDay} onSelect={setWaterDueDay} accentColor="blue" pickerKey="water" /> : <FreeBadge label="Free Water" icon={waterIcon} />}
                 {!isElecFree ? <DayPickerModal label="Electricity" icon={elecIcon} selectedDay={electricityDueDay} onSelect={setElectricityDueDay} accentColor="amber" pickerKey="electricity" /> : <FreeBadge label="Free Electricity" icon={elecIcon} />}
-                {!isWifiFree ? <DayPickerModal label="WiFi" icon={wifiIcon} selectedDay={wifiDueDay} onSelect={setWifiDueDay} accentColor="violet" pickerKey="wifi" /> : <FreeBadge label="Free WiFi" icon={wifiIcon} />}
+                {!isWifiAvailable ? <UnavailableBadge label="WiFi" icon={wifiIcon} /> : !isWifiFree ? <DayPickerModal label="WiFi" icon={wifiIcon} selectedDay={wifiDueDay} onSelect={setWifiDueDay} accentColor="violet" pickerKey="wifi" /> : <FreeBadge label="Free WiFi" icon={wifiIcon} />}
 
                 <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm">
                     <div className="flex items-center justify-between">
@@ -608,7 +556,7 @@ export default function AssignTenantPage() {
         )
     }
 
-    const stepDescriptions = ['Select a property', 'Set contract terms', 'Upload documents', 'Configure utilities']
+    const stepDescriptions = ['Select a property', 'Set start date', 'Set charges', 'Configure utilities']
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-stone-100 font-sans text-black">
@@ -715,7 +663,7 @@ export default function AssignTenantPage() {
                                 Cancel
                             </button>
                             <button type="button" onClick={handleSubmit} disabled={submitting} className="flex-1 py-3.5 rounded-xl bg-[#e31221] text-white font-bold text-sm hover:bg-red-600 transition-all cursor-pointer disabled:opacity-50 shadow-md">
-                                {submitting ? (uploadingContract ? 'Uploading...' : 'Assigning...') : 'Yes, Assign'}
+                                {submitting ? 'Assigning...' : 'Yes, Assign'}
                             </button>
                         </div>
                     </div>

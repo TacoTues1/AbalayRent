@@ -1,8 +1,8 @@
 import '../styles/globals.css'
+import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import Navbar from '../components/Navbar'
 import NotificationToast from '../components/NotificationToast'
-import CookieConsent from '../components/CookieConsent'
 import Meta from '../components/Meta'
 import { Analytics } from "@vercel/analytics/next"
 import { SpeedInsights } from "@vercel/speed-insights/next"
@@ -12,8 +12,57 @@ import { useRouter } from 'next/router'
 
 function MyApp({ Component, pageProps }) {
   const router = useRouter()
+  const [authReady, setAuthReady] = useState(false)
+  const [session, setSession] = useState(null)
+
+  const publicPaths = new Set([
+    '/',
+    '/about',
+    '/contact',
+    '/team',
+    '/terms',
+    '/privacy',
+    '/flowchart',
+    '/gantt',
+    '/getDirections',
+    '/login',
+    '/register',
+    '/register-landlord',
+    '/forgotPassword',
+    '/updatePassword',
+    '/properties/allProperties',
+    '/properties/[id]'
+  ])
+
+  useEffect(() => {
+    let mounted = true
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return
+      setSession(data?.session || null)
+      setAuthReady(true)
+    })
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession || null)
+      setAuthReady(true)
+    })
+
+    return () => {
+      mounted = false
+      authListener?.subscription?.unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!authReady) return
+    if (session) return
+    if (publicPaths.has(router.pathname)) return
+    router.replace('/')
+  }, [authReady, session, router.pathname])
 
   const hideNavbarPaths = ['/login', '/register', '/register-landlord', '/forgotPassword', '/updatePassword', '/getDirections', '/assign-tenant', '/properties/new']
+
   return (
     <>
       <Meta />
@@ -22,7 +71,6 @@ function MyApp({ Component, pageProps }) {
       <NotificationToast />
       <GoeyToaster position="top-right" richColors />
       <Component {...pageProps} supabase={supabase} />
-      <CookieConsent />
       <Analytics />
       <SpeedInsights />
     </>

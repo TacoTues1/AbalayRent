@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import { normalizeImageForUpload } from '../lib/imageCompression'
 import { Button, Input, Badge, Spinner } from './UI'
 import { showToast } from 'nextjs-toast-notify'
 import { useRouter } from 'next/router'
@@ -211,6 +212,11 @@ function OverviewView() {
   const [monthlyStatementHistory, setMonthlyStatementHistory] = useState([])
   const [remindersEnabled, setRemindersEnabled] = useState(true)
   const [togglingReminders, setTogglingReminders] = useState(false)
+  const [showBulkEmailModal, setShowBulkEmailModal] = useState(false)
+  const [bulkEmailRecipients, setBulkEmailRecipients] = useState('')
+  const [bulkEmailSubject, setBulkEmailSubject] = useState('')
+  const [bulkEmailBody, setBulkEmailBody] = useState('')
+  const [sendingBulkEmail, setSendingBulkEmail] = useState(false)
 
   useEffect(() => { loadStats(); checkReminderStatus(); loadMonthlyStatementStatus(); }, [])
 
@@ -281,6 +287,65 @@ function OverviewView() {
       showToast.error("Error: " + e.message)
     } finally {
       setTogglingReminders(false)
+    }
+  }
+
+  function resetBulkEmailForm() {
+    setBulkEmailRecipients('')
+    setBulkEmailSubject('')
+    setBulkEmailBody('')
+  }
+
+  async function sendBulkEmailFromAdmin() {
+    const parsedEmails = Array.from(
+      new Set(
+        bulkEmailRecipients
+          .split(/[\n,;]+/)
+          .map((email) => email.trim().toLowerCase())
+          .filter(Boolean)
+      )
+    )
+
+    if (parsedEmails.length === 0) {
+      showToast.error('Please add at least one recipient email')
+      return
+    }
+
+    if (!bulkEmailSubject.trim() || !bulkEmailBody.trim()) {
+      showToast.error('Subject and body are required')
+      return
+    }
+
+    setSendingBulkEmail(true)
+    try {
+      const res = await fetch('/api/admin/send-bulk-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          emails: parsedEmails,
+          subject: bulkEmailSubject.trim(),
+          body: bulkEmailBody.trim()
+        })
+      })
+
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to send bulk email')
+      }
+
+      const failedCount = data.failed?.length || 0
+      showToast.success(`Email sent: ${data.sent || 0} success, ${failedCount} failed`)
+
+      if (failedCount > 0) {
+        console.warn('Bulk email failures:', data.failed)
+      }
+
+      resetBulkEmailForm()
+      setShowBulkEmailModal(false)
+    } catch (err) {
+      showToast.error(err.message || 'Failed to send bulk email')
+    } finally {
+      setSendingBulkEmail(false)
     }
   }
 
@@ -487,6 +552,22 @@ function OverviewView() {
             {togglingReminders ? 'Processing...' : remindersEnabled ? 'Stop Reminders' : 'Start Reminders'}
           </button>
         </div>
+
+        <div className="flex flex-col lg:flex-row items-stretch gap-4 p-5 bg-gray-50 rounded-xl border border-gray-200 mt-4">
+          <div className="flex-1">
+            <h4 className="font-bold text-gray-900 text-base">Bulk Email</h4>
+            <p className="text-sm text-gray-500 mt-1">Compose and send one message to multiple email recipients.</p>
+            <p className="text-xs text-gray-600 font-semibold mt-3 bg-gray-100 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full">
+              Add recipients separated by comma, semicolon, or new line
+            </p>
+          </div>
+          <button
+            onClick={() => setShowBulkEmailModal(true)}
+            className="self-center px-6 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all cursor-pointer min-w-[170px] whitespace-nowrap"
+          >
+            Compose Bulk Email
+          </button>
+        </div>
       </div>
 
       {/* Recent Users */}
@@ -516,6 +597,82 @@ function OverviewView() {
           ))}
         </div>
       </div>
+
+      {showBulkEmailModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[80] p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl w-full max-w-2xl p-6 shadow-2xl border border-gray-100 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-xl font-black text-gray-900">Send Bulk Email</h3>
+              <button
+                onClick={() => {
+                  if (!sendingBulkEmail) {
+                    setShowBulkEmailModal(false)
+                  }
+                }}
+                className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-400 cursor-pointer"
+                disabled={sendingBulkEmail}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-500 mb-1.5">Recipients</label>
+                <textarea
+                  rows={5}
+                  value={bulkEmailRecipients}
+                  onChange={(e) => setBulkEmailRecipients(e.target.value)}
+                  placeholder="email1@example.com, email2@example.com"
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-2 focus:ring-black focus:border-transparent outline-none resize-y"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-500 mb-1.5">Subject</label>
+                <input
+                  type="text"
+                  value={bulkEmailSubject}
+                  onChange={(e) => setBulkEmailSubject(e.target.value)}
+                  placeholder="Enter email subject"
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-2 focus:ring-black focus:border-transparent outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase text-gray-500 mb-1.5">Body</label>
+                <textarea
+                  rows={8}
+                  value={bulkEmailBody}
+                  onChange={(e) => setBulkEmailBody(e.target.value)}
+                  placeholder="Write your message here..."
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-medium focus:ring-2 focus:ring-black focus:border-transparent outline-none resize-y"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100">
+              <button
+                onClick={() => {
+                  setShowBulkEmailModal(false)
+                  resetBulkEmailForm()
+                }}
+                disabled={sendingBulkEmail}
+                className="px-6 py-3 border border-gray-300 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-50 cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={sendBulkEmailFromAdmin}
+                disabled={sendingBulkEmail}
+                className="px-8 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
+                {sendingBulkEmail ? 'Sending...' : 'Send Emails'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -535,7 +692,12 @@ function UsersView() {
   useEffect(() => { fetchUsers() }, [])
   async function fetchUsers() {
     setLoading(true)
-    const { data, error } = await supabase.from('profiles').select('*, email').eq('is_deleted', false).order('created_at', { ascending: false })
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*, email')
+      .eq('is_deleted', false)
+      .neq('role', 'admin')
+      .order('created_at', { ascending: false })
     if (error) console.error(error)
     else setUsers(data || [])
     setLoading(false)
@@ -890,14 +1052,14 @@ function PropertiesView() {
     if (e.target) e.target.value = ''
     if (!file) return
     if (!file.type.startsWith('image/')) { showToast.error('Please upload an image file'); return }
-    if (file.size > 5 * 1024 * 1024) { showToast.error('Image size must be less than 5MB'); return }
 
     setUploadingImages(prev => ({ ...prev, [index]: true }))
     try {
-      const fileExt = file.name.split('.').pop()
+      const uploadFile = await normalizeImageForUpload(file)
+      const fileExt = uploadFile.name.split('.').pop()
       const randomId = Math.random().toString(36).substring(2, 10)
       const fileName = `admin/${Date.now()}_${randomId}.${fileExt}`
-      const { data, error } = await supabase.storage.from('property-images').upload(fileName, file)
+      const { data, error } = await supabase.storage.from('property-images').upload(fileName, uploadFile)
       if (error) throw error
       const { data: publicUrlData } = supabase.storage.from('property-images').getPublicUrl(fileName)
       setImageUrls(prev => { const newUrls = [...prev]; newUrls[index] = publicUrlData.publicUrl; return newUrls })
@@ -931,9 +1093,19 @@ function PropertiesView() {
 
   async function confirmDelete() {
     if (!deleteId) return;
-    const { error } = await supabase.from('properties').update({ is_deleted: true }).eq('id', deleteId)
-    if (error) showToast.error("Failed to delete")
-    else { showToast.success("Property deleted"); loadProperties() }
+    try {
+      const response = await fetch('/api/admin/delete-property', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ propertyId: deleteId })
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to delete property')
+      showToast.success("Property deleted")
+      loadProperties()
+    } catch (err) {
+      showToast.error(err.message || "Failed to delete")
+    }
     setDeleteId(null)
   }
 
@@ -1061,7 +1233,7 @@ function PropertiesView() {
                   <button type="button" onClick={() => setImageUrls([...imageUrls, ''])} className="aspect-square rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 cursor-pointer bg-white hover:bg-gray-50 hover:border-gray-500 transition-colors text-lg">+</button>
                 )}
               </div>
-              <p className="text-[10px] text-gray-400 mt-2">Max 5MB per image. Click to upload or replace.</p>
+              <p className="text-[10px] text-gray-400 mt-2">Max 2MB per image. Click to upload or replace.</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">

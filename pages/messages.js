@@ -244,15 +244,158 @@ export default function Messages() {
         }
       })
 
-      setConversations(enrichedConversations)
-      if (enrichedConversations.length > 0) {
-        setSelectedConversation(enrichedConversations[0])
+      const accessContext = await getMessagingAccessContext()
+      const allowedConversations = enrichedConversations.filter(conv =>
+        canMessageUserWithContext(conv.other_user, accessContext)
+      )
+
+      setConversations(allowedConversations)
+      if (allowedConversations.length > 0) {
+        setSelectedConversation(allowedConversations[0])
+      } else {
+        setSelectedConversation(null)
       }
     } else {
       setConversations([])
+      setSelectedConversation(null)
     }
 
     setLoading(false)
+  }
+
+  async function getTenantAllowedLandlordIds(userId) {
+    const landlordIds = new Set()
+
+    const { data: occupancies, error: occError } = await supabase
+      .from('tenant_occupancies')
+      .select('landlord_id')
+      .eq('tenant_id', userId)
+      .in('status', ['active', 'pending_end'])
+
+    if (occError) {
+      throw occError
+    }
+
+    ;(occupancies || []).forEach(occ => {
+      if (occ?.landlord_id) landlordIds.add(occ.landlord_id)
+    })
+
+    try {
+      const fmRes = await fetch(`/api/family-members?member_id=${userId}`, { cache: 'no-store' })
+      if (fmRes.ok) {
+        const fmData = await fmRes.json()
+        const fmLandlordId = fmData?.occupancy?.landlord?.id || fmData?.occupancy?.landlord_id
+        if (fmLandlordId) landlordIds.add(fmLandlordId)
+      }
+    } catch (err) {
+      console.warn('Family-member landlord fallback failed:', err)
+    }
+
+    return Array.from(landlordIds)
+  }
+
+  async function getLandlordAllowedTenantIds(userId) {
+    const tenantIds = new Set()
+
+    const { data: occupancies, error: occError } = await supabase
+      .from('tenant_occupancies')
+      .select('id, tenant_id')
+      .eq('landlord_id', userId)
+      .in('status', ['active', 'pending_end'])
+
+    if (occError) {
+      throw occError
+    }
+
+    const occupancyIds = []
+    ;(occupancies || []).forEach(occ => {
+      if (occ?.tenant_id) tenantIds.add(occ.tenant_id)
+      if (occ?.id) occupancyIds.push(occ.id)
+    })
+
+    if (occupancyIds.length > 0) {
+      try {
+        const familyLists = await Promise.all(
+          occupancyIds.map(async occupancyId => {
+            try {
+              const res = await fetch(`/api/family-members?occupancy_id=${occupancyId}`, { cache: 'no-store' })
+              if (!res.ok) return []
+              const data = await res.json()
+              return (data?.members || []).map(member => member.member_id || member.member_profile?.id).filter(Boolean)
+            } catch {
+              return []
+            }
+          })
+        )
+
+        familyLists.flat().forEach(memberId => tenantIds.add(memberId))
+      } catch (err) {
+        console.warn('Failed to include family-member tenants for landlord contacts:', err)
+      }
+    }
+
+    return Array.from(tenantIds)
+  }
+
+  async function getMessagingAccessContext() {
+    if (!profile || !session) {
+      return {
+        role: null,
+        sessionUserId: null,
+        allowedLandlordIds: new Set(),
+        allowedTenantIds: new Set()
+      }
+    }
+
+    if (profile.role === 'tenant') {
+      const landlordIds = await getTenantAllowedLandlordIds(session.user.id)
+      return {
+        role: 'tenant',
+        sessionUserId: session.user.id,
+        allowedLandlordIds: new Set(landlordIds),
+        allowedTenantIds: new Set()
+      }
+    }
+
+    if (profile.role === 'landlord') {
+      const tenantIds = await getLandlordAllowedTenantIds(session.user.id)
+      return {
+        role: 'landlord',
+        sessionUserId: session.user.id,
+        allowedLandlordIds: new Set(),
+        allowedTenantIds: new Set(tenantIds)
+      }
+    }
+
+    return {
+      role: profile.role,
+      sessionUserId: session.user.id,
+      allowedLandlordIds: new Set(),
+      allowedTenantIds: new Set()
+    }
+  }
+
+  function canMessageUserWithContext(otherUser, accessContext) {
+    if (!otherUser?.id || !accessContext?.sessionUserId) return false
+    if (otherUser.id === accessContext.sessionUserId) return false
+
+    if (accessContext.role === 'tenant') {
+      return otherUser.role === 'landlord' && accessContext.allowedLandlordIds.has(otherUser.id)
+    }
+
+    if (accessContext.role === 'landlord') {
+      if (otherUser.role === 'landlord') return true
+      if (otherUser.role === 'tenant') return accessContext.allowedTenantIds.has(otherUser.id)
+      return false
+    }
+
+    return false
+  }
+
+  async function isUserAllowedToMessage(otherUser) {
+    if (!otherUser?.id) return false
+    const accessContext = await getMessagingAccessContext()
+    return canMessageUserWithContext(otherUser, accessContext)
   }
 
   async function loadAllUsers() {
@@ -260,55 +403,63 @@ export default function Messages() {
 
     try {
       if (profile.role === 'landlord') {
-        // RULE 1: Landlords can chat to many tenants
-        // We fetch all users who have the role 'tenant'
-        const { data: tenants, error } = await supabase
+        const tenantIds = await getLandlordAllowedTenantIds(session.user.id)
+
+        let tenantProfiles = []
+        if (tenantIds.length > 0) {
+          const { data: tenants, error: tenantError } = await supabase
+            .from('profiles')
+            .select('id, first_name, middle_name, last_name, role, phone, avatar_url')
+            .in('id', tenantIds)
+            .eq('role', 'tenant')
+
+          if (tenantError) throw tenantError
+          tenantProfiles = tenants || []
+        }
+
+        const { data: otherLandlords, error: landlordError } = await supabase
           .from('profiles')
           .select('id, first_name, middle_name, last_name, role, phone, avatar_url')
-          .eq('role', 'tenant') // Filter for tenants only
+          .eq('role', 'landlord')
           .neq('id', session.user.id)
           .order('first_name')
 
-        if (error) throw error
-        setAllUsers(tenants || [])
-        setFilteredUsers(tenants || [])
+        if (landlordError) throw landlordError
+
+        const usersMap = new Map()
+        ;[...tenantProfiles, ...(otherLandlords || [])].forEach(user => {
+          if (user?.id && user.id !== session.user.id) usersMap.set(user.id, user)
+        })
+
+        const allowedUsers = Array.from(usersMap.values()).sort((a, b) => {
+          const aName = `${a.first_name || ''} ${a.last_name || ''}`.trim().toLowerCase()
+          const bName = `${b.first_name || ''} ${b.last_name || ''}`.trim().toLowerCase()
+          return aName.localeCompare(bName)
+        })
+
+        setAllUsers(allowedUsers)
+        setFilteredUsers(allowedUsers)
 
       } else if (profile.role === 'tenant') {
-        // RULE 2: Tenants can chat ONLY with the landlord of properties they rent
+        const landlordIds = await getTenantAllowedLandlordIds(session.user.id)
 
-        // Step A: Find active occupancies for this tenant
-        const { data: occupancies, error: occError } = await supabase
-          .from('tenant_occupancies')
-          .select(`
-            status,
-            property:properties!inner (
-              landlord
-            )
-          `)
-          .eq('tenant_id', session.user.id)
-          .eq('status', 'active') // Only current active rentals
-
-        if (occError) throw occError
-
-        // Step B: Extract unique Landlord IDs
-        const landlordIds = [...new Set(occupancies?.map(o => o.property?.landlord).filter(Boolean))]
-
-        if (landlordIds.length > 0) {
-          // Step C: Fetch profile details for those specific landlords
-          const { data: landlords, error: profileError } = await supabase
-            .from('profiles')
-            .select('id, first_name, middle_name, last_name, role, phone, avatar_url')
-            .in('id', landlordIds)
-
-          if (profileError) throw profileError
-
-          setAllUsers(landlords || [])
-          setFilteredUsers(landlords || [])
-        } else {
-          // No active landlords found
+        if (landlordIds.length === 0) {
           setAllUsers([])
           setFilteredUsers([])
+          return
         }
+
+        const { data: landlords, error: profileError } = await supabase
+          .from('profiles')
+          .select('id, first_name, middle_name, last_name, role, phone, avatar_url')
+          .in('id', landlordIds)
+          .eq('role', 'landlord')
+          .order('first_name')
+
+        if (profileError) throw profileError
+
+        setAllUsers(landlords || [])
+        setFilteredUsers(landlords || [])
       }
     } catch (error) {
       console.error('Error loading available contacts:', error)
@@ -337,6 +488,12 @@ export default function Messages() {
   }
 
   async function startNewConversation(otherUser) {
+    const isAllowed = await isUserAllowedToMessage(otherUser)
+    if (!isAllowed) {
+      showToast.error('You can only message allowed contacts based on your account role.')
+      return
+    }
+
     const existingLocal = conversations.find(c =>
       (c.landlord_id === session.user.id && c.tenant_id === otherUser.id) ||
       (c.tenant_id === session.user.id && c.landlord_id === otherUser.id)
@@ -410,8 +567,8 @@ export default function Messages() {
       .from('conversations')
       .insert({
         property_id: null,
-        landlord_id: session.user.id,
-        tenant_id: otherUser.id
+        landlord_id: profile.role === 'tenant' ? otherUser.id : session.user.id,
+        tenant_id: profile.role === 'tenant' ? session.user.id : otherUser.id
       })
       .select('*, property:properties(title, address)')
       .single()
@@ -537,9 +694,9 @@ export default function Messages() {
       e.target.value = ''
       return
     }
-    const invalidFiles = newFiles.filter(file => file.size > 10 * 1024 * 1024)
+    const invalidFiles = newFiles.filter(file => file.size > 2 * 1024 * 1024)
     if (invalidFiles.length > 0) {
-      showToast.error('Each file must be less than 10MB', {
+      showToast.error('Each file must be less than 2MB', {
         duration: 4000,
         progress: true,
         position: "top-center",
@@ -601,6 +758,16 @@ export default function Messages() {
     const trimmedMessage = newMessage.trim().replace(/\s+/g, ' ')
     if (!trimmedMessage && selectedFiles.length === 0) return
     if (!selectedConversation) return
+
+    const otherUserForValidation = selectedConversation.other_user || {
+      id: selectedConversation.other_user_id,
+      role: selectedConversation.other_user?.role
+    }
+    const isAllowed = await isUserAllowedToMessage(otherUserForValidation)
+    if (!isAllowed) {
+      showToast.error('You are not allowed to message this user.')
+      return
+    }
 
     const messageText = trimmedMessage
     const receiverId = selectedConversation.other_user_id

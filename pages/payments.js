@@ -52,14 +52,6 @@ export default function PaymentsPage() {
   })
   const [customAmount, setCustomAmount] = useState('')
   const [appliedCredit, setAppliedCredit] = useState(0)
-  const [monthsCovered, setMonthsCovered] = useState(1)
-  const [contractEndDate, setContractEndDate] = useState(null)
-  const [contractStartDate, setContractStartDate] = useState(null)
-  const [monthlyRent, setMonthlyRent] = useState(0)
-  const [exceedsContract, setExceedsContract] = useState(false)
-  const [maxMonthsAllowed, setMaxMonthsAllowed] = useState(12)
-  const [isBelowMinimum, setIsBelowMinimum] = useState(false)
-  const [minimumPayment, setMinimumPayment] = useState(0)
   const [landlordAcceptedPayments, setLandlordAcceptedPayments] = useState(null) // Landlord's accepted payment methods
   const [selectedDetailBill, setSelectedDetailBill] = useState(null) // Bill selected for detail side panel
   const [chartFilter, setChartFilter] = useState('all')
@@ -165,7 +157,7 @@ export default function PaymentsPage() {
         setSession(result.data.session)
         loadUserRole(result.data.session.user.id)
       } else {
-        router.push('/auth')
+        router.push('/')
       }
     })
   }, [])
@@ -175,6 +167,20 @@ export default function PaymentsPage() {
     const due = new Date(dueDateString);
     // Return month name and year (e.g., "February 2026")
     return due.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  }
+
+  function getExpectedPaymentAmount(bill, credit = 0) {
+    if (!bill) return 0;
+    const total = (
+      parseFloat(bill.rent_amount || 0) +
+      parseFloat(bill.security_deposit_amount || 0) +
+      parseFloat(bill.advance_amount || 0) +
+      parseFloat(bill.water_bill || 0) +
+      parseFloat(bill.electrical_bill || 0) +
+      parseFloat(bill.wifi_bill || 0) +
+      parseFloat(bill.other_bills || 0)
+    );
+    return Math.max(0, total - (parseFloat(credit) || 0));
   }
 
   async function loadUserRole(userId) {
@@ -519,7 +525,6 @@ export default function PaymentsPage() {
     }
   }
 
-  const [maxPaymentLimit, setMaxPaymentLimit] = useState(null)
   const [loadingPayBtn, setLoadingPayBtn] = useState(null)
 
   async function handlePayBill(request) {
@@ -539,16 +544,6 @@ export default function PaymentsPage() {
         console.error('Failed to fetch landlord payment methods:', e)
         setLandlordAcceptedPayments({ cash: true })
       }
-      const total = (
-        parseFloat(request.rent_amount || 0) +
-        parseFloat(request.security_deposit_amount || 0) +
-        parseFloat(request.advance_amount || 0) + // Include Advance in Total
-        parseFloat(request.water_bill || 0) +
-        parseFloat(request.electrical_bill || 0) +
-        parseFloat(request.wifi_bill || 0) +
-        parseFloat(request.other_bills || 0)
-      )
-
       // 1. Fetch Tenant Credit (filtered by occupancy)
       let credit = 0;
       if (userRole === 'tenant') {
@@ -591,140 +586,10 @@ export default function PaymentsPage() {
       }
       setAppliedCredit(credit);
 
-      // 2. Calculate Max Payment Limit based on Contract
-      let limit = Infinity;
-      let rentPerMonth = parseFloat(request.rent_amount || 0);
-      let endDate = null;
-      let startDate = null;
-      let maxMonths = 1; // Default to 1 month only
+      // Tenants now pay the exact remaining bill amount.
+      const toPay = getExpectedPaymentAmount(request, credit);
 
-      // Try to get occupancy_id from bill, or find active occupancy for tenant
-      let occupancyId = request.occupancy_id;
-
-      if (!occupancyId && userRole === 'tenant') {
-        // For family members, use parentOccupancyId; otherwise lookup from tenant_occupancies
-        if (parentOccupancyId) {
-          occupancyId = parentOccupancyId;
-          console.log('Using parent occupancy for family member:', occupancyId);
-        } else {
-          const { data: activeOcc } = await supabase
-            .from('tenant_occupancies')
-            .select('id')
-            .eq('tenant_id', session.user.id)
-            .eq('status', 'active')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-          if (activeOcc) {
-            occupancyId = activeOcc.id;
-            console.log('Found active occupancy:', occupancyId);
-          }
-        }
-      }
-      if (occupancyId) {
-        try {
-          let occupancy = null;
-
-          if (isFamilyMember) {
-            // Family members: use API to bypass RLS
-            const fmRes = await fetch(`/api/family-members?member_id=${session.user.id}`)
-            const fmData = await fmRes.json()
-            if (fmData?.occupancy) {
-              occupancy = {
-                contract_end_date: fmData.occupancy.contract_end_date,
-                start_date: fmData.occupancy.start_date,
-                security_deposit: fmData.occupancy.security_deposit
-              }
-            }
-          } else {
-            // Primary tenant: use direct Supabase query
-            const { data: occData, error: occError } = await supabase
-              .from('tenant_occupancies')
-              .select('contract_end_date, start_date')
-              .eq('id', occupancyId)
-              .single();
-            occupancy = occData;
-          }
-
-          if (occupancy) {
-            // Use rent from the bill request since occupancy doesn't have rent_amount
-            rentPerMonth = parseFloat(request.rent_amount || 0);
-            endDate = occupancy.contract_end_date ? new Date(occupancy.contract_end_date) : null;
-            startDate = occupancy.start_date ? new Date(occupancy.start_date) : null;
-
-            if (endDate && startDate) {
-              const startYear = startDate.getFullYear();
-              const startMonth = startDate.getMonth();
-              const endYear = endDate.getFullYear();
-              const endMonth = endDate.getMonth();
-
-              const totalContractMonths = (endYear - startYear) * 12 + (endMonth - startMonth);
-
-              const depositAmount = parseFloat(request.security_deposit_amount || occupancy?.security_deposit || 0);
-              let adjustedTotalKey = totalContractMonths;
-
-              if (rentPerMonth > 0 && depositAmount >= (rentPerMonth * 0.9)) { // Allow small difference
-                adjustedTotalKey = Math.max(1, totalContractMonths - 1);
-              }
-
-              // Minimum 1 month
-              maxMonths = Math.max(1, adjustedTotalKey);
-
-              console.log('Contract calculation:', {
-                startYear, startMonth, endYear, endMonth,
-                totalContractMonths,
-                maxMonths
-              });
-
-              // Limit cannot be negative (contract ended)
-              if (endDate < new Date()) {
-                maxMonths = 1;
-                limit = total + parseFloat(request.security_deposit_amount || 0);
-              } else {
-                // Max rent payments = months * rent per month
-                const maxContractValue = maxMonths * rentPerMonth;
-                // Add security deposit to the limit (it's separate from rent)
-                const securityDeposit = parseFloat(request.security_deposit_amount || 0);
-                const utilities = (
-                  parseFloat(request.water_bill || 0) +
-                  parseFloat(request.electrical_bill || 0) +
-                  parseFloat(request.wifi_bill || 0) +
-                  parseFloat(request.other_bills || 0)
-                );
-                const advance = parseFloat(request.advance_amount || 0); // Include Advance
-                limit = Math.max(0, maxContractValue + securityDeposit + utilities + advance - credit);
-              }
-            } else {
-              console.error('Missing date - startDate or endDate is null',err);
-            }
-          } else {
-            console.error('No occupancy data returned',err);
-          }
-        } catch (err) {
-          console.error('Error fetching occupancy:', err);
-        }
-      }
-
-      setMonthlyRent(rentPerMonth);
-      setContractEndDate(endDate);
-      setContractStartDate(startDate);
-      setMaxMonthsAllowed(maxMonths);
-      setMaxPaymentLimit(limit);
-      setMonthsCovered(1);
-      setExceedsContract(false);
-
-      // Set minimum payment (total bill minus credit)
-      let toPay = Math.max(0, total - credit);
-
-      if (request.advance_amount && parseFloat(request.advance_amount) > 0) { 
-        toPay = Math.max(0, total - credit);
-      }
-
-      setMinimumPayment(toPay);
-      setIsBelowMinimum(false);
-
-      setCustomAmount(Math.min(toPay, limit === Infinity ? toPay : limit).toFixed(2));
+      setCustomAmount(toPay.toFixed(2));
 
       setShowPaymentModal(true)
     } finally {
@@ -732,144 +597,21 @@ export default function PaymentsPage() {
     }
   }
 
-  // Recalculate months covered when key values change (fixes React state timing issues)
-  useEffect(() => {
-    if (showPaymentModal && selectedBill && customAmount && monthlyRent > 0 && maxMonthsAllowed > 0) {
-      const amountNum = parseFloat(customAmount) || 0;
-      const currentBillRent = parseFloat(selectedBill.rent_amount || 0);
-      const securityDeposit = parseFloat(selectedBill.security_deposit_amount || 0);
-      const utilities = (
-        parseFloat(selectedBill.water_bill || 0) +
-        parseFloat(selectedBill.electrical_bill || 0) +
-        parseFloat(selectedBill.wifi_bill || 0) +
-        parseFloat(selectedBill.other_bills || 0)
-      );
-
-      const oneTimeCharges = securityDeposit + utilities;
-
-      const rentPortion = Math.max(0, amountNum - oneTimeCharges);
-
-
-      const rentForCalc = currentBillRent > 0 ? currentBillRent : monthlyRent;
-      const monthsCoveredByRent = rentForCalc > 0 ? Math.ceil(rentPortion / rentForCalc) : 1;
-
-      // Minimum 1 month if paying anything
-      const totalMonths = Math.max(1, monthsCoveredByRent);
-
-      // Check if rent portion exceeds what contract allows
-      const maxRentAllowed = maxMonthsAllowed * rentForCalc;
-      const exceeds = rentPortion > maxRentAllowed;
-
-      console.log('useEffect calculation:', {
-        amountNum,
-        oneTimeCharges,
-        rentPortion,
-        rentForCalc,
-        monthsCoveredByRent,
-        totalMonths,
-        maxMonthsAllowed,
-        maxRentAllowed,
-        exceeds
-      });
-
-      setExceedsContract(exceeds);
-      setMonthsCovered(totalMonths);
-    }
-  }, [showPaymentModal, maxMonthsAllowed, monthlyRent, customAmount, selectedBill, appliedCredit]);
-
-  // Calculate how many months an amount covers
-  function calculateMonthsCovered(amount) {
-    if (!selectedBill || monthlyRent <= 0) {
-      setMonthsCovered(1);
-      setExceedsContract(false);
-      setIsBelowMinimum(false);
-      return 1;
-    }
-
-    const amountNum = parseFloat(amount) || 0;
-
-    const currentBillRent = parseFloat(selectedBill.rent_amount || 0);
-    const securityDeposit = parseFloat(selectedBill.security_deposit_amount || 0);
-    const utilities = (
-      parseFloat(selectedBill.water_bill || 0) +
-      parseFloat(selectedBill.electrical_bill || 0) +
-      parseFloat(selectedBill.wifi_bill || 0) +
-      parseFloat(selectedBill.other_bills || 0)
-    );
-
-    // Total bill = rent + deposit + utilities + advance
-    const currentBillTotal = (
-      currentBillRent +
-      securityDeposit +
-      utilities +
-      parseFloat(selectedBill.advance_amount || 0)
-    );
-
-    // Calculate minimum payment (bill total minus applied credit)
-    const minPayment = Math.max(0, currentBillTotal - appliedCredit);
-    setMinimumPayment(minPayment);
-
-    // Check if payment is below minimum
-    if (amountNum < minPayment || (amountNum === 0 && minPayment > 0)) {
-      setIsBelowMinimum(true);
-      setMonthsCovered(1);
-      setExceedsContract(false);
-      return 1;
-    }
-    setIsBelowMinimum(false);
-
-    const oneTimeCharges = securityDeposit + utilities;
-
-    const rentPortion = Math.max(0, amountNum - oneTimeCharges);
-
-    // How many months of rent does this cover?
-    const rentForCalc = currentBillRent > 0 ? currentBillRent : monthlyRent;
-    const monthsCoveredByRent = rentForCalc > 0 ? Math.ceil(rentPortion / rentForCalc) : 1;
-    const totalMonths = Math.max(1, monthsCoveredByRent);
-
-    // Check if rent portion exceeds what contract allows
-    const maxRentAllowed = maxMonthsAllowed * rentForCalc;
-    const exceeds = rentPortion > maxRentAllowed;
-
-    setExceedsContract(exceeds);
-    setMonthsCovered(totalMonths);
-
-    return totalMonths;
-  }
-
-  // Handle custom amount change
-  function handleCustomAmountChange(value) {
-    setCustomAmount(value);
-    calculateMonthsCovered(value);
-  }
-
   async function submitPayment() {
     if (!selectedBill) return
 
     // Pre-validation
     const paymentAmount = parseFloat(customAmount) || 0;
-    const totalBillAmount = (
-      parseFloat(selectedBill.rent_amount || 0) +
-      parseFloat(selectedBill.security_deposit_amount || 0) +
-      parseFloat(selectedBill.advance_amount || 0) +
-      parseFloat(selectedBill.water_bill || 0) +
-      parseFloat(selectedBill.electrical_bill || 0) +
-      parseFloat(selectedBill.wifi_bill || 0) +
-      parseFloat(selectedBill.other_bills || 0)
-    ) - appliedCredit;
+    const expectedPaymentAmount = getExpectedPaymentAmount(selectedBill, appliedCredit);
+    const amountDifference = Math.abs(paymentAmount - expectedPaymentAmount);
 
     if (paymentAmount <= 0) {
       showToast.error('Please enter a valid payment amount greater than ₱0.', { duration: 4000 });
       return;
     }
 
-    if (paymentAmount < totalBillAmount) {
-      showToast.error(`Payment must be at least ₱${totalBillAmount.toLocaleString()}. Partial payments are not allowed.`, { duration: 4000 });
-      return;
-    }
-
-    if (exceedsContract || (maxPaymentLimit !== null && maxPaymentLimit !== Infinity && paymentAmount > maxPaymentLimit)) {
-      showToast.error(`Payment exceeds contract period. Maximum allowed is ${maxMonthsAllowed} month${maxMonthsAllowed > 1 ? 's' : ''} (₱${maxPaymentLimit?.toLocaleString() || 0}).`, { duration: 4000 });
+    if (amountDifference > 0.009) {
+      showToast.error(`Payment must be exactly ₱${expectedPaymentAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}.`, { duration: 4000 });
       return;
     }
 
@@ -963,7 +705,6 @@ export default function PaymentsPage() {
 
       // Notify Landlord
       const totalPaid = parseFloat(customAmount);
-      const monthsText = monthsCovered > 1 ? ` (${monthsCovered} months advance)` : '';
 
       // Get the payer's name for notifications
       const { data: payerProfile } = await supabase.from('profiles').select('first_name, last_name').eq('id', session.user.id).single();
@@ -974,7 +715,7 @@ export default function PaymentsPage() {
         recipient: selectedBill.landlord,
         actor: session.user.id,
         type: 'payment_confirmation_needed',
-        message: `${payerLabel} paid ₱${totalPaid.toLocaleString()} for ${selectedBill.properties?.title || 'property'} via ${paymentMethod === 'qr_code' ? 'QR Code' : 'Cash'}${monthsText}. Please confirm payment receipt.`,
+        message: `${payerLabel} paid ₱${totalPaid.toLocaleString()} for ${selectedBill.properties?.title || 'property'} via ${paymentMethod === 'qr_code' ? 'QR Code' : 'Cash'}. Please confirm payment receipt.`,
         link: '/payments',
         data: { payment_request_id: selectedBill.id }
       });
@@ -985,7 +726,7 @@ export default function PaymentsPage() {
           recipient: primaryTenantId,
           actor: session.user.id,
           type: 'family_payment',
-          message: `Your family member ${payerName} paid ₱${totalPaid.toLocaleString()} for ${selectedBill.properties?.title || 'property'} via ${paymentMethod === 'qr_code' ? 'QR Code' : 'Cash'}${monthsText}.`,
+          message: `Your family member ${payerName} paid ₱${totalPaid.toLocaleString()} for ${selectedBill.properties?.title || 'property'} via ${paymentMethod === 'qr_code' ? 'QR Code' : 'Cash'}.`,
           link: '/payments',
           data: { payment_request_id: selectedBill.id }
         });
@@ -1008,7 +749,7 @@ export default function PaymentsPage() {
               tenantName: payerLabel,
               propertyTitle: selectedBill.properties?.title || 'property',
               amount: totalPaid,
-              monthsCovered,
+              monthsCovered: 1,
               paymentMethod
             })
           }).catch(err => console.error('Notification failed:', err));
@@ -1302,6 +1043,14 @@ export default function PaymentsPage() {
       return;
     }
 
+    const paymentAmount = parseFloat(customAmount) || 0;
+    const expectedPaymentAmount = getExpectedPaymentAmount(selectedBill, appliedCredit);
+    if (Math.abs(paymentAmount - expectedPaymentAmount) > 0.009) {
+      setCustomAmount(expectedPaymentAmount.toFixed(2));
+      showToast.error(`Payment must be exactly ₱${expectedPaymentAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}.`, { duration: 3500 });
+      return;
+    }
+
     setUploadingProof(true);
 
     // 2. Open a NEW TAB immediately to avoid popup blockers
@@ -1437,13 +1186,13 @@ export default function PaymentsPage() {
       if (request.occupancy_id) {
         const { data: occupancy } = await supabase
           .from('tenant_occupancies')
-          .select('contract_end_date, rent_amount, start_date')
+          .select('rent_amount, start_date')
           .eq('id', request.occupancy_id)
           .single();
 
         if (occupancy) {
           monthlyRent = parseFloat(occupancy.rent_amount || request.rent_amount || 0);
-          contractEndDate = occupancy.contract_end_date ? new Date(occupancy.contract_end_date) : null;
+          contractEndDate = null;
         }
       }
 
@@ -1747,21 +1496,6 @@ export default function PaymentsPage() {
 
           console.log(`Added ₱${remainingCredit.toLocaleString()} to tenant credit balance`);
         }
-      }
-
-      // Reset renewal_status after renewal payment is confirmed
-      // This allows tenant to request renewal again for the NEXT contract end
-      // And allows security deposit to be consumed at the actual final month
-      if (request.is_renewal_payment && request.occupancy_id) {
-        await supabase
-          .from('tenant_occupancies')
-          .update({
-            renewal_status: null,  // Reset so deposit logic works for next contract end
-            renewal_requested: false
-          })
-          .eq('id', request.occupancy_id);
-
-        console.log('Renewal status reset after renewal payment confirmation');
       }
 
       // Notify tenant that payment is confirmed
@@ -2778,7 +2512,7 @@ export default function PaymentsPage() {
                       )}
 
                       {/* Payment Method Selection */}
-                      {minimumPayment <= 0 && appliedCredit > 0 ? (
+                      {getExpectedPaymentAmount(selectedBill, appliedCredit) <= 0 && appliedCredit > 0 ? (
                         <div className="bg-green-50 border border-green-200 p-6 rounded-2xl text-center space-y-3 mb-8">
                           <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto text-green-600">
                             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
@@ -2805,8 +2539,7 @@ export default function PaymentsPage() {
                                   key={method.id}
                                   type="button"
                                   onClick={() => setPaymentMethod(method.id)}
-                                  disabled={isBelowMinimum || exceedsContract || (maxPaymentLimit !== null && maxPaymentLimit !== Infinity && parseFloat(customAmount) > maxPaymentLimit)}
-                                  className={`relative w-full p-4 rounded-2xl border-2 flex items-center gap-4 transition-all text-left font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed
+                                  className={`relative w-full p-4 rounded-2xl border-2 flex items-center gap-4 transition-all text-left font-bold cursor-pointer
                                     ${paymentMethod === method.id
                                       ? 'border-green-500 bg-green-50/40 shadow-sm'
                                       : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}
@@ -2834,48 +2567,7 @@ export default function PaymentsPage() {
                         </>
                       )}
 
-                      {/* Amount to Pay */}
-                      {!(minimumPayment <= 0 && appliedCredit > 0) && (
-                        <div className="mb-8">
-                          <div className="flex justify-between items-center mb-3">
-                            <h2 className="text-lg font-bold text-gray-900">Amount to Pay</h2>
-                            {isFamilyMember && (
-                              <span className="text-[10px] text-purple-700 font-bold bg-purple-100 px-2.5 py-1 rounded-full border border-purple-200">Expected amount only</span>
-                            )}
-                          </div>
-                          <div className="relative group">
-                            <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-gray-400 text-lg group-focus-within:text-black transition-colors">₱</span>
-                            <input
-                              type="number"
-                              step="0.01"
-                              min="1"
-                              value={customAmount}
-                              onChange={(e) => handleCustomAmountChange(e.target.value)}
-                              disabled={isFamilyMember}
-                              className={`w-full sm:w-48 bg-white border-2 ${exceedsContract || isBelowMinimum ? 'border-red-500 bg-red-50/50' : 'border-gray-200 hover:border-gray-300 focus:border-black'} ${isFamilyMember ? 'bg-gray-50 text-gray-500 cursor-not-allowed border-gray-100' : ''} rounded-2xl pl-10 pr-4 py-3 font-bold text-xl outline-none transition-all placeholder:text-gray-300`}
-                              placeholder="0.00"
-                            />
-                          </div>
-
-                          {/* Validation */}
-                          {isBelowMinimum && (
-                            <div className="flex items-center gap-2 text-xs font-bold text-red-500 bg-red-50 p-3 rounded-lg border border-red-100 mt-3">
-                              <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                              Minimum payment is ₱{minimumPayment.toLocaleString()} (No partials).
-                            </div>
-                          )}
-
-                          {maxPaymentLimit !== null && parseFloat(customAmount) > maxPaymentLimit && (
-                            <p className="text-xs font-bold text-red-500 mt-2 pl-1">
-                              Max allowed: ₱{maxPaymentLimit.toLocaleString()}
-                            </p>
-                          )}
-                        </div>
-                      )}
-
-
-
-                      {paymentMethod === 'stripe' && !isBelowMinimum && !exceedsContract && (
+                      {paymentMethod === 'stripe' && (
                         <div className="bg-[#f0f2fc] border border-[#e3e8fc] rounded-2xl p-4 mb-6">
                           <StripePaymentForm
                             amount={parseFloat(customAmount || 0).toFixed(2)}
@@ -2923,26 +2615,6 @@ export default function PaymentsPage() {
                               )
                             ))}
 
-                            {(() => {
-                              const baseTotal = (
-                                parseFloat(selectedBill.rent_amount || 0) +
-                                parseFloat(selectedBill.security_deposit_amount || 0) +
-                                parseFloat(selectedBill.advance_amount || 0) +
-                                parseFloat(selectedBill.water_bill || 0) +
-                                parseFloat(selectedBill.electrical_bill || 0) +
-                                parseFloat(selectedBill.other_bills || 0)
-                              );
-                              const amountTyped = parseFloat(customAmount) || 0;
-                              const excess = amountTyped - (baseTotal - appliedCredit);
-
-                              return excess > 0 ? (
-                                <div className="flex justify-between items-center text-blue-600 pt-1">
-                                  <span className="text-base font-semibold">Additional Advance Payment</span>
-                                  <span className="text-base font-bold">₱{excess.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
-                                </div>
-                              ) : null;
-                            })()}
-
                             {appliedCredit > 0 && (
                               <div className="flex justify-between text-base text-green-600 font-bold pt-1">
                                 <span className="flex items-center gap-1">
@@ -2967,40 +2639,14 @@ export default function PaymentsPage() {
                                   parseFloat(selectedBill.electrical_bill || 0) +
                                   parseFloat(selectedBill.other_bills || 0)
                                 );
-                                const amountTyped = parseFloat(customAmount) || 0;
-                                return Math.max(baseTotal - appliedCredit, amountTyped).toLocaleString('en-US', { minimumFractionDigits: 2 });
+                                return Math.max(0, baseTotal - appliedCredit).toLocaleString('en-US', { minimumFractionDigits: 2 });
                               })()}
                             </span>
                           </div>
-
-                          {/* Billing Period Info */}
-                          {monthlyRent > 0 && parseFloat(customAmount) > 0 && (
-                            <div className={`mt-5 p-4 rounded-2xl border flex items-start gap-3 ${exceedsContract
-                              ? 'bg-red-50 border-red-200'
-                              : 'bg-[#F8F9FA] border-gray-100'
-                              }`}>
-                              <svg className={`w-5 h-5 shrink-0 mt-0.5 ${exceedsContract ? 'text-red-500' : 'text-gray-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                              <div>
-                                <p className={`font-bold text-sm ${exceedsContract ? 'text-red-700' : 'text-gray-900'}`}>
-                                  {exceedsContract ? 'Exceeds Contract Period' : `Billing Period`}
-                                </p>
-                                <p className={`text-xs mt-0.5 ${exceedsContract ? 'text-red-600' : 'text-gray-500'}`}>
-                                  {exceedsContract
-                                    ? `Contract ends ${contractEndDate?.toLocaleDateString()}. Limit: ${maxMonthsAllowed} months.`
-                                    : `Covers ${monthsCovered} Month${monthsCovered > 1 ? 's' : ''}`}
-                                </p>
-                                {monthsCovered > 1 && !exceedsContract && contractEndDate && (
-                                  <p className="text-[11px] text-gray-400 mt-0.5">
-                                    Paid until {new Date(new Date(selectedBill.due_date).setMonth(new Date(selectedBill.due_date).getMonth() + monthsCovered - 1)).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          )}
                         </div>
 
                         {/* PayMongo E-Wallet Section */}
-                        {paymentMethod === 'paymongo' && !isBelowMinimum && !exceedsContract && (
+                        {paymentMethod === 'paymongo' && (
                           <div className="bg-teal-50 border border-teal-100 rounded-2xl p-5">
                             {!uploadingProof ? (
                               <>
@@ -3071,7 +2717,7 @@ export default function PaymentsPage() {
                   {/* Bottom Action Buttons — Fixed */}
                   <div className="sticky bottom-0 bg-gradient-to-t from-[#F5F5F5] via-[#F5F5F5] to-[#F5F5F5]/80 pt-4 pb-6 mt-8 z-10 pointer-events-none">
                     <div className="pointer-events-auto">
-                      {paymentMethod === 'cash' && !isBelowMinimum && !exceedsContract && minimumPayment > 0 && (
+                      {paymentMethod === 'cash' && getExpectedPaymentAmount(selectedBill, appliedCredit) > 0 && (
                         <button
                           onClick={submitPayment}
                           disabled={uploadingProof}

@@ -21,6 +21,7 @@ export default function PropertyDetail() {
   const [submitting, setSubmitting] = useState(false)
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
   const [landlordProfile, setLandlordProfile] = useState(null)
+  const [landlordReviewStats, setLandlordReviewStats] = useState({ avg: 0, count: 0 })
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [hasActiveOccupancy, setHasActiveOccupancy] = useState(false)
   const [occupiedPropertyTitle, setOccupiedPropertyTitle] = useState('')
@@ -168,6 +169,7 @@ export default function PropertyDetail() {
 
     if (propertyData) {
       setProperty(propertyData)
+      await loadLandlordReviewStats(propertyData.landlord)
       if (propertyData.landlord) {
         const { data: landlordData, error: landlordError } = await supabase
           .from('profiles')
@@ -181,6 +183,31 @@ export default function PropertyDetail() {
       }
     }
     setLoading(false)
+  }
+
+  async function loadLandlordReviewStats(landlordId) {
+    if (!landlordId) {
+      setLandlordReviewStats({ avg: 0, count: 0 })
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('landlord_ratings')
+      .select('rating')
+      .eq('landlord_id', landlordId)
+
+    if (error) {
+      console.error('Error loading landlord review stats:', error)
+      setLandlordReviewStats({ avg: 0, count: 0 })
+      return
+    }
+
+    const count = (data || []).length
+    const avg = count > 0
+      ? (data.reduce((sum, item) => sum + Number(item.rating || 0), 0) / count)
+      : 0
+
+    setLandlordReviewStats({ avg, count })
   }
 
   async function loadReviews() {
@@ -648,6 +675,17 @@ export default function PropertyDetail() {
     ? property.terms_conditions
     : '/terms';
 
+  const propertyAmenities = Array.isArray(property.amenities) ? property.amenities : []
+  const hasFreeWater = propertyAmenities.some(a => String(a).toLowerCase() === 'free water')
+  const hasFreeElectricity = propertyAmenities.some(a => String(a).toLowerCase() === 'free electricity')
+
+  const rawAdvanceAmount = Number(property.advance_amount || 0)
+  const rawSecurityDepositAmount = Number(property.security_deposit_amount || 0)
+  const isAdvanceIncluded = property.has_advance === true || rawAdvanceAmount > 0
+  const isSecurityDepositIncluded = property.has_security_deposit === true || rawSecurityDepositAmount > 0
+  const advanceDisplayAmount = isAdvanceIncluded ? (rawAdvanceAmount > 0 ? rawAdvanceAmount : Number(property.price || 0)) : 0
+  const securityDepositDisplayAmount = isSecurityDepositIncluded ? (rawSecurityDepositAmount > 0 ? rawSecurityDepositAmount : Number(property.price || 0)) : 0
+
   return (
     <>
       <Head>
@@ -847,6 +885,53 @@ export default function PropertyDetail() {
                   <h3 className="text-3xl font-bold text-gray-900 mb-3 uppercase tracking-wider">About this property</h3>
                   <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-line">{property.description || 'No description provided.'}</p>
                 </div>
+
+                <div className="pt-6 border-t border-gray-100">
+                  <h4 className="text-sm font-black text-gray-900 uppercase tracking-wider mb-4">Inclusions & Move-in Terms</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Water</p>
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-bold text-gray-900">Water Billing</p>
+                        <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${hasFreeWater ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-700'}`}>
+                          {hasFreeWater ? 'Free' : 'Not Free'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Electricity</p>
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-bold text-gray-900">Electric Billing</p>
+                        <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${hasFreeElectricity ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-700'}`}>
+                          {hasFreeElectricity ? 'Free' : 'Not Free'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Advance Payment</p>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-sm font-bold text-gray-900">Status</p>
+                        <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${isAdvanceIncluded ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-700'}`}>
+                          {isAdvanceIncluded ? 'Included' : 'Excluded'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-600 font-semibold">Amount: ₱{Number(advanceDisplayAmount).toLocaleString()}</p>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Security Deposit</p>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-sm font-bold text-gray-900">Status</p>
+                        <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${isSecurityDepositIncluded ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-700'}`}>
+                          {isSecurityDepositIncluded ? 'Included' : 'Excluded'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-600 font-semibold">Amount: ₱{Number(securityDepositDisplayAmount).toLocaleString()}</p>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Reviews Section - Enhanced 2x2 Grid */}
@@ -974,6 +1059,11 @@ export default function PropertyDetail() {
                   )}
                   <div className="flex-1 overflow-hidden">
                     <p className="font-bold text-gray-900 text-sm truncate">{landlordProfile?.first_name ? `${landlordProfile.first_name} ${landlordProfile.last_name}` : 'Property Owner'}</p>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <svg className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400" viewBox="0 0 24 24"><path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>
+                      <span className="text-xs font-bold text-gray-800">{landlordReviewStats.avg.toFixed(1)}</span>
+                      <span className="text-xs text-gray-500">({landlordReviewStats.count} reviews)</span>
+                    </div>
                     <p className="text-xs text-gray-500">Posted By</p>
                   </div>
                 </div>
