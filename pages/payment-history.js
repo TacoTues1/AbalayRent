@@ -1,8 +1,12 @@
+import Lottie from "lottie-react"
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useRouter } from 'next/router'
 import Link from 'next/link'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import loadingAnimation from "../assets/loading.json"
+
+const PAYMENT_HISTORY_PER_PAGE = 15
 
 export default function PaymentHistoryPage() {
   const router = useRouter()
@@ -13,6 +17,8 @@ export default function PaymentHistoryPage() {
   const [chartYear, setChartYear] = useState(new Date().getFullYear())
   const [chartFilter, setChartFilter] = useState('all')
   const [selectedDetailPayment, setSelectedDetailPayment] = useState(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [isPageLoading, setIsPageLoading] = useState(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(result => {
@@ -32,7 +38,14 @@ export default function PaymentHistoryPage() {
       .eq('id', userId)
       .maybeSingle()
 
-    setUserRole(data?.role || 'tenant')
+    const role = data?.role || 'tenant'
+
+    if (role === 'tenant') {
+      router.replace('/payments')
+      return
+    }
+
+    setUserRole(role)
   }
 
   // Realtime Subscription
@@ -56,6 +69,10 @@ export default function PaymentHistoryPage() {
       }
     }
   }, [session, userRole])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [userRole, payments.length])
 
   async function loadPayments() {
     let query = supabase
@@ -82,6 +99,34 @@ export default function PaymentHistoryPage() {
     const other = parseFloat(p.other_bills) || 0
     return sum + rent + water + electrical + other
   }, 0)
+
+  const totalPaymentCount = payments.length
+  const totalPages = Math.max(1, Math.ceil(totalPaymentCount / PAYMENT_HISTORY_PER_PAGE))
+  const safeCurrentPage = Math.min(currentPage, totalPages)
+  const pageStart = totalPaymentCount === 0 ? 0 : (safeCurrentPage - 1) * PAYMENT_HISTORY_PER_PAGE + 1
+  const pageEnd = Math.min((safeCurrentPage - 1) * PAYMENT_HISTORY_PER_PAGE + PAYMENT_HISTORY_PER_PAGE, totalPaymentCount)
+  const paginatedPayments = payments.slice((safeCurrentPage - 1) * PAYMENT_HISTORY_PER_PAGE, (safeCurrentPage - 1) * PAYMENT_HISTORY_PER_PAGE + PAYMENT_HISTORY_PER_PAGE)
+  const isTableLoading = loading || isPageLoading
+
+  function handlePageChange(nextPage) {
+    if (loading || isPageLoading || nextPage < 1 || nextPage > totalPages || nextPage === safeCurrentPage) return
+
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+
+    setIsPageLoading(true)
+    setSelectedDetailPayment(null)
+    setCurrentPage(nextPage)
+
+    if (typeof window !== 'undefined') {
+      window.setTimeout(() => {
+        setIsPageLoading(false)
+      }, 180)
+    } else {
+      setIsPageLoading(false)
+    }
+  }
 
   function getMethodLabel(method) {
     if (!method) return 'Cash'
@@ -129,7 +174,7 @@ export default function PaymentHistoryPage() {
           <div className="space-y-4 lg:col-span-1">
             <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm flex flex-col justify-center h-full">
               <div className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-2">Transactions</div>
-              <div className="text-3xl font-black text-gray-900">{payments.length}</div>
+              <div className="text-3xl font-black text-gray-900">{totalPaymentCount}</div>
             </div>
           </div>
 
@@ -137,7 +182,7 @@ export default function PaymentHistoryPage() {
             <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm flex flex-col justify-center h-full">
               <div className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-2">Average</div>
               <div className="text-3xl font-black text-gray-900 truncate">
-                ₱{payments.length > 0 ? (totalIncome / payments.length).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
+                ₱{totalPaymentCount > 0 ? (totalIncome / totalPaymentCount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
               </div>
             </div>
           </div>
@@ -214,19 +259,28 @@ export default function PaymentHistoryPage() {
         })()}
 
         {/* Payment History Table */}
-        <div className="bg-white border-2 border-black overflow-hidden rounded-xl shadow-md">
-          <div className="px-6 py-4 border-b-2 border-black bg-white flex justify-between items-center">
-            <h2 className="text-lg font-bold text-black uppercase tracking-wider">Transaction Log</h2>
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-6">
+          <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+            <h2 className="text-lg font-black text-gray-900">Transaction Log</h2>
             <span className="text-xs font-medium bg-gray-100 px-2 py-1 rounded border border-gray-200">
-              {payments.length} Records
+              {totalPaymentCount} Records
             </span>
           </div>
 
-          {loading ? (
-            <div className="p-8 flex justify-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200 border-t-black"></div>
+          {isTableLoading ? (
+            <div className="min-h-screen flex items-center justify-center bg-white">
+              <div className="flex flex-col items-center">
+                <Lottie
+                  animationData={loadingAnimation}
+                  loop={true}
+                  className="w-64 h-64"
+                />
+                <p className="text-gray-500 font-medium text-lg mt-4">
+                  Loading Payment History...
+                </p>
+              </div>
             </div>
-          ) : payments.length === 0 ? (
+          ) : totalPaymentCount === 0 ? (
             <div className="p-12 text-center">
               <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4 text-gray-300">
                 <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
@@ -240,7 +294,7 @@ export default function PaymentHistoryPage() {
             <>
               {/* Mobile Card View */}
               <div className="sm:hidden divide-y divide-gray-100">
-                {payments.map(payment => {
+                {paginatedPayments.map(payment => {
                   const rent = parseFloat(payment.amount) || 0
                   const water = parseFloat(payment.water_bill) || 0
                   const electrical = parseFloat(payment.electrical_bill) || 0
@@ -303,7 +357,7 @@ export default function PaymentHistoryPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {payments.map(payment => {
+                    {paginatedPayments.map(payment => {
                       const rent = parseFloat(payment.amount) || 0
                       const water = parseFloat(payment.water_bill) || 0
                       const electrical = parseFloat(payment.electrical_bill) || 0
@@ -391,6 +445,33 @@ export default function PaymentHistoryPage() {
                   </tbody>
                 </table>
               </div>
+
+              {totalPages > 1 && (
+                <div className="px-5 py-4 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <p className="text-xs font-medium text-gray-500">
+                    Showing {pageStart}-{pageEnd} of {totalPaymentCount}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handlePageChange(safeCurrentPage - 1)}
+                      disabled={isTableLoading || safeCurrentPage === 1}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      Previous
+                    </button>
+                    <span className="text-xs font-bold text-gray-600 px-2">
+                      Page {safeCurrentPage} of {totalPages}
+                    </span>
+                    <button
+                      onClick={() => handlePageChange(safeCurrentPage + 1)}
+                      disabled={isTableLoading || safeCurrentPage === totalPages}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>

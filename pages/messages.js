@@ -1,9 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useRouter } from 'next/router'
 import { showToast } from 'nextjs-toast-notify'
 
+const MESSAGE_PAGE_SIZE = 25
+
 export default function Messages() {
+  const sendInFlightRef = useRef(false)
+  const lastSendSignatureRef = useRef({ signature: '', timestamp: 0 })
+  const messagesContainerRef = useRef(null)
+  const loadingOlderMessagesRef = useRef(false)
+  const oldestLoadedMessageRef = useRef(null)
+  const hasBootstrappedRef = useRef(false)
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
   const [conversations, setConversations] = useState([])
@@ -16,12 +24,35 @@ export default function Messages() {
   const [selectedFiles, setSelectedFiles] = useState([])
   const [uploadingFile, setUploadingFile] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [messagesLoading, setMessagesLoading] = useState(false)
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false)
+  const [hasOlderMessages, setHasOlderMessages] = useState(false)
   const [showNewConversation, setShowNewConversation] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState(null)
   const [unreadCounts, setUnreadCounts] = useState({}) // { conversationId: count }
   const [imageModal, setImageModal] = useState(null) // For viewing images
   const [showMobileDetails, setShowMobileDetails] = useState(false) // Toggle right panel on mobile
   const router = useRouter()
+
+  const scrollMessagesToBottom = (behavior = 'smooth') => {
+    const messagesContainer = messagesContainerRef.current
+    if (!messagesContainer) return
+
+    try {
+      messagesContainer.scrollTo({ top: messagesContainer.scrollHeight, behavior })
+    } catch {
+      messagesContainer.scrollTop = messagesContainer.scrollHeight
+    }
+  }
+
+  const scheduleScrollToBottom = (behavior = 'smooth') => {
+    if (typeof window === 'undefined') return
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        scrollMessagesToBottom(behavior)
+      })
+    })
+  }
 
   useEffect(() => {
     supabase.auth.getSession().then(result => {
@@ -48,10 +79,16 @@ export default function Messages() {
   }, [router])
 
   useEffect(() => {
-    if (profile) {
-      loadConversations()
+    if (profile?.id && session?.user?.id) {
+      const shouldShowLoader = !hasBootstrappedRef.current && conversations.length === 0
+
+      loadConversations({ showLoader: shouldShowLoader })
       loadAllUsers()
       loadUnreadCounts()
+
+      if (!hasBootstrappedRef.current) {
+        hasBootstrappedRef.current = true
+      }
 
       const channel = supabase
         .channel('global-messages')
@@ -80,7 +117,7 @@ export default function Messages() {
         supabase.removeChannel(channel)
       }
     }
-  }, [profile])
+  }, [profile?.id, profile?.role, session?.user?.id])
 
   useEffect(() => {
     if (searchQuery.trim()) {
@@ -97,6 +134,12 @@ export default function Messages() {
 
   useEffect(() => {
     if (selectedConversation && session) {
+      setMessages([])
+      setMessagesLoading(true)
+      setLoadingOlderMessages(false)
+      setHasOlderMessages(false)
+      loadingOlderMessagesRef.current = false
+      oldestLoadedMessageRef.current = null
       loadMessages(selectedConversation.id)
       // Reset mobile details view when changing conversation
       setShowMobileDetails(false)
@@ -132,13 +175,7 @@ export default function Messages() {
                 if (exists) return prev
                 return [...prev, newMessage]
               })
-
-              setTimeout(() => {
-                const messagesContainer = document.querySelector('.messages-container')
-                if (messagesContainer) {
-                  messagesContainer.scrollTop = messagesContainer.scrollHeight
-                }
-              }, 100)
+              scheduleScrollToBottom('smooth')
 
               if (newMessage.receiver_id === session.user.id) {
                 await supabase
@@ -187,8 +224,11 @@ export default function Messages() {
     if (data) setProfile(data)
   }
 
-  async function loadConversations() {
-    setLoading(true)
+  async function loadConversations({ showLoader = false } = {}) {
+    if (showLoader) {
+      setLoading(true)
+    }
+
     const { data: allConversations, error } = await supabase
       .from('conversations')
       .select('*, property:properties(title, address)')
@@ -197,7 +237,9 @@ export default function Messages() {
 
     if (error) {
       console.error('Error loading conversations:', error)
-      setLoading(false)
+      if (showLoader) {
+        setLoading(false)
+      }
       return
     }
 
@@ -250,17 +292,22 @@ export default function Messages() {
       )
 
       setConversations(allowedConversations)
-      if (allowedConversations.length > 0) {
-        setSelectedConversation(allowedConversations[0])
-      } else {
-        setSelectedConversation(null)
-      }
+      setSelectedConversation(prevSelected => {
+        if (allowedConversations.length === 0) return null
+        if (prevSelected?.id) {
+          const matchedConversation = allowedConversations.find(conv => conv.id === prevSelected.id)
+          if (matchedConversation) return matchedConversation
+        }
+        return allowedConversations[0]
+      })
     } else {
       setConversations([])
       setSelectedConversation(null)
     }
 
-    setLoading(false)
+    if (showLoader) {
+      setLoading(false)
+    }
   }
 
   async function getTenantAllowedLandlordIds(userId) {
@@ -487,9 +534,37 @@ export default function Messages() {
     setUnreadCounts(counts)
   }
 
+  function enrichConversationWithKnownUsers(conv, otherUser) {
+    const currentUserProfile = {
+      id: session?.user?.id,
+      first_name: profile?.first_name,
+      middle_name: profile?.middle_name,
+      last_name: profile?.last_name,
+      role: profile?.role,
+      avatar_url: profile?.avatar_url
+    }
+
+    const isCurrentUserLandlord = conv.landlord_id === session?.user?.id
+    return {
+      ...conv,
+      landlord_profile: isCurrentUserLandlord ? currentUserProfile : otherUser,
+      tenant_profile: isCurrentUserLandlord ? otherUser : currentUserProfile,
+      other_user: otherUser,
+      other_user_id: otherUser?.id
+    }
+  }
+
   async function startNewConversation(otherUser) {
-    const isAllowed = await isUserAllowedToMessage(otherUser)
-    if (!isAllowed) {
+    const isKnownAllowedUser = allUsers.some(user => user.id === otherUser?.id)
+    if (!isKnownAllowedUser) {
+      const isAllowed = await isUserAllowedToMessage(otherUser)
+      if (!isAllowed) {
+        showToast.error('You can only message allowed contacts based on your account role.')
+        return
+      }
+    }
+
+    if (!otherUser?.id) {
       showToast.error('You can only message allowed contacts based on your account role.')
       return
     }
@@ -523,24 +598,7 @@ export default function Messages() {
     })
 
     if (existingDb) {
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('id, first_name, middle_name, last_name, role')
-        .in('id', [existingDb.landlord_id, existingDb.tenant_id])
-
-      const profileMap = {}
-      profiles?.forEach(p => { profileMap[p.id] = p })
-
-      const isLandlord = existingDb.landlord_id === session.user.id
-      const otherUserId = isLandlord ? existingDb.tenant_id : existingDb.landlord_id
-
-      const enrichedConv = {
-        ...existingDb,
-        landlord_profile: profileMap[existingDb.landlord_id],
-        tenant_profile: profileMap[existingDb.tenant_id],
-        other_user: profileMap[otherUserId],
-        other_user_id: otherUserId
-      }
+      const enrichedConv = enrichConversationWithKnownUsers(existingDb, otherUser)
 
       const isCurrentUserLandlord = existingDb.landlord_id === session.user.id
       const updateField = isCurrentUserLandlord ? 'hidden_by_landlord' : 'hidden_by_tenant'
@@ -583,24 +641,7 @@ export default function Messages() {
       const retryConv = retryConversations?.[0]
 
       if (retryConv) {
-        const { data: profiles } = await supabase
-          .from('profiles')
-          .select('id, first_name, middle_name, last_name, role')
-          .in('id', [retryConv.landlord_id, retryConv.tenant_id])
-
-        const profileMap = {}
-        profiles?.forEach(p => { profileMap[p.id] = p })
-
-        const isLandlord = retryConv.landlord_id === session.user.id
-        const otherUserId = isLandlord ? retryConv.tenant_id : retryConv.landlord_id
-
-        const enrichedConv = {
-          ...retryConv,
-          landlord_profile: profileMap[retryConv.landlord_id],
-          tenant_profile: profileMap[retryConv.tenant_id],
-          other_user: profileMap[otherUserId],
-          other_user_id: otherUserId
-        }
+        const enrichedConv = enrichConversationWithKnownUsers(retryConv, otherUser)
 
         setConversations([enrichedConv, ...conversations])
         setSelectedConversation(enrichedConv)
@@ -616,24 +657,7 @@ export default function Messages() {
         sound: true,
       });
     } else {
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('id, first_name, middle_name, last_name, role')
-        .in('id', [newConv.landlord_id, newConv.tenant_id])
-
-      const profileMap = {}
-      profiles?.forEach(p => { profileMap[p.id] = p })
-
-      const isLandlord = newConv.landlord_id === session.user.id
-      const otherUserId = isLandlord ? newConv.tenant_id : newConv.landlord_id
-
-      const enrichedConv = {
-        ...newConv,
-        landlord_profile: profileMap[newConv.landlord_id],
-        tenant_profile: profileMap[newConv.tenant_id],
-        other_user: profileMap[otherUserId],
-        other_user_id: otherUserId
-      }
+      const enrichedConv = enrichConversationWithKnownUsers(newConv, otherUser)
 
       setConversations([enrichedConv, ...conversations])
       setSelectedConversation(enrichedConv)
@@ -642,6 +666,7 @@ export default function Messages() {
   }
 
   async function loadMessages(conversationId) {
+    setMessagesLoading(true)
     const { data, error } = await supabase
       .from('messages')
       .select(`
@@ -649,20 +674,28 @@ export default function Messages() {
         sender:profiles!messages_sender_id_fkey(first_name, middle_name, last_name, role)
       `)
       .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: true })
+      .order('created_at', { ascending: false })
+      .limit(MESSAGE_PAGE_SIZE)
 
     if (error) {
       console.error('Error loading messages:', error)
+      setMessages([])
+      setHasOlderMessages(false)
+      setMessagesLoading(false)
     } else {
-      setMessages(data || [])
+      const initialMessages = [...(data || [])].reverse()
+      setMessages(initialMessages)
+      oldestLoadedMessageRef.current = initialMessages[0] || null
+      setHasOlderMessages((data || []).length === MESSAGE_PAGE_SIZE)
 
-      const messagesFromOther = (data || []).filter(msg => msg.receiver_id === session.user.id)
+      const messagesFromOther = initialMessages.filter(msg => msg.receiver_id === session.user.id)
       if (messagesFromOther.length > 0) {
-        const latestMessage = messagesFromOther[messagesFromOther.length - 1]
         await supabase
           .from('messages')
           .update({ read: true })
-          .eq('id', latestMessage.id)
+          .eq('conversation_id', conversationId)
+          .eq('receiver_id', session.user.id)
+          .eq('read', false)
       }
 
       setUnreadCounts(prev => ({
@@ -670,12 +703,76 @@ export default function Messages() {
         [conversationId]: 0
       }))
 
-      setTimeout(() => {
-        const messagesContainer = document.querySelector('.messages-container')
-        if (messagesContainer) {
-          messagesContainer.scrollTop = messagesContainer.scrollHeight
-        }
-      }, 100)
+      scheduleScrollToBottom('auto')
+      setMessagesLoading(false)
+    }
+  }
+
+  async function loadOlderMessages() {
+    if (!selectedConversation || messagesLoading || !hasOlderMessages || loadingOlderMessagesRef.current) {
+      return
+    }
+
+    const oldestMessage = oldestLoadedMessageRef.current
+    if (!oldestMessage?.created_at) {
+      setHasOlderMessages(false)
+      return
+    }
+
+    loadingOlderMessagesRef.current = true
+    setLoadingOlderMessages(true)
+
+    const container = messagesContainerRef.current
+    const previousScrollHeight = container?.scrollHeight || 0
+    const previousScrollTop = container?.scrollTop || 0
+
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select(`
+          *,
+          sender:profiles!messages_sender_id_fkey(first_name, middle_name, last_name, role)
+        `)
+        .eq('conversation_id', selectedConversation.id)
+        .lt('created_at', oldestMessage.created_at)
+        .order('created_at', { ascending: false })
+        .limit(MESSAGE_PAGE_SIZE)
+
+      if (error) {
+        console.error('Error loading older messages:', error)
+        return
+      }
+
+      const olderMessages = [...(data || [])].reverse()
+      if (olderMessages.length === 0) {
+        setHasOlderMessages(false)
+        return
+      }
+
+      oldestLoadedMessageRef.current = olderMessages[0] || oldestLoadedMessageRef.current
+      setHasOlderMessages((data || []).length === MESSAGE_PAGE_SIZE)
+      setMessages(prev => dedupeMessagesById([...olderMessages, ...prev]))
+
+      if (container) {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
+            const nextScrollHeight = container.scrollHeight
+            container.scrollTop = nextScrollHeight - previousScrollHeight + previousScrollTop
+          })
+        })
+      }
+    } finally {
+      loadingOlderMessagesRef.current = false
+      setLoadingOlderMessages(false)
+    }
+  }
+
+  const handleMessagesScroll = () => {
+    const container = messagesContainerRef.current
+    if (!container || messagesLoading || loadingOlderMessagesRef.current) return
+
+    if (container.scrollTop <= 70) {
+      loadOlderMessages()
     }
   }
 
@@ -754,27 +851,48 @@ export default function Messages() {
     }
   }
 
+  function dedupeMessagesById(messageList) {
+    return messageList.filter((msg, index, list) => list.findIndex(item => item.id === msg.id) === index)
+  }
+
   async function sendMessage() {
     const trimmedMessage = newMessage.trim().replace(/\s+/g, ' ')
     if (!trimmedMessage && selectedFiles.length === 0) return
     if (!selectedConversation) return
 
-    const otherUserForValidation = selectedConversation.other_user || {
-      id: selectedConversation.other_user_id,
-      role: selectedConversation.other_user?.role
-    }
-    const isAllowed = await isUserAllowedToMessage(otherUserForValidation)
-    if (!isAllowed) {
-      showToast.error('You are not allowed to message this user.')
+    if (sendInFlightRef.current) return
+
+    const sendSignature = `${selectedConversation.id}|${trimmedMessage}|${selectedFiles.map(file => `${file.name}:${file.size}`).join(',')}`
+    const now = Date.now()
+    if (
+      lastSendSignatureRef.current.signature === sendSignature &&
+      now - lastSendSignatureRef.current.timestamp < 1200
+    ) {
       return
     }
+
+    sendInFlightRef.current = true
+    lastSendSignatureRef.current = { signature: sendSignature, timestamp: now }
+    setUploadingFile(true)
+
+    const isKnownAllowedUser = allUsers.some(user => user.id === selectedConversation.other_user_id)
 
     const messageText = trimmedMessage
     const receiverId = selectedConversation.other_user_id
 
-    setUploadingFile(true)
-
     try {
+      if (!isKnownAllowedUser) {
+        const otherUserForValidation = selectedConversation.other_user || {
+          id: selectedConversation.other_user_id,
+          role: selectedConversation.other_user?.role
+        }
+        const isAllowed = await isUserAllowedToMessage(otherUserForValidation)
+        if (!isAllowed) {
+          showToast.error('You are not allowed to message this user.')
+          return
+        }
+      }
+
       let uploadedFiles = []
       if (selectedFiles.length > 0) {
         for (const file of selectedFiles) {
@@ -813,6 +931,7 @@ export default function Messages() {
           }
 
           setMessages(prev => [...prev, optimisticMessage])
+          scheduleScrollToBottom('smooth')
 
           const { data, error } = await supabase
             .from('messages')
@@ -841,9 +960,12 @@ export default function Messages() {
               sound: true,
             });
           } else {
-            setMessages(prev => prev.map(m =>
-              m.id === optimisticMessage.id ? { ...data, sender: { first_name: profile.first_name, last_name: profile.last_name, role: profile.role } } : m
-            ))
+            setMessages(prev => {
+              const updated = prev.map(m =>
+                m.id === optimisticMessage.id ? { ...data, sender: { first_name: profile.first_name, last_name: profile.last_name, role: profile.role } } : m
+              )
+              return dedupeMessagesById(updated)
+            })
           }
         }
       } else if (messageText) {
@@ -867,6 +989,7 @@ export default function Messages() {
         }
 
         setMessages(prev => [...prev, optimisticMessage])
+        scheduleScrollToBottom('smooth')
 
         const { data, error } = await supabase
           .from('messages')
@@ -896,9 +1019,12 @@ export default function Messages() {
           });
           setNewMessage(messageText)
         } else {
-          setMessages(prev => prev.map(m =>
-            m.id === optimisticMessage.id ? { ...data, sender: { first_name: profile.first_name, last_name: profile.last_name, role: profile.role } } : m
-          ))
+          setMessages(prev => {
+            const updated = prev.map(m =>
+              m.id === optimisticMessage.id ? { ...data, sender: { first_name: profile.first_name, last_name: profile.last_name, role: profile.role } } : m
+            )
+            return dedupeMessagesById(updated)
+          })
         }
       }
 
@@ -907,12 +1033,7 @@ export default function Messages() {
         .update({ updated_at: new Date().toISOString() })
         .eq('id', selectedConversation.id)
 
-      setTimeout(() => {
-        const messagesContainer = document.querySelector('.messages-container')
-        if (messagesContainer) {
-          messagesContainer.scrollTop = messagesContainer.scrollHeight
-        }
-      }, 100)
+      scheduleScrollToBottom('smooth')
     } catch (err) {
       console.error('Error in sendMessage:', err)
       showToast.error(err.message || 'Failed to send message', {
@@ -924,6 +1045,7 @@ export default function Messages() {
         sound: true,
       });
     } finally {
+      sendInFlightRef.current = false
       setUploadingFile(false)
     }
   }
@@ -1083,7 +1205,7 @@ export default function Messages() {
             {loading ? (
               <div className="min-h-screen flex flex-col items-center justify-center bg-[#F5F5F5]">
                 <div className="animate-spin rounded-full h-10 w-10 border-2 border-gray-200 border-t-black mb-4"></div>
-                <p className="text-gray-500 font-medium">Loading Users...</p>
+                <p className="text-gray-500 font-medium">Loading conversations...</p>
               </div>
             ) : showNewConversation ? (
               <div className="flex-1 overflow-y-auto">
@@ -1230,8 +1352,29 @@ export default function Messages() {
                 </div>
 
                 {/* Messages */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-4 messages-container bg-[#F3F4F5]">
-                  {messages.map((msg, index) => {
+                <div ref={messagesContainerRef} onScroll={handleMessagesScroll} className="flex-1 overflow-y-auto p-4 space-y-4 messages-container bg-[#F3F4F5]">
+                  {messagesLoading ? (
+                    <div className="h-full min-h-[220px] flex items-center justify-center">
+                      <div className="flex flex-col items-center gap-2 text-gray-500">
+                        <div className="animate-spin rounded-full h-7 w-7 border-2 border-gray-200 border-t-black"></div>
+                        <p className="text-xs font-medium">Opening conversation...</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                    {(loadingOlderMessages || hasOlderMessages) && (
+                      <div className="py-1 text-center">
+                        {loadingOlderMessages ? (
+                          <div className="inline-flex items-center gap-2 text-[11px] text-gray-500">
+                            <div className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-gray-200 border-t-black"></div>
+                            Loading older messages...
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-gray-400">Scroll up to load older messages</p>
+                        )}
+                      </div>
+                    )}
+                    {messages.map((msg, index) => {
                     const isOwn = msg.sender_id === session.user.id
                     const hasFile = msg.file_url && msg.file_name
                     const isImage = msg.file_type?.startsWith('image/')
@@ -1321,12 +1464,14 @@ export default function Messages() {
                         <div className={`text-[10px] text-gray-400 mt-1 flex items-center gap-1 ${isOwn ? 'pr-1' : 'pl-1'}`}>
                           {new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase()}
                           {isOwn && isLatestFromMe && (
-                            <span>• {msg.read ? 'Seen' : 'Sent'}</span>
+                            <span>- {msg.read ? 'Seen' : 'Sent'}</span>
                           )}
                         </div>
                       </div>
                     )
                   })}
+                  </div>
+                  )}
                 </div>
 
                 {/* Message Input */}
@@ -1367,7 +1512,14 @@ export default function Messages() {
                         type="text"
                         value={newMessage}
                         onChange={(e) => setNewMessage(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && !uploadingFile && sendMessage()}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            if (!uploadingFile) {
+                              sendMessage()
+                            }
+                          }
+                        }}
                         placeholder="Type a message..."
                         disabled={uploadingFile}
                         className="flex-1 bg-transparent border-none text-sm focus:outline-none placeholder-gray-400"

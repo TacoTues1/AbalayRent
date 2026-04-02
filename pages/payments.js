@@ -2,17 +2,21 @@ import Lottie from "lottie-react"
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import { showToast } from 'nextjs-toast-notify'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import loadingAnimation from "../assets/loading.json"
 import StripePaymentForm from '../components/StripePaymentForm'
 import { supabase } from '../lib/supabaseClient'
+
+const PAYMENT_REQUESTS_PER_PAGE = 15
 
 export default function PaymentsPage() {
   const router = useRouter()
   const [session, setSession] = useState(null)
   const [payments, setPayments] = useState([])
   const [paymentRequests, setPaymentRequests] = useState([])
+  const [totalPaymentRequestCount, setTotalPaymentRequestCount] = useState(0)
+  const [currentPage, setCurrentPage] = useState(1)
   const [properties, setProperties] = useState([])
   const [approvedApplications, setApprovedApplications] = useState([])
   const [loading, setLoading] = useState(true)
@@ -58,6 +62,7 @@ export default function PaymentsPage() {
   const [isFamilyMember, setIsFamilyMember] = useState(false) // Track if user is a family member
   const [primaryTenantId, setPrimaryTenantId] = useState(null) // Primary tenant ID for family members
   const [parentOccupancyId, setParentOccupancyId] = useState(null) // Parent occupancy ID for family members
+  const currentPageRef = useRef(1)
   const [chartYear, setChartYear] = useState(new Date().getFullYear())
   const [formData, setFormData] = useState({
     property_id: '',
@@ -205,10 +210,6 @@ export default function PaymentsPage() {
           setIsFamilyMember(true)
           setPrimaryTenantId(fmData.occupancy.tenant_id)
           setParentOccupancyId(fmData.occupancy.id)
-          // Pre-load payment data from API (bypasses RLS)
-          if (fmData.fullPaymentRequests) setPaymentRequests(fmData.fullPaymentRequests)
-          if (fmData.paymentsHistory) setPayments(fmData.paymentsHistory)
-          setLoading(false)
         }
       } catch (err) {
         console.error('Family member check on payments page:', err)
@@ -224,7 +225,6 @@ export default function PaymentsPage() {
     if (session && userRole) {
       // Initial Load
       loadPayments()
-      loadPaymentRequests()
       if (userRole === 'landlord') {
         loadProperties()
         loadApprovedApplications()
@@ -238,7 +238,7 @@ export default function PaymentsPage() {
           { event: '*', schema: 'public', table: 'payment_requests' },
           (payload) => {
             // Reload requests when a new bill is sent or status updates
-            loadPaymentRequests()
+            loadPaymentRequests(currentPageRef.current)
           }
         )
         .on(
@@ -256,6 +256,27 @@ export default function PaymentsPage() {
       }
     }
   }, [session, userRole])
+
+  useEffect(() => {
+    currentPageRef.current = currentPage
+  }, [currentPage])
+
+  useEffect(() => {
+    if (session && userRole) {
+      loadPaymentRequests(currentPage)
+    }
+  }, [session, userRole, currentPage])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [userRole])
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(totalPaymentRequestCount / PAYMENT_REQUESTS_PER_PAGE))
+    if (currentPage > maxPage) {
+      setCurrentPage(maxPage)
+    }
+  }, [currentPage, totalPaymentRequestCount])
 
   const [selectedTenantId, setSelectedTenantId] = useState('') // Matches occupancy ID or list ID
 
@@ -303,7 +324,6 @@ export default function PaymentsPage() {
       } catch (err) {
         console.error('Error loading family member payments:', err)
       }
-      setLoading(false)
       return
     }
 
@@ -320,21 +340,32 @@ export default function PaymentsPage() {
 
     const { data } = await query
     setPayments(data || [])
-    setLoading(false)
   }
 
-  async function loadPaymentRequests() {
+  async function loadPaymentRequests(page = currentPage) {
+    setLoading(true)
+
     // Family members: use API to bypass RLS
     if (isFamilyMember && primaryTenantId) {
       try {
         const fmRes = await fetch(`/api/family-members?member_id=${session.user.id}`)
         const fmData = await fmRes.json()
         if (fmData?.fullPaymentRequests) {
-          setPaymentRequests(fmData.fullPaymentRequests)
+          const requests = (fmData.fullPaymentRequests || []).filter(req => !req.is_advance_payment)
+          const from = (page - 1) * PAYMENT_REQUESTS_PER_PAGE
+          const to = from + PAYMENT_REQUESTS_PER_PAGE
+          setTotalPaymentRequestCount(requests.length)
+          setPaymentRequests(requests.slice(from, to))
+        } else {
+          setTotalPaymentRequestCount(0)
+          setPaymentRequests([])
         }
       } catch (err) {
         console.error('Error loading family member payment requests:', err)
+        setTotalPaymentRequestCount(0)
+        setPaymentRequests([])
       }
+      setLoading(false)
       return
     }
 
@@ -345,7 +376,8 @@ export default function PaymentsPage() {
         properties(title, address),
         tenant_profile:profiles!payment_requests_tenant_fkey(first_name, middle_name, last_name, phone),
         landlord_profile:profiles!payment_requests_landlord_fkey(first_name, middle_name, last_name, phone)
-      `)
+      `, { count: 'exact' })
+      .or('is_advance_payment.is.null,is_advance_payment.eq.false')
       .order('created_at', { ascending: false })
 
     if (userRole === 'tenant') {
@@ -354,11 +386,19 @@ export default function PaymentsPage() {
       query = query.eq('landlord', session.user.id)
     }
 
-    const { data, error } = await query
+    const from = (page - 1) * PAYMENT_REQUESTS_PER_PAGE
+    const to = from + PAYMENT_REQUESTS_PER_PAGE - 1
+    const { data, error, count } = await query.range(from, to)
     if (error) {
       console.error('Error loading payment requests:', error)
+      setTotalPaymentRequestCount(0)
+      setPaymentRequests([])
+      setLoading(false)
+      return
     }
+    setTotalPaymentRequestCount(count || 0)
     setPaymentRequests(data || [])
+    setLoading(false)
   }
 
   async function loadProperties() {
@@ -1135,7 +1175,7 @@ export default function PaymentsPage() {
             pollingStopped = true;
             clearInterval(pollInterval);
             setUploadingProof(false);
-            showToast.warning('Automatic verification timed out. The system will retry when you revisit this page, or check "View History".', { duration: 6000 });
+            showToast.warning('Automatic verification timed out. The system will retry when you revisit this page.', { duration: 6000 });
             return;
           }
 
@@ -1704,21 +1744,26 @@ export default function PaymentsPage() {
 
   if (!session) return <div className="min-h-screen flex items-center justify-center">Loading...</div>
 
-  // Calculate total income from payment_requests (same as dashboard)
-  const totalIncome = paymentRequests
-    .filter(p => p.status === 'paid')
-    .reduce((sum, p) => {
-      const t = parseFloat(p.amount_paid || 0) || (
-        parseFloat(p.rent_amount || 0) +
-        parseFloat(p.security_deposit_amount || 0) +
-        parseFloat(p.advance_amount || 0) +
-        parseFloat(p.water_bill || 0) +
-        parseFloat(p.electrical_bill || 0) +
-        parseFloat(p.wifi_bill || 0) +
-        parseFloat(p.other_bills || 0)
-      )
-      return sum + t
-    }, 0)
+  // Calculate total income from recorded payments
+  const totalIncome = payments.reduce((sum, p) => sum + (parseFloat(p.amount || 0) || 0), 0)
+
+  const totalPages = Math.max(1, Math.ceil(totalPaymentRequestCount / PAYMENT_REQUESTS_PER_PAGE))
+  const safeCurrentPage = Math.min(currentPage, totalPages)
+  const pageStart = totalPaymentRequestCount === 0 ? 0 : (safeCurrentPage - 1) * PAYMENT_REQUESTS_PER_PAGE + 1
+  const pageEnd = Math.min((safeCurrentPage - 1) * PAYMENT_REQUESTS_PER_PAGE + paymentRequests.length, totalPaymentRequestCount)
+
+  function handlePageChange(nextPage) {
+    if (nextPage < 1 || nextPage > totalPages || nextPage === safeCurrentPage) return
+
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+
+    setLoading(true)
+    setPaymentRequests([])
+    setSelectedDetailBill(null)
+    setCurrentPage(nextPage)
+  }
 
   return (
     <div className="min-h-screen bg-[#F3F4F5] p-3 sm:p-6">
@@ -1729,12 +1774,14 @@ export default function PaymentsPage() {
             <p className="text-sm text-gray-500 mt-1">Manage bills and income</p>
           </div>
           <div className="flex gap-2 w-full sm:w-auto">
-            <Link
-              href="/payment-history"
-              className="px-4 py-2 border-2 border-black text-black font-bold rounded-lg hover:bg-gray-50 text-center flex-1 sm:flex-none cursor-pointer"
-            >
-              View History
-            </Link>
+            {userRole === 'landlord' && (
+              <Link
+                href="/payment-history"
+                className="px-4 py-2 border-2 border-black text-black font-bold rounded-lg hover:bg-gray-50 text-center flex-1 sm:flex-none cursor-pointer"
+              >
+                View History
+              </Link>
+            )}
             {userRole === 'landlord' && (
               <button
                 onClick={() => setShowFormModal(true)}
@@ -1811,7 +1858,7 @@ export default function PaymentsPage() {
                         required
                         className="w-full border-2 border-black px-3 py-2 rounded-lg bg-white appearance-none cursor-pointer font-medium focus:outline-none"
                         value={selectedTenantId}
-                        onChange={e => {
+                        onChange={async (e) => {
                           const listId = e.target.value
                           setSelectedTenantId(listId)
                           const selectedApp = approvedApplications.find(app => app.id === listId)
@@ -1821,10 +1868,21 @@ export default function PaymentsPage() {
                             // --- START AUTOMATIC DATE CALCULATION ---
                             let nextDueDate = '';
 
-                            // 1. Find the latest RENT bill for this specific tenant
-                            const lastRentBill = paymentRequests
-                              .filter(p => p.tenant === selectedApp.tenant && parseFloat(p.rent_amount) > 0)
-                              .sort((a, b) => new Date(b.due_date) - new Date(a.due_date))[0]; // Get the newest one
+                            // 1. Find the latest RENT bill for this specific tenant from DB
+                            let lastRentBill = null
+                            try {
+                              const { data: latestBill } = await supabase
+                                .from('payment_requests')
+                                .select('due_date, rent_amount')
+                                .eq('tenant', selectedApp.tenant)
+                                .gt('rent_amount', 0)
+                                .order('due_date', { ascending: false })
+                                .limit(1)
+                                .maybeSingle()
+                              lastRentBill = latestBill || null
+                            } catch (billErr) {
+                              console.error('Failed to fetch latest rent bill for due date calculation:', billErr)
+                            }
 
                             if (lastRentBill && lastRentBill.due_date) {
                               // 2. If history exists: Calculate next due date
@@ -1983,7 +2041,7 @@ export default function PaymentsPage() {
             </h2>
           </div>
           {loading ? (
-            <div className="min-h-screen flex items-center justify-center bg-[#F5F5F5]">
+            <div className="min-h-screen flex items-center justify-center bg-white">
               {/* Wrapper for animation + text */}
               <div className="flex flex-col items-center">
                 <Lottie
@@ -2224,6 +2282,33 @@ export default function PaymentsPage() {
                   </tbody>
                 </table>
               </div>
+
+              {totalPages > 1 && (
+                <div className="px-4 sm:px-6 py-4 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+                  <p className="text-xs font-medium text-gray-500">
+                    Showing {pageStart}-{pageEnd} of {totalPaymentRequestCount}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => handlePageChange(safeCurrentPage - 1)}
+                      disabled={safeCurrentPage === 1}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      Previous
+                    </button>
+                    <span className="text-xs font-bold text-gray-600 px-2">
+                      Page {safeCurrentPage} of {totalPages}
+                    </span>
+                    <button
+                      onClick={() => handlePageChange(safeCurrentPage + 1)}
+                      disabled={safeCurrentPage === totalPages}
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>

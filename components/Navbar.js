@@ -12,6 +12,7 @@ export default function Navbar() {
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
   const [unreadCount, setUnreadCount] = useState(0)
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0)
   const [bookingCount, setBookingCount] = useState(0)
   const [maintenanceCount, setMaintenanceCount] = useState(0)
   const [pendingPaymentCount, setPendingPaymentCount] = useState(0)
@@ -62,10 +63,33 @@ export default function Navbar() {
     }
   }, [])
 
-  // ============================================
-  // AUTO-CHECK: Process Scheduled Reminders Queue
-  // Runs when ANY user is active, throttled to once per 10 minutes
-  // ============================================
+  const getPaymentBadgeSeenKey = (userId) => `paymentsBadgeSeenAt:${userId}`
+
+  const getPaymentsSeenAt = (userId) => {
+    if (!userId || typeof window === 'undefined') return null
+    return localStorage.getItem(getPaymentBadgeSeenKey(userId))
+  }
+
+  const markPaymentsAsSeen = (userId) => {
+    if (!userId || typeof window === 'undefined') return
+    localStorage.setItem(getPaymentBadgeSeenKey(userId), new Date().toISOString())
+    setPendingPaymentCount(0)
+  }
+
+  useEffect(() => {
+    if (!session?.user?.id) return
+
+    const isPaymentsRoute =
+      router.pathname === '/payments' ||
+      router.pathname === '/payment-history' ||
+      router.pathname.startsWith('/payment-')
+
+    if (isPaymentsRoute) {
+      markPaymentsAsSeen(session.user.id)
+    }
+  }, [router.pathname, session?.user?.id])
+
+
   useEffect(() => {
     if (!session) return
 
@@ -159,6 +183,33 @@ export default function Navbar() {
 
     return () => {
       supabase.removeChannel(paymentChannel)
+    }
+  }, [session])
+
+  // Real-time subscription for unread message badge updates
+  useEffect(() => {
+    if (!session) return
+
+    const userId = session.user.id
+
+    const messageChannel = supabase
+      .channel(`navbar-messages-${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'messages',
+          filter: `receiver_id=eq.${userId}`
+        },
+        () => {
+          loadUnreadCount(userId)
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(messageChannel)
     }
   }, [session])
 
@@ -339,7 +390,15 @@ export default function Navbar() {
         .eq('read', false)
       setUnreadCount(notifCount || 0)
 
-      // 2. Determine Role (if not in state yet)
+      // 2. Message Icon: Unread direct messages
+      const { count: msgCount } = await supabase
+        .from('messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('receiver_id', userId)
+        .eq('read', false)
+      setUnreadMessageCount(msgCount || 0)
+
+      // 3. Determine Role (if not in state yet)
       let role = profile?.role
       if (!role) {
         const { data } = await supabase.from('profiles').select('role').eq('id', userId).maybeSingle()
@@ -348,7 +407,7 @@ export default function Navbar() {
 
       if (!role) return
 
-      // 3. Role-Based Badges (Database Counts)
+      // 4. Role-Based Badges (Database Counts)
       if (role === 'landlord') {
         // 1. Fetch Landlord's Property IDs first (shared for both queries)
         const { data: myProps } = await supabase
@@ -380,11 +439,16 @@ export default function Navbar() {
           setMaintenanceCount(0)
         }
         // Landlord Payments: Pending confirmation from tenants
-        const { count: pCount } = await supabase
+        let landlordPaymentsQuery = supabase
           .from('payment_requests')
           .select('*', { count: 'exact', head: true })
           .eq('landlord', userId)
           .eq('status', 'pending_confirmation')
+        const paymentsSeenAt = getPaymentsSeenAt(userId)
+        if (paymentsSeenAt) {
+          landlordPaymentsQuery = landlordPaymentsQuery.gt('created_at', paymentsSeenAt)
+        }
+        const { count: pCount } = await landlordPaymentsQuery
         setPendingPaymentCount(pCount || 0)
 
       } else if (role === 'tenant') {
@@ -407,11 +471,16 @@ export default function Navbar() {
         setMaintenanceCount(mCount || 0)
 
         // Tenant Payments: Unpaid bills (pending)
-        const { count: pCount } = await supabase
+        let tenantPaymentsQuery = supabase
           .from('payment_requests')
           .select('*', { count: 'exact', head: true })
           .eq('tenant', userId)
           .eq('status', 'pending')
+        const paymentsSeenAt = getPaymentsSeenAt(userId)
+        if (paymentsSeenAt) {
+          tenantPaymentsQuery = tenantPaymentsQuery.gt('created_at', paymentsSeenAt)
+        }
+        const { count: pCount } = await tenantPaymentsQuery
         setPendingPaymentCount(pCount || 0)
       }
 
@@ -976,6 +1045,7 @@ export default function Navbar() {
                       </span>
                     )}
                   </Link>
+
                   <Link href="/payments" className={`nav-link text-sm font-semibold transition-colors relative group ${isActive('/payments') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
                     Payments
                     {pendingPaymentCount > 0 && (
@@ -983,6 +1053,9 @@ export default function Navbar() {
                         {pendingPaymentCount > 9 ? '9+' : pendingPaymentCount}
                       </span>
                     )}
+                  </Link>
+                    <Link href="/properties/allProperties" className={`nav-link text-sm font-semibold transition-colors ${isActive('/properties/allProperties') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
+                    Properties
                   </Link>
                 </>
               )}
@@ -1004,6 +1077,11 @@ export default function Navbar() {
               {/* Message Icon */}
               <Link href="/messages" className={`group hidden md:flex p-1.5 rounded-full items-center justify-center transition-colors relative ${isActive('/messages') ? 'active bg-gray-300 text-gray-900' : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'} ${disabledClass}`}>
                 <svg className="w-[22px] h-[22px]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                {unreadMessageCount > 0 && (
+                  <span className="absolute top-0 right-0 transform translate-x-1/3 -translate-y-1/3 bg-[#FF4B60] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.1rem] text-center shadow-sm">
+                    {unreadMessageCount > 9 ? '9+' : unreadMessageCount}
+                  </span>
+                )}
                 <span className="pointer-events-none absolute top-full left-1/2 -translate-x-1/2 mt-2 px-2 py-1 rounded-md bg-gray-900 text-white text-[11px] font-medium whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-[60]">
                   Messages
                 </span>
@@ -1250,12 +1328,16 @@ export default function Navbar() {
                       </span>
                     )}
                   </Link>
+                  <Link href="/properties/allProperties" onClick={() => setShowMobileMenu(false)} className={`flex items-center justify-center px-3 py-2 rounded-lg text-xs font-medium transition-all ${isActive('/properties/allProperties') ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-100'} ${disabledClass}`}>Properties</Link>
                 </>
               )}
 
               <Link href="/favorites" onClick={() => setShowMobileMenu(false)} className={`flex items-center justify-center px-3 py-2 rounded-lg text-xs font-medium transition-all ${isActive('/favorites') ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-100'} ${disabledClass}`}>My Favorite</Link>
 
-              <Link href="/messages" onClick={() => setShowMobileMenu(false)} className={`flex items-center justify-center px-3 py-2 rounded-lg text-xs font-medium transition-all ${isActive('/messages') ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-100'} ${disabledClass}`}>Messages</Link>
+              <Link href="/messages" onClick={() => setShowMobileMenu(false)} className={`flex items-center justify-center gap-1 px-3 py-2 rounded-lg text-xs font-medium transition-all ${isActive('/messages') ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-100'} ${disabledClass}`}>
+                Messages
+                {unreadMessageCount > 0 && <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${isActive('/messages') ? 'bg-white text-black' : 'bg-red-500 text-white'}`}>{unreadMessageCount > 9 ? '9+' : unreadMessageCount}</span>}
+              </Link>
 
               <Link href="/notifications" onClick={() => setShowMobileMenu(false)} className={`flex items-center justify-center gap-1 px-3 py-2 rounded-lg text-xs font-medium transition-all ${isActive('/notifications') ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-100'} ${disabledClass}`}>
                 Notifications

@@ -24,6 +24,8 @@ export default function PropertyDetail() {
   const [landlordReviewStats, setLandlordReviewStats] = useState({ avg: 0, count: 0 })
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [hasActiveOccupancy, setHasActiveOccupancy] = useState(false)
+  const [authChecked, setAuthChecked] = useState(false)
+  const [isCheckingOccupancy, setIsCheckingOccupancy] = useState(false)
   const [occupiedPropertyTitle, setOccupiedPropertyTitle] = useState('')
   const [showAllAmenities, setShowAllAmenities] = useState(false)
   const [reviews, setReviews] = useState([])
@@ -52,11 +54,14 @@ export default function PropertyDetail() {
   const [mapLoading, setMapLoading] = useState(true)
   const locationSearchTimeout = useRef(null)
   useEffect(() => {
-    supabase.auth.getSession().then(result => {
-      if (result.data?.session) {
-        setSession(result.data.session)
-        loadProfile(result.data.session.user.id)
+    supabase.auth.getSession().then(async result => {
+      const existingSession = result.data?.session
+      if (existingSession) {
+        setSession(existingSession)
+        await checkActiveOccupancy(existingSession.user.id)
+        loadProfile(existingSession.user.id)
       }
+      setAuthChecked(true)
     })
   }, [])
 
@@ -69,23 +74,61 @@ export default function PropertyDetail() {
 
     if (data) {
       setProfile(data)
-      if (data.role === 'tenant') {
-        checkActiveOccupancy(userId)
+    }
+  }
+
+  async function fillOccupiedPropertyTitle(propertyId) {
+    if (!propertyId) return
+    try {
+      const { data } = await supabase
+        .from('properties')
+        .select('title')
+        .eq('id', propertyId)
+        .maybeSingle()
+
+      if (data?.title) {
+        setOccupiedPropertyTitle(data.title)
       }
+    } catch (err) {
+      console.error('Error resolving occupied property title:', err)
     }
   }
 
   async function checkActiveOccupancy(userId) {
-    const { data } = await supabase
-      .from('tenant_occupancies')
-      .select('*, property:properties(title)')
-      .eq('tenant_id', userId)
-      .eq('status', 'active')
-      .maybeSingle()
+    setIsCheckingOccupancy(true)
+    setHasActiveOccupancy(false)
+    setOccupiedPropertyTitle('')
 
-    if (data) {
-      setHasActiveOccupancy(true)
-      setOccupiedPropertyTitle(data.property?.title || 'a property')
+    try {
+      const { data: directOccupancy } = await supabase
+        .from('tenant_occupancies')
+        .select('id, property_id')
+        .eq('tenant_id', userId)
+        .in('status', ['active', 'pending_end'])
+        .limit(1)
+        .maybeSingle()
+
+      if (directOccupancy) {
+        setHasActiveOccupancy(true)
+        setOccupiedPropertyTitle('a property')
+        fillOccupiedPropertyTitle(directOccupancy.property_id)
+        return
+      }
+
+      // Family-member accounts inherit an active property from their parent occupancy.
+      const fmRes = await fetch(`/api/family-members?member_id=${userId}&check_only=1`, { cache: 'no-store' })
+
+      if (!fmRes.ok) return
+
+      const fmData = await fmRes.json()
+      if (fmData?.occupancy) {
+        setHasActiveOccupancy(true)
+        setOccupiedPropertyTitle(fmData.occupancy?.property?.title || 'a property')
+      }
+    } catch (err) {
+      console.error('Error checking family member occupancy in property details:', err)
+    } finally {
+      setIsCheckingOccupancy(false)
     }
   }
 
@@ -511,6 +554,17 @@ export default function PropertyDetail() {
       router.push(`/login?redirect=${router.asPath}`)
       return
     }
+
+    if (isCheckingOccupancy) return
+
+    if (hasActiveOccupancy) {
+      showToast.error(`Booking disabled: you already have an active property (${occupiedPropertyTitle || 'a property'}).`, {
+        duration: 4000,
+        transition: "bounceIn"
+      })
+      return
+    }
+
     setShowBookingOptions(true)
   }
 
@@ -534,11 +588,21 @@ export default function PropertyDetail() {
 
     setSubmitting(true)
 
+    if (isCheckingOccupancy) { setSubmitting(false); return }
+
+    if (hasActiveOccupancy) {
+      showToast.error(`Booking disabled: you already have an active property (${occupiedPropertyTitle || 'a property'}).`, {
+        duration: 4000,
+        transition: "bounceIn"
+      })
+      setSubmitting(false)
+      return
+    }
+
     // 1. Check Active Occupancy
     const { data: activeOccupancy } = await supabase
       .from('tenant_occupancies')
       .select('id')
-      .eq('property_id', id)
       .eq('tenant_id', session.user.id)
       .in('status', ['active', 'pending_end'])
       .maybeSingle()
@@ -1186,7 +1250,7 @@ export default function PropertyDetail() {
                   <div className="p-3 bg-gray-50 text-gray-600 text-xs rounded-lg">Landlords cannot book viewings.</div>
                 ) : (
                   <>
-                    {hasActiveOccupancy ? (
+                    {!authChecked || (session && isCheckingOccupancy) ? null : hasActiveOccupancy ? (
                       <div className="p-3 bg-yellow-50 rounded-lg">
                         <p className="font-bold text-yellow-800 text-xs mb-1">Active Occupancy</p>
                         <p className="text-xs text-yellow-700 leading-relaxed mb-2">Assigned to <strong>{occupiedPropertyTitle}</strong>.</p>

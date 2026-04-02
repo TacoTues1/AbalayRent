@@ -40,6 +40,8 @@ function deg2rad(deg) {
   return deg * (Math.PI / 180)
 }
 
+const PROPERTIES_PER_PAGE = 10
+
 const extractCoordinates = (link) => {
   if (!link) return null;
   const atMatch = link.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
@@ -167,8 +169,12 @@ function FlyToPhilippines() {
 
 export default function AllProperties() {
   const router = useRouter()
+  const autoLocationRequestedRef = useRef(false)
   const [properties, setProperties] = useState([])
+  const [filteredProperties, setFilteredProperties] = useState([])
   const [loading, setLoading] = useState(true)
+  const [totalPropertyCount, setTotalPropertyCount] = useState(0)
+  const [currentPage, setCurrentPage] = useState(1)
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
   const [currentImageIndex, setCurrentImageIndex] = useState({})
@@ -280,7 +286,18 @@ export default function AllProperties() {
       loadProperties()
     }, 300)
     return () => clearTimeout(delayDebounceFn)
-  }, [searchQuery, selectedAmenities, priceRange, minRating, filterMostFavorite, sortBy, router.isReady, statsLoaded, filterNearMe, userLocation])
+  }, [searchQuery, selectedAmenities, priceRange, minRating, filterMostFavorite, sortBy, router.isReady, statsLoaded, filterNearMe, userLocation, currentPage])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, selectedAmenities, priceRange, minRating, filterMostFavorite, sortBy, filterNearMe, userLocation])
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(totalPropertyCount / PROPERTIES_PER_PAGE))
+    if (currentPage > maxPage) {
+      setCurrentPage(maxPage)
+    }
+  }, [currentPage, totalPropertyCount])
 
   // Disable body scroll when mobile filters are open
   useEffect(() => {
@@ -293,6 +310,12 @@ export default function AllProperties() {
       document.body.style.overflow = 'unset'
     }
   }, [showMobileFilters])
+
+  useEffect(() => {
+    if (!router.isReady || autoLocationRequestedRef.current) return
+    autoLocationRequestedRef.current = true
+    requestUserLocation({ applyNearMeFilter: false, manageLoading: false, showErrors: false, switchToMap: false })
+  }, [router.isReady])
 
   async function loadProfile(userId) {
     const { data } = await supabase
@@ -431,6 +454,9 @@ export default function AllProperties() {
       const { data, error } = await query
       if (error) {
         console.error('Error loading properties:', error)
+        setFilteredProperties([])
+        setProperties([])
+        setTotalPropertyCount(0)
         setLoading(false)
         return
       }
@@ -501,7 +527,12 @@ export default function AllProperties() {
       });
     }
 
-    setProperties(filteredData)
+    setFilteredProperties(filteredData)
+    setTotalPropertyCount(filteredData.length)
+
+    const from = (currentPage - 1) * PROPERTIES_PER_PAGE
+    const to = from + PROPERTIES_PER_PAGE
+    setProperties(filteredData.slice(from, to))
     setLoading(false)
   }
 
@@ -543,6 +574,24 @@ export default function AllProperties() {
     setUserLocation(null)
     setShowMapView(false)
     setLocationError('')
+    setCurrentPage(1)
+  }
+
+  const totalPages = Math.max(1, Math.ceil(totalPropertyCount / PROPERTIES_PER_PAGE))
+  const safeCurrentPage = Math.min(currentPage, totalPages)
+  const pageStart = totalPropertyCount === 0 ? 0 : (safeCurrentPage - 1) * PROPERTIES_PER_PAGE + 1
+  const pageEnd = Math.min((safeCurrentPage - 1) * PROPERTIES_PER_PAGE + properties.length, totalPropertyCount)
+
+  const handlePageChange = (nextPage) => {
+    if (nextPage < 1 || nextPage > totalPages || nextPage === safeCurrentPage) return
+
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+
+    setLoading(true)
+    setProperties([])
+    setCurrentPage(nextPage)
   }
 
   const toggleComparison = (e, property) => {
@@ -566,34 +615,76 @@ export default function AllProperties() {
     router.push(`/compare?ids=${ids}`)
   }
 
+  const requestUserLocation = ({
+    applyNearMeFilter = false,
+    manageLoading = true,
+    showErrors = true,
+    switchToMap = true
+  } = {}) => {
+    if (typeof window === 'undefined' || !("geolocation" in navigator)) {
+      if (showErrors) {
+        setLocationError("Geolocation is not supported by your browser.")
+      }
+      return
+    }
+
+    if (manageLoading) {
+      setLoading(true)
+    }
+    setLocationError('')
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const coords = {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude
+        }
+
+        setUserLocation(coords)
+
+        if (applyNearMeFilter) {
+          setFilterNearMe(true)
+          if (switchToMap) {
+            setShowMapView(true)
+          }
+          setShowMobileFilters(false)
+        }
+      },
+      (err) => {
+        console.error("Geolocation error:", err)
+
+        if (applyNearMeFilter) {
+          setFilterNearMe(false)
+          setUserLocation(null)
+        }
+
+        if (showErrors) {
+          setLocationError("Could not get your location. Please ensure location services are enabled.")
+        }
+
+        if (manageLoading) {
+          setLoading(false)
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    )
+  }
+
   const handleToggleNearMe = () => {
     if (filterNearMe) {
       setFilterNearMe(false)
       setUserLocation(null)
     } else {
-      if ("geolocation" in navigator) {
+      if (userLocation) {
         setLoading(true)
         setLocationError('')
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            setUserLocation({
-              latitude: pos.coords.latitude,
-              longitude: pos.coords.longitude
-            })
-            setFilterNearMe(true)
-            setShowMapView(true) // Automatically switch to Map view
-            setShowMobileFilters(false) // Minimizes filter section
-          },
-          (err) => {
-            console.error("Geolocation error:", err)
-            setLocationError("Could not get your location. Please ensure location services are enabled.")
-            setLoading(false)
-          },
-          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-        )
-      } else {
-        setLocationError("Geolocation is not supported by your browser.")
+        setFilterNearMe(true)
+        setShowMapView(true)
+        setShowMobileFilters(false)
+        return
       }
+
+        requestUserLocation({ applyNearMeFilter: true, manageLoading: true, showErrors: true, switchToMap: true })
     }
   }
 
@@ -603,16 +694,16 @@ export default function AllProperties() {
     <div className="space-y-6">
       {/* Near Me */}
       <div>
-        <label className="flex items-center justify-between p-4 bg-slate-50 border border-gray-100 rounded-2xl cursor-pointer hover:border-gray-200 transition-all shadow-sm">
+        <label className="flex items-center justify-between p-2.5 bg-slate-50 border border-gray-100 rounded-xl cursor-pointer hover:border-gray-200 transition-all shadow-sm">
           <div className="flex items-center gap-3">
             <div className="flex-shrink-0">
-              <LocateFixed className="w-5 h-5 text-emerald-500 stroke-[2.5]" />
+              <LocateFixed className="w-4 h-4 text-emerald-500 stroke-[2.5]" />
             </div>
             <div>
-              <p className="text-[16px] font-bold text-[#111827] leading-none mb-1.5">
+              <p className="text-sm font-bold text-[#111827] leading-none mb-1">
                 Find Near Me
               </p>
-              <p className="text-[13px] text-gray-500 font-medium leading-none">Properties within 2km</p>
+              <p className="text-[11px] text-gray-500 font-medium leading-none">Properties within 2km</p>
             </div>
           </div>
           <div className="relative flex-shrink-0 mt-0.5">
@@ -622,10 +713,30 @@ export default function AllProperties() {
               checked={filterNearMe}
               onChange={handleToggleNearMe}
             />
-            <div className="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 transition-colors duration-300 ease-in-out after:transition-all after:duration-300 after:ease-in-out peer-checked:bg-emerald-500 shadow-inner"></div>
+            <div className="w-9 h-5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 transition-colors duration-300 ease-in-out after:transition-all after:duration-300 after:ease-in-out peer-checked:bg-emerald-500 shadow-inner"></div>
           </div>
         </label>
         {locationError && <p className="text-[10px] text-red-500 font-medium mt-1.5 ml-1 leading-snug">{locationError}</p>}
+
+        <div className="mt-3">
+          <p className="text-xs font-bold text-gray-500 uppercase mb-2">View Mode</p>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => setShowMapView(false)}
+              className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${!showMapView ? 'bg-black text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:text-gray-800'}`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
+              Grid
+            </button>
+            <button
+              onClick={() => setShowMapView(true)}
+              className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${showMapView ? 'bg-black text-white shadow-sm' : 'bg-gray-100 text-gray-600 hover:text-gray-800'}`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
+              Map
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Search */}
@@ -956,7 +1067,7 @@ export default function AllProperties() {
               <div>
                 <h2 className="text-lg font-black text-black uppercase">Properties</h2>
                 <p className="text-xs text-gray-500">
-                  {loading ? 'Searching...' : `${properties.length} results`}
+                  {loading ? 'Searching...' : `${totalPropertyCount} results`}
                 </p>
               </div>
 
@@ -969,24 +1080,6 @@ export default function AllProperties() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
                 </svg>
                 Filters
-              </button>
-            </div>
-
-            {/* View Toggle (Mobile) */}
-            <div className="flex bg-gray-100 p-1.5 rounded-xl w-full">
-              <button
-                onClick={() => setShowMapView(false)}
-                className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer ${!showMapView ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
-                Grid
-              </button>
-              <button
-                onClick={() => setShowMapView(true)}
-                className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer ${showMapView ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
-                Map
               </button>
             </div>
           </div>
@@ -1032,7 +1125,7 @@ export default function AllProperties() {
                       onClick={() => setShowMobileFilters(false)}
                       className="flex-1 py-3 bg-black text-white font-bold rounded-xl shadow-lg"
                     >
-                      Show {properties.length} Results
+                      Show {totalPropertyCount} Results
                     </button>
                   </div>
                 </div>
@@ -1042,34 +1135,6 @@ export default function AllProperties() {
 
           {/* --- RIGHT PANEL: ALL PROPERTIES --- */}
           <main className="flex-1 w-full">
-
-            <div className="hidden lg:flex mb-6 justify-between items-center bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
-              <div>
-                <h2 className="text-2xl font-black text-black uppercase">All Properties</h2>
-                <p className="text-sm text-gray-500">
-                  {loading ? 'Searching...' : `Showing ${properties.length} results`}
-                </p>
-              </div>
-
-              {/* View Toggle (Desktop) */}
-              <div className="flex bg-gray-100 p-1.5 rounded-xl">
-                <button
-                  onClick={() => setShowMapView(false)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer ${!showMapView ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
-                  Grid
-                </button>
-                <button
-                  onClick={() => setShowMapView(true)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer ${showMapView ? 'bg-white shadow-sm text-black' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
-                  Map
-                </button>
-              </div>
-            </div>
-
             {/* Render Content Area */}
             <div className={`relative transition-opacity duration-300 ${loading ? 'opacity-80' : ''}`}>
               {/* Overlay Loader for subsequent filter changes */}
@@ -1099,7 +1164,7 @@ export default function AllProperties() {
               ) : showMapView ? (
                 <div className="w-full h-[70vh] min-h-[500px] rounded-3xl overflow-hidden border border-gray-200 shadow-sm relative z-0">
                   {/* Empty State Overlay for Map View */}
-                  {properties.length === 0 && !loading && (
+                  {filteredProperties.length === 0 && !loading && (
                     <div className="absolute inset-0 z-[60] flex items-center justify-center bg-white/60 backdrop-blur-sm pointer-events-none">
                       <div className="bg-white p-8 rounded-3xl shadow-xl text-center border border-gray-100 pointer-events-auto">
                         <div className="w-16 h-16 mx-auto mb-4 bg-gray-50 rounded-full flex items-center justify-center">
@@ -1145,7 +1210,7 @@ export default function AllProperties() {
                   {(() => {
                     // Group properties by rounded coordinates to find exact overlaps
                     const coordGroups = {};
-                    properties.forEach(property => {
+                    filteredProperties.forEach(property => {
                       const coords = extractCoordinates(property.location_link);
                       if (!coords) return;
                       // Round slightly to catch extremely close markers
@@ -1214,7 +1279,7 @@ export default function AllProperties() {
                   })()}
                 </Map>
               </div>
-            ) : properties.length === 0 && !loading ? (
+            ) : totalPropertyCount === 0 && !loading ? (
               <div className="text-center py-20 bg-white rounded-3xl shadow-sm border border-gray-100">
                 <div className="w-16 h-16 mx-auto mb-4 bg-gray-50 rounded-full flex items-center justify-center">
                   <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1233,6 +1298,33 @@ export default function AllProperties() {
               // GRID: 2 Columns Mobile, 3 lg, 4 xl
               <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4 mb-12">
                 {properties.map((property) => renderPropertyCard(property))}
+              </div>
+            )}
+
+            {!showMapView && !loading && totalPages > 1 && (
+              <div className="pb-8 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <p className="text-xs font-medium text-gray-500">
+                  Showing {pageStart}-{pageEnd} of {totalPropertyCount}
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handlePageChange(safeCurrentPage - 1)}
+                    disabled={safeCurrentPage === 1}
+                    className="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-xs font-bold text-gray-600 px-2">
+                    Page {safeCurrentPage} of {totalPages}
+                  </span>
+                  <button
+                    onClick={() => handlePageChange(safeCurrentPage + 1)}
+                    disabled={safeCurrentPage === totalPages}
+                    className="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    Next
+                  </button>
+                </div>
               </div>
             )}
             </div>

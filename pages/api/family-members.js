@@ -4,10 +4,12 @@ import { sendFamilyMemberAddedSMS } from '../../lib/sms'
 
 export default async function handler(req, res) {
     if (req.method === 'GET') {
-        const { occupancy_id, member_id } = req.query
+        const { occupancy_id, member_id, check_only } = req.query
 
         // ─── GET PARENT OCCUPANCY FOR A FAMILY MEMBER ───
         if (member_id) {
+            const isCheckOnly = check_only === '1' || check_only === 'true'
+
             const { data: fmRecord, error: fmErr } = await supabaseAdmin
                 .from('family_members')
                 .select('parent_occupancy_id')
@@ -16,6 +18,19 @@ export default async function handler(req, res) {
 
             if (fmErr) return res.status(500).json({ error: fmErr.message })
             if (!fmRecord) return res.status(200).json({ occupancy: null })
+
+            // Fast path for lightweight occupancy checks (used by booking guards/UI gating).
+            if (isCheckOnly) {
+                const { data: parentOccLite, error: liteErr } = await supabaseAdmin
+                    .from('tenant_occupancies')
+                    .select('id, property:properties(title)')
+                    .eq('id', fmRecord.parent_occupancy_id)
+                    .in('status', ['active', 'pending_end'])
+                    .maybeSingle()
+
+                if (liteErr) return res.status(500).json({ error: liteErr.message })
+                return res.status(200).json({ occupancy: parentOccLite || null })
+            }
 
             const { data: parentOcc, error: occErr } = await supabaseAdmin
                 .from('tenant_occupancies')

@@ -1743,12 +1743,12 @@ export default function TenantDashboard({ session, profile }) {
                       </div>
                       Active Property
                     </h2>
-                    <button
-                      onClick={() => router.push('/properties/allProperties')}
-                      className="text-[10px] font-bold text-slate-500 hover:text-black hover:underline cursor-pointer uppercase tracking-wider bg-gray-50 px-2 py-1 rounded"
-                    >
-                      See More Properties
-                    </button>
+                      {/* <button
+                        onClick={() => router.push('/properties/allProperties')}
+                        className="text-[10px] font-bold text-slate-500 hover:text-black hover:underline cursor-pointer uppercase tracking-wider bg-gray-50 px-2 py-1 rounded"
+                      >
+                        See More Properties
+                      </button> */}
                   </div>
 
                   <div className="flex flex-col gap-4">
@@ -2104,7 +2104,7 @@ export default function TenantDashboard({ session, profile }) {
                       onClick={() => router.push('/payments')}
                       className="text-xs font-bold text-slate-500 hover:text-black hover:underline transition-all cursor-pointer"
                     >
-                      See All
+                      See All Payments
                     </button>
                   </div>
 
@@ -2171,7 +2171,7 @@ export default function TenantDashboard({ session, profile }) {
                       <p className="text-sm text-slate-500 font-medium">No pending payments. You're all caught up!</p>
                     </div>
                   )}
-                  <p className="text-sm text-slate-500 font-medium">Note: Please ensure all electricity and wifi bills are paid before the due date. The landlord is not liable for late payments.</p>
+                  <p className="text-sm text-slate-500 font-medium">Note: Please ensure all electricity, water and wifi bills are paid before the due date. The landlord is not liable for late payments.</p>
 
 
                   <div className="border-t border-gray-100 pt-6 pb-4 mb-6">
@@ -2245,7 +2245,7 @@ export default function TenantDashboard({ session, profile }) {
                           <div className="p-1.5 bg-white text-slate-600 rounded-lg shadow-sm">
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                           </div>
-                          <h3 className="font-bold text-slate-900 text-sm">Rent Payment History ({new Date().getFullYear()})</h3>
+                          <h3 className="font-bold text-slate-900 text-sm">Track your payments ({new Date().getFullYear()})</h3>
                         </div>
                       </div>
 

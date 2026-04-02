@@ -46,8 +46,7 @@ export default function EditProperty() {
     deposit_same_as_rent: true,
     has_advance: true,
     advance_amount: '',
-    advance_same_as_rent: true,
-    min_contract_months: ''
+    advance_same_as_rent: true
   })
 
   const propertyTypes = ['House Apartment', 'Studio Type', 'Solo Room', 'Boarding House']
@@ -179,8 +178,7 @@ export default function EditProperty() {
       deposit_same_as_rent: data.security_deposit_amount ? (Number(data.security_deposit_amount) === Number(data.price)) : true,
       has_advance: data.has_advance !== false,
       advance_amount: data.advance_amount || '',
-      advance_same_as_rent: data.advance_amount ? (Number(data.advance_amount) === Number(data.price)) : true,
-      min_contract_months: data.min_contract_months || ''
+      advance_same_as_rent: data.advance_amount ? (Number(data.advance_amount) === Number(data.price)) : true
     })
 
     if (data.images && data.images.length > 0) {
@@ -397,8 +395,7 @@ export default function EditProperty() {
       has_security_deposit: formData.has_security_deposit,
       security_deposit_amount: formData.has_security_deposit ? (formData.deposit_same_as_rent ? sanitizeNumber(formData.price) : sanitizeNumber(formData.security_deposit_amount)) : 0,
       has_advance: formData.has_advance,
-      advance_amount: formData.has_advance ? (formData.advance_same_as_rent ? sanitizeNumber(formData.price) : sanitizeNumber(formData.advance_amount)) : 0,
-      min_contract_months: sanitizeNumber(formData.min_contract_months) || null
+      advance_amount: formData.has_advance ? (formData.advance_same_as_rent ? sanitizeNumber(formData.price) : sanitizeNumber(formData.advance_amount)) : 0
     }
 
     const { error } = await supabase
@@ -732,12 +729,6 @@ export default function EditProperty() {
                     )}
                   </div>
 
-                  {/* Minimum Contract Duration */}
-                  <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
-                    <label className="text-xs font-bold text-gray-700 block mb-2">Minimum Contract Duration (months)</label>
-                    <input type="number" name="min_contract_months" min="1" placeholder="e.g. 6 (leave blank for no minimum)" className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none" value={formData.min_contract_months} onChange={handleChange} />
-                    <p className="text-[10px] text-gray-400 mt-1">If set, tenants must sign for at least this many months.</p>
-                  </div>
                 </div>
               </div>
 

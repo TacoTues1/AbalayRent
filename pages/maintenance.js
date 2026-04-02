@@ -6,11 +6,16 @@ import { showToast } from 'nextjs-toast-notify'
 import Lottie from "lottie-react"
 import loadingAnimation from "../assets/loading.json"
 
+const MAX_ACTIVE_MAINTENANCE_REQUESTS = 2
+const ACTIVE_MAINTENANCE_STATUSES = ['pending', 'scheduled', 'in_progress']
+const MAINTENANCE_REQUESTS_PER_PAGE = 5
+
 export default function MaintenancePage() {
   const router = useRouter()
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
   const [requests, setRequests] = useState([])
+  const [totalRequestCount, setTotalRequestCount] = useState(0)
   const [properties, setProperties] = useState([])
   const [occupiedProperty, setOccupiedProperty] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -48,6 +53,7 @@ export default function MaintenancePage() {
   const [editExistingProofs, setEditExistingProofs] = useState([])
   const [editNewFiles, setEditNewFiles] = useState([])
   const [savingEditRequest, setSavingEditRequest] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
   // Maintenance cost states
   const [showCostModal, setShowCostModal] = useState(false)
   const [requestToComplete, setRequestToComplete] = useState(null)
@@ -89,20 +95,29 @@ export default function MaintenancePage() {
 
   useEffect(() => {
     if (session && profile) {
-      loadRequests()
       loadProperties()
     }
   }, [session, profile])
 
   useEffect(() => {
+    if (session && profile) {
+      loadRequests(currentPage, statusFilter, searchId)
+    }
+  }, [session, profile, currentPage, statusFilter, searchId])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [statusFilter, searchId])
+
+  useEffect(() => {
     if (!session || !profile) return
 
     const interval = setInterval(() => {
-      loadRequests()
+      loadRequests(currentPage, statusFilter, searchId)
     }, 30000)
 
     return () => clearInterval(interval)
-  }, [session, profile])
+  }, [session, profile, currentPage, statusFilter, searchId])
 
   async function autoStartDueMaintenanceForLandlord(propertyIds) {
     if (!propertyIds || propertyIds.length === 0) return
@@ -146,11 +161,20 @@ export default function MaintenancePage() {
     }
   }
 
-  async function loadRequests() {
+  async function loadRequests(page = currentPage, selectedStatus = statusFilter, searchTerm = searchId) {
     let query = supabase
       .from('maintenance_requests')
-      .select('*, properties(title, landlord), tenant_profile:profiles!maintenance_requests_tenant_fkey(first_name, middle_name, last_name)')
+      .select('*, properties(title, landlord), tenant_profile:profiles!maintenance_requests_tenant_fkey(first_name, middle_name, last_name)', { count: 'exact' })
       .order('created_at', { ascending: false })
+
+    if (selectedStatus !== 'all') {
+      query = query.eq('status', selectedStatus)
+    }
+
+    const trimmedSearch = (searchTerm || '').trim()
+    if (trimmedSearch) {
+      query = query.or(`id.ilike.%${trimmedSearch}%,primary_tenant_name.ilike.%${trimmedSearch}%`)
+    }
 
     if (profile?.role === 'tenant') {
       let tenantIds = [session.user.id]
@@ -196,12 +220,25 @@ export default function MaintenancePage() {
         query = query.in('property_id', propIds)
       } else {
         setRequests([])
+        setTotalRequestCount(0)
         setLoading(false)
         return
       }
     }
 
-    const { data } = await query
+    const from = (page - 1) * MAINTENANCE_REQUESTS_PER_PAGE
+    const to = from + MAINTENANCE_REQUESTS_PER_PAGE - 1
+    const { data, count, error } = await query.range(from, to)
+
+    if (error) {
+      console.error('Error loading maintenance requests:', error)
+      setRequests([])
+      setTotalRequestCount(0)
+      setLoading(false)
+      return
+    }
+
+    setTotalRequestCount(count || 0)
 
     if (data && data.length > 0) {
       const tenantIdsInRequests = [...new Set(data.map(r => r.tenant))]
@@ -833,6 +870,29 @@ export default function MaintenancePage() {
   async function handleSubmit(e) {
     e.preventDefault()
 
+    const resolvedPropertyId = formData.property_id || occupiedProperty?.id || properties?.[0]?.id || ''
+
+    if (!resolvedPropertyId) {
+      showToast.error('No valid property found for this maintenance request.')
+      return
+    }
+
+    const { count: activeCount, error: activeCountError } = await supabase
+      .from('maintenance_requests')
+      .select('*', { count: 'exact', head: true })
+      .eq('tenant', session.user.id)
+      .in('status', ACTIVE_MAINTENANCE_STATUSES)
+
+    if (activeCountError) {
+      showToast.error('Unable to validate maintenance request limit. Please try again.')
+      return
+    }
+
+    if ((activeCount || 0) >= MAX_ACTIVE_MAINTENANCE_REQUESTS) {
+      showToast.error(`You can only have up to ${MAX_ACTIVE_MAINTENANCE_REQUESTS} active maintenance requests.`)
+      return
+    }
+
     if (proofFiles.length === 0) {
       showToast.error("You must attach at least one picture or video as proof.");
       return
@@ -860,6 +920,7 @@ export default function MaintenancePage() {
 
       const { data: insertData, error } = await supabase.from('maintenance_requests').insert({
         ...formData,
+        property_id: resolvedPropertyId,
         tenant: session.user.id,
         status: 'pending',
         attachment_urls: attachmentUrls, // Save array of file URLs
@@ -903,7 +964,13 @@ export default function MaintenancePage() {
           }
         }
 
-        setFormData({ property_id: '', title: '', description: '', priority: 'normal' })
+        setFormData(prev => ({
+          ...prev,
+          property_id: resolvedPropertyId,
+          title: '',
+          description: '',
+          priority: 'normal'
+        }))
         setProofFiles([]) // Reset files
         setShowModal(false)
         loadRequests()
@@ -953,21 +1020,31 @@ export default function MaintenancePage() {
 
   if (!session) return <div className="min-h-screen flex items-center justify-center">Loading...</div>
 
-  // Filter requests based on status and search
-  const filteredRequests = requests.filter(req => {
-    const matchesStatus = statusFilter === 'all' || req.status === statusFilter
-    if (searchId === '') return matchesStatus;
+  const activeMyRequestCount = requests.filter(
+    req => req.tenant === session.user.id && ACTIVE_MAINTENANCE_STATUSES.includes(req.status)
+  ).length
+  const reachedMaintenanceRequestLimit = profile?.role === 'tenant' && activeMyRequestCount >= MAX_ACTIVE_MAINTENANCE_REQUESTS
+  const disableNewRequestButton = reachedMaintenanceRequestLimit || loading
 
-    const sLower = searchId.toLowerCase()
-    const tenantName = req.tenant_profile ? `${req.tenant_profile.first_name || ''} ${req.tenant_profile.last_name || ''}`.toLowerCase() : ''
-    const famName = req.primary_tenant_name ? req.primary_tenant_name.toLowerCase() : ''
+  const filteredRequests = requests
+  const totalPages = Math.max(1, Math.ceil(totalRequestCount / MAINTENANCE_REQUESTS_PER_PAGE))
+  const safeCurrentPage = Math.min(currentPage, totalPages)
+  const paginatedRequests = filteredRequests
+  const pageStart = totalRequestCount === 0 ? 0 : (safeCurrentPage - 1) * MAINTENANCE_REQUESTS_PER_PAGE + 1
+  const pageEnd = Math.min((safeCurrentPage - 1) * MAINTENANCE_REQUESTS_PER_PAGE + paginatedRequests.length, totalRequestCount)
 
-    const matchesSearch = req.id.toLowerCase().includes(sLower) ||
-      tenantName.includes(sLower) ||
-      famName.includes(sLower)
+  function handlePageChange(nextPage) {
+    if (nextPage < 1 || nextPage > totalPages || nextPage === safeCurrentPage) return
 
-    return matchesStatus && matchesSearch
-  })
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+
+    setLoading(true)
+    setRequests([])
+
+    setCurrentPage(nextPage)
+  }
 
   function promptCancel(request) {
     setRequestToCancel(request)
@@ -1087,10 +1164,24 @@ export default function MaintenancePage() {
           </div>
           {profile?.role === 'tenant' && (
             <button
-              onClick={() => setShowModal(true)}
-              className="w-full sm:w-auto px-6 py-3 bg-black text-white hover:bg-gray-800 rounded-xl font-bold text-sm shadow-lg cursor-pointer"
+              onClick={() => {
+                if (loading) {
+                  return
+                }
+                if (reachedMaintenanceRequestLimit) {
+                  showToast.error(`Maximum of ${MAX_ACTIVE_MAINTENANCE_REQUESTS} active requests reached. Please wait for one to be completed or cancelled.`)
+                  return
+                }
+                setShowModal(true)
+              }}
+              disabled={disableNewRequestButton}
+              className="w-full sm:w-auto px-6 py-3 bg-black text-white hover:bg-gray-800 rounded-xl font-bold text-sm shadow-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              + New Request
+              {loading
+                ? 'Loading...'
+                : reachedMaintenanceRequestLimit
+                ? `Max ${MAX_ACTIVE_MAINTENANCE_REQUESTS} Active Requests`
+                : '+ New Request'}
             </button>
           )}
         </div>
@@ -1132,7 +1223,7 @@ export default function MaintenancePage() {
 
         {/* Requests List */}
         <div className="space-y-4">
-          {loading ? (
+          {loading && filteredRequests.length === 0 ? (
             <div className="min-h-screen flex flex-col items-center justify-center bg-[#F5F5F5]">
               <Lottie
                 animationData={loadingAnimation}
@@ -1158,7 +1249,7 @@ export default function MaintenancePage() {
     </div>
   </div>
           ): (
-            filteredRequests.map(req => (
+            paginatedRequests.map(req => (
               <div key={req.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow">
                 {/* Header Strip */}
                 <div className="px-6 py-4 bg-gray-50 border-b border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -1364,6 +1455,33 @@ export default function MaintenancePage() {
               </div>
             ))
           )}
+
+          {!loading && filteredRequests.length > 0 && totalPages > 1 && (
+            <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <p className="text-xs font-medium text-gray-500">
+                Showing {pageStart}-{pageEnd} of {totalRequestCount}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handlePageChange(safeCurrentPage - 1)}
+                  disabled={safeCurrentPage === 1}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  Previous
+                </button>
+                <span className="text-xs font-bold text-gray-600 px-2">
+                  Page {safeCurrentPage} of {totalPages}
+                </span>
+                <button
+                  onClick={() => handlePageChange(safeCurrentPage + 1)}
+                  disabled={safeCurrentPage === totalPages}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1392,6 +1510,12 @@ export default function MaintenancePage() {
                 </div>
               ) : (
                 <form onSubmit={handleSubmit} className="space-y-5">
+                  {reachedMaintenanceRequestLimit && (
+                    <div className="rounded-xl border border-red-100 bg-red-50 p-3 text-sm text-red-700 font-semibold">
+                      You already have {activeMyRequestCount} active maintenance requests. The limit is {MAX_ACTIVE_MAINTENANCE_REQUESTS}.
+                    </div>
+                  )}
+
                   {/* Property Selector */}
                   <div>
                     <label className="block text-xs font-bold uppercase text-gray-500 mb-1.5">Property</label>
@@ -1508,7 +1632,7 @@ export default function MaintenancePage() {
 
                   <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
                     <button type="button" onClick={() => setShowModal(false)} className="px-6 py-3 border border-gray-300 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-50 cursor-pointer">Cancel</button>
-                    <button type="submit" disabled={uploading} className="px-8 py-3 bg-black text-white rounded-xl font-bold text-sm hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg cursor-pointer">
+                    <button type="submit" disabled={uploading || reachedMaintenanceRequestLimit} className="px-8 py-3 bg-black text-white rounded-xl font-bold text-sm hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg cursor-pointer">
                       {uploading ? 'Submitting...' : 'Submit Request'}
                     </button>
                   </div>

@@ -6,12 +6,15 @@ import loadingAnimation from "../assets/loading.json"
 import { createNotification } from '../lib/notifications'
 import { supabase } from '../lib/supabaseClient'
 
+const BOOKINGS_PER_PAGE = 5
+
 export default function BookingsPage() {
   const router = useRouter()
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
   const [bookings, setBookings] = useState([])
+  const [totalBookingCount, setTotalBookingCount] = useState(0)
   const [filter, setFilter] = useState('all')
   const [showBookingModal, setShowBookingModal] = useState(false)
   const [selectedApplication, setSelectedApplication] = useState(null)
@@ -23,6 +26,7 @@ export default function BookingsPage() {
   const [bookingToCancel, setBookingToCancel] = useState(null)
   const [processingAction, setProcessingAction] = useState(null) // tracks which booking.id + action is in progress
   const [hasActiveOccupancy, setHasActiveOccupancy] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
 
   // Assign Tenant Modal States
   const [showAssignModal, setShowAssignModal] = useState(false)
@@ -58,9 +62,13 @@ export default function BookingsPage() {
 
   useEffect(() => {
     if (session && profile) {
-      loadBookings()
+      loadBookings(currentPage, filter)
     }
-  }, [session, profile])
+  }, [session, profile, currentPage, filter])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [filter])
 
   async function loadProfile(userId) {
     const { data } = await supabase
@@ -75,10 +83,42 @@ export default function BookingsPage() {
     setLoading(false)
   }
 
-  async function loadBookings() {
+  async function hasInheritedActiveOccupancy(userId) {
+    if (!userId) return false
+    try {
+      const response = await fetch(`/api/family-members?member_id=${userId}`, { cache: 'no-store' })
+      if (!response.ok) return false
+      const data = await response.json()
+      return !!data?.occupancy
+    } catch (err) {
+      console.error('Error checking inherited occupancy on bookings page:', err)
+      return false
+    }
+  }
+
+  function applyFilterToBookingQuery(query, activeFilter) {
+    if (activeFilter === 'pending_approval') {
+      return query.in('status', ['pending', 'pending_approval'])
+    }
+    if (activeFilter === 'approved') {
+      return query.in('status', ['approved', 'accepted'])
+    }
+    if (activeFilter === 'rejected') {
+      return query.in('status', ['rejected', 'cancelled'])
+    }
+    if (activeFilter === 'completed') {
+      return query.eq('status', 'completed')
+    }
+    return query
+  }
+
+  async function loadBookings(page = currentPage, activeFilter = filter) {
     setLoading(true)
     let bookingsData = []
     let hasActiveOccupancyNow = false
+    const from = (page - 1) * BOOKINGS_PER_PAGE
+    const to = from + BOOKINGS_PER_PAGE - 1
+    let dbCount = 0
 
     const userRole = (profile.role || '').toLowerCase();
 
@@ -93,6 +133,7 @@ export default function BookingsPage() {
 
       if (!myProperties || myProperties.length === 0) {
         setBookings([])
+        setTotalBookingCount(0)
         setLoading(false)
         return
       }
@@ -101,15 +142,18 @@ export default function BookingsPage() {
 
       let query = supabase
         .from('bookings')
-        .select('*')
+        .select('*', { count: 'exact' })
         .in('property_id', propertyIds)
         .order('booking_date', { ascending: false })
+      query = applyFilterToBookingQuery(query, activeFilter)
+      query = query.range(from, to)
 
-      const { data, error } = await query
+      const { data, error, count } = await query
       if (error) {
         console.error('Error loading bookings:', error)
       } else {
         bookingsData = data || []
+        dbCount = count || 0
       }
 
     } else {
@@ -123,20 +167,24 @@ export default function BookingsPage() {
         .limit(1)
         .maybeSingle()
 
-      hasActiveOccupancyNow = !!activeOccupancy
+      const hasFamilyOccupancy = !activeOccupancy && await hasInheritedActiveOccupancy(session.user.id)
+      hasActiveOccupancyNow = !!activeOccupancy || hasFamilyOccupancy
       setHasActiveOccupancy(hasActiveOccupancyNow)
 
       // 1. Fetch Existing Bookings
       let query = supabase
         .from('bookings')
-        .select('*')
+        .select('*', { count: 'exact' })
         .eq('tenant', session.user.id)
         .order('booking_date', { ascending: false })
+      query = applyFilterToBookingQuery(query, activeFilter)
+      query = query.range(from, to)
 
-      const { data: existingBookings, error } = await query
+      const { data: existingBookings, error, count } = await query
       if (error) console.error('Error loading bookings:', error)
 
       bookingsData = existingBookings || []
+      dbCount = count || 0
 
       // 2. Fetch "Accepted" Applications (Ready to Book)
       // FIX: Remove 'created_at' to avoid 400 Bad Request if column doesn't exist
@@ -146,7 +194,7 @@ export default function BookingsPage() {
         .eq('tenant', session.user.id)
         .eq('status', 'accepted')
 
-      if (acceptedApps && acceptedApps.length > 0) {
+      if (page === 1 && activeFilter === 'all' && acceptedApps && acceptedApps.length > 0) {
         const appsToBook = acceptedApps.map(app => ({
           id: app.id,
           is_application: true,
@@ -160,6 +208,8 @@ export default function BookingsPage() {
         bookingsData = [...appsToBook, ...bookingsData]
       }
     }
+
+    setTotalBookingCount(dbCount)
 
     if (!bookingsData || bookingsData.length === 0) {
       setBookings([])
@@ -327,7 +377,7 @@ export default function BookingsPage() {
       )
     }
 
-    setBookings(finalBookings)
+    setBookings(finalBookings.slice(0, BOOKINGS_PER_PAGE))
     setLoading(false)
   }
 
@@ -704,6 +754,15 @@ export default function BookingsPage() {
 
   // --- MODAL FUNCTIONS ---
   async function openBookingModal(booking) {
+    if (!hasActiveOccupancy) {
+      const hasFamilyOccupancy = await hasInheritedActiveOccupancy(session?.user?.id)
+      if (hasFamilyOccupancy) {
+        setHasActiveOccupancy(true)
+        showToast.error('Booking limit reached: You already have an active property.')
+        return
+      }
+    }
+
     if (hasActiveOccupancy) {
       showToast.error('Booking limit reached: You already have an active property.')
       return
@@ -759,6 +818,8 @@ export default function BookingsPage() {
       .limit(1)
       .maybeSingle()
 
+    const hasFamilyOccupancy = !activeOccupancy && await hasInheritedActiveOccupancy(session.user.id)
+
     // If there is ANY active booking in the system:
     if (globalActive) {
       // If we are trying to create a NEW one (even for a different property) -> BLOCK IT
@@ -770,7 +831,7 @@ export default function BookingsPage() {
       }
     }
 
-    if (activeOccupancy) {
+    if (activeOccupancy || hasFamilyOccupancy) {
       showToast.error('Booking limit reached: You already have an active property.', { duration: 4000, transition: "bounceIn" })
       setSubmittingBooking(false)
       return
@@ -927,13 +988,24 @@ export default function BookingsPage() {
   const completedCount = bookings.filter(b => b.status === 'completed').length
   const userRoleLower = (profile.role || '').toLowerCase();
 
-  const filteredBookings = bookings.filter(b => {
-    if (filter === 'all') return true;
-    if (filter === 'pending_approval') return b.status === 'pending' || b.status === 'pending_approval';
-    if (filter === 'approved') return b.status === 'approved' || b.status === 'accepted';
-    if (filter === 'rejected') return b.status === 'rejected' || b.status === 'cancelled';
-    return b.status === filter;
-  });
+  const filteredBookings = bookings
+  const totalPages = Math.max(1, Math.ceil(totalBookingCount / BOOKINGS_PER_PAGE))
+  const safeCurrentPage = Math.min(currentPage, totalPages)
+  const paginatedBookings = filteredBookings
+  const pageStart = totalBookingCount === 0 ? 0 : (safeCurrentPage - 1) * BOOKINGS_PER_PAGE + 1
+  const pageEnd = Math.min((safeCurrentPage - 1) * BOOKINGS_PER_PAGE + paginatedBookings.length, totalBookingCount)
+
+  function handlePageChange(nextPage) {
+    if (loading || nextPage < 1 || nextPage > totalPages || nextPage === safeCurrentPage) return
+
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+
+    setLoading(true)
+    setBookings([])
+    setCurrentPage(nextPage)
+  }
 
   // --- GLOBAL BUTTON STATE ---
   // Check if user has ANY active booking currently displayed
@@ -999,7 +1071,7 @@ export default function BookingsPage() {
                 }`}
             >
               {f === 'pending_approval' ? 'Pending' : f.charAt(0).toUpperCase() + f.slice(1)} ({
-                f === 'all' ? bookings.length :
+                f === 'all' ? totalBookingCount :
                   f === 'approved' ? approvedCount :
                     f === 'pending_approval' ? pendingCount :
                       f === 'completed' ? completedCount :
@@ -1010,7 +1082,7 @@ export default function BookingsPage() {
         </div>
 
         {/* Bookings List */}
-        {loading ? (
+        {loading && filteredBookings.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 bg-white rounded-2xl border border-gray-100 border-dashed">
             <Lottie animationData={loadingAnimation} loop={true} className="w-24 h-24 mb-4" />
             <p className="text-gray-400 font-medium">Loading bookings...</p>
@@ -1025,7 +1097,7 @@ export default function BookingsPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            {filteredBookings.map((booking) => {
+            {paginatedBookings.map((booking) => {
               const timeInfo = getTimeSlotInfo(booking.booking_date)
               const bookingDate = new Date(booking.booking_date)
               const isPast = booking.booking_date && bookingDate < new Date()
@@ -1065,7 +1137,7 @@ export default function BookingsPage() {
                     {/* Time & Actions */}
                     <div className="flex flex-col md:items-end gap-4 min-w-[200px]">
                       {booking.status === 'ready_to_book' ? (
-                        !hasGlobalActive && (
+                        !hasBookingBlocked && (
                           <div className="bg-blue-50 p-3 rounded-xl border border-blue-100 text-right w-full md:w-auto">
                             <p className="text-xs font-bold uppercase tracking-wider text-blue-400 mb-1">Action Required</p>
                             <p className="font-bold text-blue-900 text-sm">Please schedule a viewing time.</p>
@@ -1157,20 +1229,6 @@ export default function BookingsPage() {
                             </button>
                           )}
 
-                          {/* Case 2: Rejected/Cancelled - "Book Again" */}
-                          {['rejected', 'cancelled'].includes(statusLower) && (
-                            <button
-                              onClick={() => !hasBookingBlocked && openBookingModal(booking)}
-                              disabled={hasBookingBlocked}
-                              className={`flex-1 md:flex-none px-4 py-2.5 text-xs font-bold rounded-lg transition-colors shadow-sm ${hasBookingBlocked
-                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
-                                : 'bg-black text-white cursor-pointer hover:bg-gray-800'
-                                }`}
-                            >
-                              {hasBookingBlocked ? 'Booking Limit Reached' : 'Book Again'}
-                            </button>
-                          )}
-
                           {/* Case 3: Pending/Approved - "Reschedule" (with 12h rule) */}
                           {['pending', 'pending_approval', 'approved', 'accepted', ''].includes(statusLower) && (
                             canModifyBooking(bookingDate) ? (
@@ -1205,6 +1263,33 @@ export default function BookingsPage() {
                 </div>
               )
             })}
+
+            {totalPages > 1 && (
+              <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <p className="text-xs font-medium text-gray-500">
+                  Showing {pageStart}-{pageEnd} of {totalBookingCount}
+                </p>
+                  <div className="flex items-center gap-2">
+                  <button
+                      onClick={() => handlePageChange(safeCurrentPage - 1)}
+                    disabled={loading || safeCurrentPage === 1}
+                    className="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-xs font-bold text-gray-600 px-2">
+                    Page {safeCurrentPage} of {totalPages}
+                  </span>
+                  <button
+                    onClick={() => handlePageChange(safeCurrentPage + 1)}
+                    disabled={loading || safeCurrentPage === totalPages}
+                    className="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

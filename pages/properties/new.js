@@ -59,8 +59,7 @@ export default function NewProperty() {
     deposit_same_as_rent: true,
     has_advance: true,
     advance_amount: '',
-    advance_same_as_rent: true,
-    min_contract_months: ''
+    advance_same_as_rent: true
   })
 
   const propertyTypes = ['House Apartment', 'Studio Type', 'Solo Room', 'Boarding House']
@@ -333,8 +332,7 @@ export default function NewProperty() {
       has_security_deposit: formData.has_security_deposit,
       security_deposit_amount: formData.has_security_deposit ? (formData.deposit_same_as_rent ? sanitizeNumber(formData.price) : sanitizeNumber(formData.security_deposit_amount)) : 0,
       has_advance: formData.has_advance,
-      advance_amount: formData.has_advance ? (formData.advance_same_as_rent ? sanitizeNumber(formData.price) : sanitizeNumber(formData.advance_amount)) : 0,
-      min_contract_months: sanitizeNumber(formData.min_contract_months) || null
+      advance_amount: formData.has_advance ? (formData.advance_same_as_rent ? sanitizeNumber(formData.price) : sanitizeNumber(formData.advance_amount)) : 0
     }
 
     const { error } = await supabase.from('properties').insert(payload)
@@ -603,12 +601,6 @@ export default function NewProperty() {
                 )}
               </div>
 
-              {/* Minimum Contract */}
-              <div className="p-4 bg-gray-50 rounded-xl border border-gray-200">
-                <label className="text-sm font-bold text-gray-700 block mb-2">Minimum Contract Duration (months)</label>
-                <input type="number" name="min_contract_months" min="1" placeholder="e.g. 6 (leave blank if not required)" className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black outline-none" value={formData.min_contract_months} onChange={handleChange} />
-                <p className="text-[10px] text-gray-400 mt-1.5">If set, tenants must sign for at least this many months.</p>
-              </div>
             </div>
           )}
 
