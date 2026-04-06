@@ -120,18 +120,28 @@ export default function Footer() {
           </div>
 
           {/* Bottom Section */}
-          <div className="flex flex-col-reverse lg:flex-row items-center justify-between pt-6 gap-4">
-            
-            {/* Left */}
-            <div className="flex flex-wrap items-center justify-center lg:justify-start gap-x-2 gap-y-1 text-[14px]">
+          <div className="flex items-center justify-center lg:justify-start pt-6">
+            <div className="flex flex-wrap items-center justify-center lg:justify-start gap-x-2 gap-y-2 text-[14px]">
               <span className="mb-1 md:mb-0">© 2026 Abalay</span>
               <span className="hidden md:inline">·</span>
               <Link href="/privacy" className="hover:underline">Privacy</Link>
               <span className="hidden md:inline">·</span>
               <Link href="/terms" className="hover:underline">Terms</Link>
+              <span className="hidden md:inline">·</span>
+              <a
+                href="https://play.google.com/store/apps/details?id=com.abalay.mobile&hl=en"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Get it on Google Play"
+                className="inline-flex items-center transition-opacity hover:opacity-90"
+              >
+                <img
+                  src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png"
+                  alt="Get it on Google Play"
+                  className="w-[98px] h-auto"
+                />
+              </a>
             </div>
-
-            <div className="flex items-center gap-6 text-[14px] font-medium"></div>
           </div>
         </div>
       </footer>

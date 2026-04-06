@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import Navbar from '../components/Navbar'
 import NotificationToast from '../components/NotificationToast'
+import LocationPermissionNotice from '../components/LocationPermissionNotice'
 import Meta from '../components/Meta'
 import { Analytics } from "@vercel/analytics/next"
 import { SpeedInsights } from "@vercel/speed-insights/next"
@@ -78,6 +79,7 @@ function MyApp({ Component, pageProps }) {
       {!hideNavbarPaths.includes(router.pathname) && (
         <Navbar isHomeLoading={router.pathname === '/' && !session && homeNavbarLoading} />
       )}
+      <LocationPermissionNotice />
       <NotificationToast />
       <GoeyToaster position="top-right" richColors />
       <Component
