@@ -1220,18 +1220,50 @@ export default function PaymentsPage() {
       // Get occupancy info for advance payment calculation
       let monthlyRent = parseFloat(request.rent_amount || 0);
       let contractEndDate = null;
+      let effectiveOccupancyId = request.occupancy_id || null;
+      let resolvedOccupancy = null;
 
-      if (request.occupancy_id) {
+      if (effectiveOccupancyId) {
         const { data: occupancy } = await supabase
           .from('tenant_occupancies')
-          .select('rent_amount, start_date')
-          .eq('id', request.occupancy_id)
-          .single();
+          .select('id, rent_amount, start_date, contract_end_date')
+          .eq('id', effectiveOccupancyId)
+          .maybeSingle();
 
         if (occupancy) {
-          monthlyRent = parseFloat(occupancy.rent_amount || request.rent_amount || 0);
-          contractEndDate = null;
+          resolvedOccupancy = occupancy;
         }
+      } else if (request.tenant && request.property_id) {
+        // Fallback for older/manual bills that were created without occupancy_id.
+        const { data: occupancyFallback } = await supabase
+          .from('tenant_occupancies')
+          .select('id, rent_amount, start_date, contract_end_date')
+          .eq('tenant_id', request.tenant)
+          .eq('property_id', request.property_id)
+          .in('status', ['active', 'pending_end'])
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (occupancyFallback) {
+          resolvedOccupancy = occupancyFallback;
+          effectiveOccupancyId = occupancyFallback.id;
+        }
+      }
+
+      if (resolvedOccupancy) {
+        monthlyRent = parseFloat(resolvedOccupancy.rent_amount || request.rent_amount || 0);
+        contractEndDate = resolvedOccupancy.contract_end_date ? new Date(resolvedOccupancy.contract_end_date) : null;
+      }
+
+      if (monthlyRent <= 0 && request.property_id) {
+        const { data: fallbackProperty } = await supabase
+          .from('properties')
+          .select('price')
+          .eq('id', request.property_id)
+          .maybeSingle();
+
+        monthlyRent = parseFloat(fallbackProperty?.price || 0);
       }
 
       // Calculate total amount paid by tenant
@@ -1284,14 +1316,14 @@ export default function PaymentsPage() {
       // For renewal payments, calculate and update the correct due_date (next due date, not contract end date)
       let actualNextDueDate = request.due_date;
 
-      if (request.is_renewal_payment && request.occupancy_id) {
+      if (request.is_renewal_payment && effectiveOccupancyId) {
         // Find the actual next due date from the last paid bill (excluding this renewal payment)
         // We need to find bills that were paid BEFORE this renewal
         const { data: lastPaidBill } = await supabase
           .from('payment_requests')
           .select('due_date, rent_amount, advance_amount')
           .eq('tenant', request.tenant)
-          .eq('occupancy_id', request.occupancy_id)
+          .eq('occupancy_id', effectiveOccupancyId)
           .in('status', ['paid', 'pending_confirmation'])
           .neq('id', requestId) // Exclude the current renewal payment
           .gt('rent_amount', 0)
@@ -1331,15 +1363,21 @@ export default function PaymentsPage() {
         } else {
           // If no previous paid bills, calculate from occupancy start_date + 1 month
           // This ensures we don't use the contract end date
-          const { data: occupancy } = await supabase
-            .from('tenant_occupancies')
-            .select('start_date')
-            .eq('id', request.occupancy_id)
-            .single();
+          const occupancyStartDate = resolvedOccupancy?.start_date
 
-          if (occupancy && occupancy.start_date) {
+          let occupancyStartSource = occupancyStartDate ? { start_date: occupancyStartDate } : null
+          if (!occupancyStartSource && effectiveOccupancyId) {
+            const { data: occupancy } = await supabase
+              .from('tenant_occupancies')
+              .select('start_date')
+              .eq('id', effectiveOccupancyId)
+              .single();
+            occupancyStartSource = occupancy
+          }
+
+          if (occupancyStartSource && occupancyStartSource.start_date) {
             // Calculate next due date from start_date (add 1 month)
-            const startDate = new Date(occupancy.start_date);
+            const startDate = new Date(occupancyStartSource.start_date);
             const currentMonth = startDate.getMonth();
             const currentYear = startDate.getFullYear();
             const currentDay = startDate.getDate();
@@ -1366,8 +1404,24 @@ export default function PaymentsPage() {
         payment_id: payment.id
       };
 
+      const originalDueDate = request.due_date ? new Date(request.due_date) : null;
+      const recalculatedDueDate = actualNextDueDate ? new Date(actualNextDueDate) : null;
+      const originalDueDateValid = originalDueDate && !Number.isNaN(originalDueDate.getTime());
+      const recalculatedDueDateValid = recalculatedDueDate && !Number.isNaN(recalculatedDueDate.getTime());
+      const dueDateDayDiff = (originalDueDateValid && recalculatedDueDateValid)
+        ? Math.round((originalDueDate - recalculatedDueDate) / (1000 * 60 * 60 * 24))
+        : 0;
+
+      // Only correct renewal due_date when the original date is clearly far later
+      // (e.g., contract-end date drift). Do not shift a valid current-cycle due date forward.
+      const shouldCorrectRenewalDueDate = request.is_renewal_payment
+        && actualNextDueDate !== request.due_date
+        && originalDueDateValid
+        && recalculatedDueDateValid
+        && dueDateDayDiff > 35;
+
       // Only update due_date if it's different (for renewal payments)
-      if (request.is_renewal_payment && actualNextDueDate !== request.due_date) {
+      if (shouldCorrectRenewalDueDate) {
         updateData.due_date = actualNextDueDate;
         console.log(`🔄 Updating renewal payment due_date from ${request.due_date} to ${actualNextDueDate}`);
       }
@@ -1379,13 +1433,14 @@ export default function PaymentsPage() {
 
       if (updateError) {
         console.error('Error updating payment request:', updateError);
-      } else if (request.is_renewal_payment && actualNextDueDate !== request.due_date) {
-        console.log('✅ Successfully updated renewal payment due_date');
+        throw updateError;
+      } else if (shouldCorrectRenewalDueDate) {
+        console.log('Successfully updated renewal payment due_date');
       }
 
       // Handle advance payment - create and mark future months as paid
       // Use the actualNextDueDate we calculated above (for renewals) or request.due_date (for regular payments)
-      if (extraMonths > 0 && request.occupancy_id && actualNextDueDate) {
+      if (extraMonths > 0 && actualNextDueDate && (effectiveOccupancyId || request.property_id)) {
         const baseDueDate = new Date(actualNextDueDate);
 
         for (let i = 1; i <= extraMonths; i++) {
@@ -1417,7 +1472,7 @@ export default function PaymentsPage() {
               landlord: session.user.id,
               tenant: request.tenant,
               property_id: request.property_id,
-              occupancy_id: request.occupancy_id,
+              occupancy_id: effectiveOccupancyId || null,
               rent_amount: monthlyRent,
               water_bill: 0,
               electrical_bill: 0,
@@ -1468,12 +1523,12 @@ export default function PaymentsPage() {
 
           // CRITICAL: Also REMOVE any credit that might have been incorrectly added for this renewal
           // This fixes cases where credit was added before this fix was applied
-          if (request.occupancy_id) {
+          if (effectiveOccupancyId) {
             const { data: existingBalance } = await supabase
               .from('tenant_balances')
               .select('amount')
               .eq('tenant_id', request.tenant)
-              .eq('occupancy_id', request.occupancy_id)
+              .eq('occupancy_id', effectiveOccupancyId)
               .maybeSingle();
 
             if (existingBalance && existingBalance.amount > 0) {
@@ -1489,7 +1544,7 @@ export default function PaymentsPage() {
                     last_updated: new Date().toISOString()
                   })
                   .eq('tenant_id', request.tenant)
-                  .eq('occupancy_id', request.occupancy_id);
+                  .eq('occupancy_id', effectiveOccupancyId);
               } else {
                 // Credit doesn't match - might be from other payments, reduce by advance amount
                 const newBalance = Math.max(0, existingBalance.amount - advanceAmount);
@@ -1501,7 +1556,7 @@ export default function PaymentsPage() {
                     last_updated: new Date().toISOString()
                   })
                   .eq('tenant_id', request.tenant)
-                  .eq('occupancy_id', request.occupancy_id);
+                  .eq('occupancy_id', effectiveOccupancyId);
               }
             }
           }
@@ -1511,14 +1566,14 @@ export default function PaymentsPage() {
           } else {
             console.log(`Renewal payment: Advance amount (₱${parseFloat(request.advance_amount || 0).toLocaleString()}) consumed for future months, no credit added.`);
           }
-        } else if (remainingCredit > 0 && request.occupancy_id) {
+        } else if (remainingCredit > 0 && effectiveOccupancyId) {
           // For non-renewal payments, only add excess to credit balance
           // (Regular payments don't have advance_amount, so this is just excess payment)
           const { data: existingBalance } = await supabase
             .from('tenant_balances')
             .select('amount')
             .eq('tenant_id', request.tenant)
-            .eq('occupancy_id', request.occupancy_id)
+            .eq('occupancy_id', effectiveOccupancyId)
             .maybeSingle();
 
           const newBalance = (existingBalance?.amount || 0) + remainingCredit;
@@ -1527,7 +1582,7 @@ export default function PaymentsPage() {
             .from('tenant_balances')
             .upsert({
               tenant_id: request.tenant,
-              occupancy_id: request.occupancy_id,
+              occupancy_id: effectiveOccupancyId,
               amount: newBalance,
               last_updated: new Date().toISOString()
             }, { onConflict: 'tenant_id,occupancy_id' });

@@ -1,10 +1,46 @@
 import { useRouter } from 'next/router'
 import { showToast } from 'nextjs-toast-notify'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createNotification } from '../lib/notifications'
 import { supabase } from '../lib/supabaseClient'
 
 const BOOKINGS_PER_PAGE = 5
+const ACTIVE_BOOKING_STATUSES = ['pending', 'pending_approval', 'approved', 'accepted']
+const SLOT_LOCKING_BOOKING_STATUSES = ['pending', 'pending_approval', 'approved', 'accepted', 'rejected', 'cancelled']
+const PENDING_BOOKING_STATUSES = ['pending', 'pending_approval']
+const EMPTY_STATUS_SUMMARY = {
+  total: 0,
+  pending: 0,
+  approved: 0,
+  rejected: 0,
+  completed: 0,
+}
+
+function buildStatusSummary(rows = []) {
+  return rows.reduce((summary, row) => {
+    const status = String(row?.status || '').toLowerCase()
+
+    summary.total += 1
+
+    if (status === 'pending' || status === 'pending_approval') {
+      summary.pending += 1
+    } else if (status === 'approved' || status === 'accepted') {
+      summary.approved += 1
+    } else if (status === 'rejected' || status === 'cancelled') {
+      summary.rejected += 1
+    } else if (status === 'completed') {
+      summary.completed += 1
+    }
+
+    return summary
+  }, { ...EMPTY_STATUS_SUMMARY })
+}
+
+function shouldExcludeBookingFromAvailability(booking) {
+  if (!booking || booking.is_application) return false
+  const status = String(booking.status || '').toLowerCase()
+  return ACTIVE_BOOKING_STATUSES.includes(status)
+}
 
 export default function BookingsPage() {
   const router = useRouter()
@@ -13,15 +49,24 @@ export default function BookingsPage() {
   const [loading, setLoading] = useState(true)
   const [bookings, setBookings] = useState([])
   const [totalBookingCount, setTotalBookingCount] = useState(0)
+  const [statusSummary, setStatusSummary] = useState(EMPTY_STATUS_SUMMARY)
   const [filter, setFilter] = useState('all')
   const [showBookingModal, setShowBookingModal] = useState(false)
   const [selectedApplication, setSelectedApplication] = useState(null)
   const [availableTimeSlots, setAvailableTimeSlots] = useState([])
   const [selectedTimeSlot, setSelectedTimeSlot] = useState('')
+  const [selectedBookingDate, setSelectedBookingDate] = useState('')
+  const [bookingCalendarMonth, setBookingCalendarMonth] = useState(new Date())
   const [bookingNotes, setBookingNotes] = useState('')
   const [submittingBooking, setSubmittingBooking] = useState(false)
   const [showCancelModal, setShowCancelModal] = useState(false)
   const [bookingToCancel, setBookingToCancel] = useState(null)
+  const [showRejectModal, setShowRejectModal] = useState(false)
+  const [bookingToReject, setBookingToReject] = useState(null)
+  const [rejectionReason, setRejectionReason] = useState('')
+  const [showViewingSuccessWarningModal, setShowViewingSuccessWarningModal] = useState(false)
+  const [bookingToMarkSuccess, setBookingToMarkSuccess] = useState(null)
+  const [sameDateConflictBookings, setSameDateConflictBookings] = useState([])
   const [processingAction, setProcessingAction] = useState(null) // tracks which booking.id + action is in progress
   const [hasActiveOccupancy, setHasActiveOccupancy] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
@@ -47,6 +92,7 @@ export default function BookingsPage() {
   const [showElectricityDayPicker, setShowElectricityDayPicker] = useState(false)
 
   const [showAssignWarning, setShowAssignWarning] = useState(false)
+  const realtimeRefreshTimeoutRef = useRef(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(result => {
@@ -67,7 +113,59 @@ export default function BookingsPage() {
 
   useEffect(() => {
     setCurrentPage(1)
+    setBookings([])
+    setLoading(true)
   }, [filter])
+
+  useEffect(() => {
+    if (!session?.user?.id || !profile?.role) return
+
+    const userId = session.user.id
+    const roleLower = String(profile.role || '').toLowerCase()
+    const bookingFilter = roleLower === 'landlord'
+      ? `landlord=eq.${userId}`
+      : `tenant=eq.${userId}`
+
+    const scheduleRealtimeRefresh = () => {
+      if (realtimeRefreshTimeoutRef.current) {
+        clearTimeout(realtimeRefreshTimeoutRef.current)
+      }
+
+      // Debounce bursts of updates from status transitions.
+      realtimeRefreshTimeoutRef.current = setTimeout(() => {
+        loadBookings(currentPage, filter)
+      }, 250)
+    }
+
+    const channelName = `bookings-realtime-${userId}-${roleLower}-${currentPage}-${filter}`
+    const channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'bookings',
+        filter: bookingFilter,
+      }, scheduleRealtimeRefresh)
+
+    if (roleLower !== 'landlord') {
+      channel.on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'applications',
+        filter: `tenant=eq.${userId}`,
+      }, scheduleRealtimeRefresh)
+    }
+
+    channel.subscribe()
+
+    return () => {
+      if (realtimeRefreshTimeoutRef.current) {
+        clearTimeout(realtimeRefreshTimeoutRef.current)
+        realtimeRefreshTimeoutRef.current = null
+      }
+      supabase.removeChannel(channel)
+    }
+  }, [session?.user?.id, profile?.role, currentPage, filter])
 
   async function loadProfile(userId) {
     const { data } = await supabase
@@ -95,6 +193,65 @@ export default function BookingsPage() {
     }
   }
 
+  async function syncTimeSlotBookedFlags(slotIds = []) {
+    const uniqueSlotIds = [...new Set((slotIds || []).filter(Boolean))]
+    if (uniqueSlotIds.length === 0) return
+
+    const { data: slotLockingRows, error: activeRowsError } = await supabase
+      .from('bookings')
+      .select('time_slot_id')
+      .in('time_slot_id', uniqueSlotIds)
+      .in('status', SLOT_LOCKING_BOOKING_STATUSES)
+
+    if (activeRowsError) {
+      console.error('Failed to sync slot booking flags:', activeRowsError)
+      return
+    }
+
+    const bookedSet = new Set((slotLockingRows || []).map(row => row.time_slot_id).filter(Boolean))
+    const bookedIds = uniqueSlotIds.filter(slotId => bookedSet.has(slotId))
+    const freeIds = uniqueSlotIds.filter(slotId => !bookedSet.has(slotId))
+
+    if (bookedIds.length > 0) {
+      await supabase.from('available_time_slots').update({ is_booked: true }).in('id', bookedIds)
+    }
+
+    if (freeIds.length > 0) {
+      await supabase.from('available_time_slots').update({ is_booked: false }).in('id', freeIds)
+    }
+  }
+
+  async function fetchOpenSlotsForProperty(landlordId, propertyId, excludeBookingId = null) {
+    if (!landlordId || !propertyId) return []
+
+    const params = new URLSearchParams({
+      propertyId: String(propertyId),
+      landlordId: String(landlordId),
+    })
+
+    if (excludeBookingId) {
+      params.set('excludeBookingId', String(excludeBookingId))
+    }
+
+    try {
+      const response = await fetch(`/api/available-slots?${params.toString()}`, {
+        method: 'GET',
+        cache: 'no-store'
+      })
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}))
+        throw new Error(payload?.error || `Availability API failed with status ${response.status}`)
+      }
+
+      const payload = await response.json()
+      return Array.isArray(payload?.slots) ? payload.slots : []
+    } catch (error) {
+      console.error('Failed to load available slots:', error)
+      return []
+    }
+  }
+
   function applyFilterToBookingQuery(query, activeFilter) {
     if (activeFilter === 'pending_approval') {
       return query.in('status', ['pending', 'pending_approval'])
@@ -115,6 +272,8 @@ export default function BookingsPage() {
     setLoading(true)
     let bookingsData = []
     let hasActiveOccupancyNow = false
+    let nextStatusSummary = { ...EMPTY_STATUS_SUMMARY }
+    let useClientSidePagination = false
     const from = (page - 1) * BOOKINGS_PER_PAGE
     const to = from + BOOKINGS_PER_PAGE - 1
     let dbCount = 0
@@ -133,11 +292,23 @@ export default function BookingsPage() {
       if (!myProperties || myProperties.length === 0) {
         setBookings([])
         setTotalBookingCount(0)
+        setStatusSummary(EMPTY_STATUS_SUMMARY)
         setLoading(false)
         return
       }
 
       const propertyIds = myProperties.map(p => p.id)
+
+      const { data: landlordStatusRows, error: landlordStatusError } = await supabase
+        .from('bookings')
+        .select('status')
+        .in('property_id', propertyIds)
+
+      if (landlordStatusError) {
+        console.error('Error loading landlord booking status summary:', landlordStatusError)
+      } else {
+        nextStatusSummary = buildStatusSummary(landlordStatusRows || [])
+      }
 
       let query = supabase
         .from('bookings')
@@ -145,7 +316,14 @@ export default function BookingsPage() {
         .in('property_id', propertyIds)
         .order('booking_date', { ascending: false })
       query = applyFilterToBookingQuery(query, activeFilter)
-      query = query.range(from, to)
+
+      // Landlord "All" needs status-priority sorting BEFORE pagination.
+      // Fetch all, sort in-memory, then slice per page.
+      if (activeFilter === 'all') {
+        useClientSidePagination = true
+      } else {
+        query = query.range(from, to)
+      }
 
       const { data, error, count } = await query
       if (error) {
@@ -169,6 +347,17 @@ export default function BookingsPage() {
       const hasFamilyOccupancy = !activeOccupancy && await hasInheritedActiveOccupancy(session.user.id)
       hasActiveOccupancyNow = !!activeOccupancy || hasFamilyOccupancy
       setHasActiveOccupancy(hasActiveOccupancyNow)
+
+      const { data: tenantStatusRows, error: tenantStatusError } = await supabase
+        .from('bookings')
+        .select('status')
+        .eq('tenant', session.user.id)
+
+      if (tenantStatusError) {
+        console.error('Error loading tenant booking status summary:', tenantStatusError)
+      } else {
+        nextStatusSummary = buildStatusSummary(tenantStatusRows || [])
+      }
 
       // 1. Fetch Existing Bookings
       let query = supabase
@@ -209,6 +398,7 @@ export default function BookingsPage() {
     }
 
     setTotalBookingCount(dbCount)
+    setStatusSummary(nextStatusSummary)
 
     if (!bookingsData || bookingsData.length === 0) {
       setBookings([])
@@ -217,28 +407,44 @@ export default function BookingsPage() {
     }
 
     // ENRICHMENT
-    const bookingPropertyIds = [...new Set(bookingsData.map(b => b.property_id))]
-    const tenantIds = [...new Set(bookingsData.map(b => b.tenant))]
+    const isUuid = (value) =>
+      typeof value === 'string'
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
 
-    const { data: properties } = await supabase
-      .from('properties')
-      .select('id, title, address, city, landlord')
-      .in('id', bookingPropertyIds)
-
-    const { data: tenantProfiles } = await supabase
-      .from('profiles')
-      .select('id, first_name, middle_name, last_name, phone, avatar_url')
-      .in('id', tenantIds)
+    const bookingPropertyIds = [...new Set(bookingsData.map(b => b.property_id).filter(Boolean))]
+    const tenantIds = [...new Set(bookingsData.map(b => b.tenant).filter(isUuid))]
 
     const propertyMap = {}
-    properties?.forEach(p => {
-      propertyMap[p.id] = p
-    })
+    if (bookingPropertyIds.length > 0) {
+      const { data: properties, error: propertiesError } = await supabase
+        .from('properties')
+        .select('id, title, address, city, landlord, status')
+        .in('id', bookingPropertyIds)
+
+      if (propertiesError) {
+        console.error('Error loading booking properties:', propertiesError)
+      }
+
+      properties?.forEach(p => {
+        propertyMap[p.id] = p
+      })
+    }
 
     const tenantMap = {}
-    tenantProfiles?.forEach(t => {
-      tenantMap[t.id] = t
-    })
+    if (tenantIds.length > 0) {
+      const { data: tenantProfiles, error: tenantProfilesError } = await supabase
+        .from('profiles')
+        .select('id, first_name, middle_name, last_name, email, phone, avatar_url')
+        .in('id', tenantIds)
+
+      if (tenantProfilesError) {
+        console.error('Error loading booking tenant profiles:', tenantProfilesError)
+      }
+
+      tenantProfiles?.forEach(t => {
+        tenantMap[t.id] = t
+      })
+    }
 
     const enrichedBookings = bookingsData.map(booking => ({
       ...booking,
@@ -249,7 +455,7 @@ export default function BookingsPage() {
     let finalBookings = enrichedBookings;
 
     const hasActiveBooking = bookingsData.some(b =>
-      ['pending', 'pending_approval', 'approved', 'accepted'].includes(b.status)
+      ACTIVE_BOOKING_STATUSES.includes(b.status)
     );
     const hasBookingLimit = hasActiveBooking || hasActiveOccupancyNow
 
@@ -260,7 +466,7 @@ export default function BookingsPage() {
       if (s === 'viewing_done') return 0;
 
       // 1. Pending (First)
-      if (['pending', 'pending_approval'].includes(s)) return 1;
+      if (PENDING_BOOKING_STATUSES.includes(s)) return 1;
 
       // 2. Ready to Book & Limit Reached
       if (s === 'ready_to_book') {
@@ -278,59 +484,47 @@ export default function BookingsPage() {
       return 6; // Default/Unknown
     };
 
-    if (userRole !== 'landlord') {
-      const distinctMap = {};
+    const getLandlordAllSortWeight = (booking) => {
+      const s = (booking.status || '').toLowerCase()
 
-      // Prioritize status for deduplication (Tenant POV)
-      const getDedupeScore = (status) => {
-        const s = (status || '').toLowerCase();
-        if (['pending', 'pending_approval', 'approved', 'accepted'].includes(s)) return 3;
-        if (s === 'ready_to_book') return 2;
-        if (['rejected', 'cancelled'].includes(s)) return 1;
-        return 0;
-      };
+      if (['approved', 'accepted'].includes(s)) return 0
+      if (PENDING_BOOKING_STATUSES.includes(s)) return 1
+      if (s === 'viewing_done') return 2
+      if (['rejected', 'cancelled'].includes(s)) return 3
+      if (s === 'completed') return 4
 
-      enrichedBookings.forEach(item => {
-        const pid = item.property_id;
-        if (!distinctMap[pid]) {
-          distinctMap[pid] = item;
-        } else {
-          const existing = distinctMap[pid];
-          const scoreNew = getDedupeScore(item.status);
-          const scoreExisting = getDedupeScore(existing.status);
-
-          if (scoreNew > scoreExisting) {
-            distinctMap[pid] = item;
-          } else if (scoreNew === scoreExisting) {
-            const dateNew = new Date(item.booking_date || 0);
-            const dateExisting = new Date(existing.booking_date || 0);
-            if (dateNew > dateExisting) {
-              distinctMap[pid] = item;
-            }
-          }
-        }
-      });
-
-      finalBookings = Object.values(distinctMap);
+      return 5
     }
 
-    // APPLY CUSTOM SORTING (Ascending: Pending -> Ready -> Limit -> Approved -> Rejected)
-    finalBookings.sort((a, b) => {
-      const weightA = getSortWeight(a);
-      const weightB = getSortWeight(b);
+    if (userRole === 'landlord' && activeFilter === 'all') {
+      finalBookings.sort((a, b) => {
+        const weightA = getLandlordAllSortWeight(a)
+        const weightB = getLandlordAllSortWeight(b)
 
-      if (weightA !== weightB) {
-        return weightA - weightB;
-      }
+        if (weightA !== weightB) {
+          return weightA - weightB
+        }
 
-      // Secondary sort: Date (Newest first) within the same status group
-      return new Date(b.booking_date || 0) - new Date(a.booking_date || 0);
-    });
+        return new Date(b.booking_date || 0) - new Date(a.booking_date || 0)
+      })
+    } else if (userRole !== 'landlord') {
+      finalBookings.sort((a, b) => {
+        const weightA = getSortWeight(a);
+        const weightB = getSortWeight(b);
+
+        if (weightA !== weightB) {
+          return weightA - weightB;
+        }
+
+        // Secondary sort: Date (Newest first) within the same status group
+        return new Date(b.booking_date || 0) - new Date(a.booking_date || 0);
+      });
+    }
 
     // --- AUTO-CANCEL PAST PENDING BOOKINGS ---
     const now = new Date()
     const pastPendingBookings = finalBookings.filter(b =>
-      ['pending', 'pending_approval'].includes((b.status || '').toLowerCase()) &&
+      PENDING_BOOKING_STATUSES.includes((b.status || '').toLowerCase()) &&
       b.booking_date &&
       new Date(b.booking_date) < now
     )
@@ -349,10 +543,7 @@ export default function BookingsPage() {
         .map(b => b.time_slot_id)
         .filter(Boolean)
       if (slotIds.length > 0) {
-        await supabase
-          .from('available_time_slots')
-          .update({ is_booked: false })
-          .in('id', slotIds)
+        await syncTimeSlotBookedFlags(slotIds)
       }
 
       // Send notifications to tenants about auto-cancellation
@@ -376,7 +567,63 @@ export default function BookingsPage() {
       )
     }
 
-    setBookings(finalBookings.slice(0, BOOKINGS_PER_PAGE))
+    if (userRole === 'landlord' && activeFilter === 'all') {
+      const firstWaitingAssignment = finalBookings.find(b => (b.status || '').toLowerCase() === 'viewing_done')
+      if (firstWaitingAssignment?.id) {
+        const { data: latestBooking, error: latestBookingError } = await supabase
+          .from('bookings')
+          .select('id, status, tenant, property_id')
+          .eq('id', firstWaitingAssignment.id)
+          .maybeSingle()
+
+        if (latestBookingError) {
+          console.error('Error validating waiting assignment booking:', latestBookingError)
+        }
+
+        const latestStatus = String(latestBooking?.status || '').toLowerCase()
+
+        if (latestBooking?.id && latestStatus === 'viewing_done') {
+          const { data: existingOccupancy, error: occupancyError } = await supabase
+            .from('tenant_occupancies')
+            .select('id')
+            .eq('tenant_id', latestBooking.tenant)
+            .eq('property_id', latestBooking.property_id)
+            .in('status', ['active', 'pending_end'])
+            .limit(1)
+            .maybeSingle()
+
+          if (occupancyError) {
+            console.error('Error validating occupancy before assignment redirect:', occupancyError)
+          }
+
+          if (existingOccupancy) {
+            const { error: fixStatusError } = await supabase
+              .from('bookings')
+              .update({ status: 'completed' })
+              .eq('id', latestBooking.id)
+              .eq('status', 'viewing_done')
+
+            if (fixStatusError) {
+              console.error('Failed to auto-sync completed booking status:', fixStatusError)
+            }
+
+            finalBookings = finalBookings.map((booking) =>
+              booking.id === latestBooking.id ? { ...booking, status: 'completed' } : booking
+            )
+          } else {
+            setLoading(false)
+            router.push(`/assign-tenant?bookingId=${latestBooking.id}`)
+            return
+          }
+        }
+      }
+    }
+
+    if (useClientSidePagination) {
+      setBookings(finalBookings.slice(from, to + 1))
+    } else {
+      setBookings(finalBookings.slice(0, BOOKINGS_PER_PAGE))
+    }
     setLoading(false)
   }
 
@@ -390,9 +637,7 @@ export default function BookingsPage() {
         .eq('id', booking.id)
 
       if (!error) {
-        if (booking.time_slot_id) {
-          await supabase.from('available_time_slots').update({ is_booked: true }).eq('id', booking.time_slot_id)
-        }
+        await syncTimeSlotBookedFlags([booking.time_slot_id])
 
         await createNotification({
           recipient: booking.tenant,
@@ -420,12 +665,12 @@ export default function BookingsPage() {
           })
         } catch (e) { console.error(e) }
 
-        showToast.success("Booking approved!",
-          {
-            duration: 4000,
-            position: "top-center",
-            transition: "bounceIn"
-          });
+        showToast.success('Booking approved!', {
+          duration: 4000,
+          position: 'top-center',
+          transition: 'bounceIn'
+        })
+
         loadBookings()
       } else {
         showToast.error('Failed to approve booking', { duration: 4000, position: "top-center", transition: "bounceIn" });
@@ -449,10 +694,175 @@ export default function BookingsPage() {
           message: `Your viewing for ${booking.property?.title} was marked as successful! The landlord may assign you to a property soon.`,
           link: '/bookings'
         })
-        showToast.success("Viewing marked as successful!", { duration: 4000, position: "top-center", transition: "bounceIn" });
-        loadBookings()
+        showToast.success("Viewing marked as successful! Redirecting to tenant assignment...", { duration: 2500, position: "top-center", transition: "bounceIn" });
+        router.push(`/assign-tenant?bookingId=${booking.id}`)
       } else {
         showToast.error('Failed to update booking', { duration: 4000, position: "top-center", transition: "bounceIn" });
+      }
+    } finally { setProcessingAction(null) }
+  }
+
+  async function getSamePropertyCompetingBookings(booking) {
+    if (!booking?.property_id) return []
+
+    const { data, error } = await supabase
+      .from('bookings')
+      .select('id, tenant, booking_date, time_slot_id')
+      .eq('property_id', booking.property_id)
+      .neq('id', booking.id)
+      .in('status', ACTIVE_BOOKING_STATUSES)
+
+    if (error) {
+      console.error('Failed to load same-property competing bookings:', error)
+      return []
+    }
+
+    return data || []
+  }
+
+  async function handleViewingSuccessRequest(booking) {
+    const competingSamePropertyBookings = await getSamePropertyCompetingBookings(booking)
+
+    if (competingSamePropertyBookings.length > 0) {
+      setBookingToMarkSuccess(booking)
+      setSameDateConflictBookings(competingSamePropertyBookings)
+      setShowViewingSuccessWarningModal(true)
+      return
+    }
+
+    await markViewingSuccess(booking)
+  }
+
+  function closeViewingSuccessWarningModal() {
+    setShowViewingSuccessWarningModal(false)
+    setBookingToMarkSuccess(null)
+    setSameDateConflictBookings([])
+  }
+
+  async function notifyRejectedBookingFromViewingSuccess(conflictBooking, selectedBooking, rejectionReason) {
+    await createNotification({
+      recipient: conflictBooking.tenant,
+      actor: session.user.id,
+      type: 'booking_rejected',
+      message: `Your viewing request for ${selectedBooking.property?.title || 'this property'} was rejected because another request for this property was marked as viewing success.`,
+      link: '/bookings'
+    })
+
+    const response = await fetch('/api/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'booking_rejected',
+        recordId: conflictBooking.id,
+        actorId: session.user.id,
+        reason: rejectionReason
+      })
+    })
+
+    if (!response.ok) {
+      throw new Error(`Failed to send rejection email/SMS for booking ${conflictBooking.id}`)
+    }
+  }
+
+  async function confirmViewingSuccessWithWarning() {
+    if (!bookingToMarkSuccess) return
+
+    const selectedBooking = bookingToMarkSuccess
+    closeViewingSuccessWarningModal()
+
+    setProcessingAction(`viewing-${selectedBooking.id}`)
+    try {
+      const { data: updatedSelectedBooking, error } = await supabase
+        .from('bookings')
+        .update({ status: 'viewing_done' })
+        .eq('id', selectedBooking.id)
+        .in('status', ['approved', 'accepted'])
+        .select('id')
+        .maybeSingle()
+
+      if (!error && updatedSelectedBooking) {
+        const { data: latestCompetingBookings, error: latestCompetingError } = await supabase
+          .from('bookings')
+          .select('id, tenant, booking_date, time_slot_id')
+          .eq('property_id', selectedBooking.property_id)
+          .neq('id', selectedBooking.id)
+          .in('status', ACTIVE_BOOKING_STATUSES)
+
+        if (latestCompetingError) {
+          console.error('Failed to load latest same-property competing bookings:', latestCompetingError)
+        }
+
+        const competingBookings = latestCompetingBookings || []
+        const competingIds = competingBookings.map(item => item.id)
+
+        let rejectedCount = 0
+        let rejectedBookings = []
+        if (competingIds.length > 0) {
+          const { data: rejectedRows, error: rejectConflictsError } = await supabase
+            .from('bookings')
+            .update({ status: 'rejected' })
+            .in('id', competingIds)
+            .in('status', ACTIVE_BOOKING_STATUSES)
+            .select('id, tenant, booking_date, time_slot_id')
+
+          if (rejectConflictsError) {
+            console.error('Failed to reject same-property competing requests:', rejectConflictsError)
+            showToast.error('Viewing marked as successful, but failed to reject other requests for this property. Please review manually.', {
+              duration: 5000,
+              position: 'top-center',
+              transition: 'bounceIn'
+            })
+          } else {
+            rejectedBookings = rejectedRows || []
+            rejectedCount = rejectedBookings.length
+            const rejectionReason = 'Another request for this property was marked as viewing success.'
+
+            const notificationResults = await Promise.allSettled(
+              rejectedBookings.map((conflictBooking) =>
+                notifyRejectedBookingFromViewingSuccess(conflictBooking, selectedBooking, rejectionReason)
+              )
+            )
+
+            const failedNotificationCount = notificationResults.filter(result => result.status === 'rejected').length
+            if (failedNotificationCount > 0) {
+              console.error('Failed to send rejection SMS/email for some tenants:', failedNotificationCount)
+              showToast.warning(`${failedNotificationCount} rejected tenant(s) may not have received SMS/email. Please review notifications.`, {
+                duration: 6000,
+                position: 'top-center',
+                transition: 'bounceIn'
+              })
+            }
+          }
+        }
+
+        const affectedSlotIds = [
+          selectedBooking.time_slot_id,
+          ...rejectedBookings.map(item => item.time_slot_id)
+        ].filter(Boolean)
+
+        await syncTimeSlotBookedFlags(affectedSlotIds)
+
+        await createNotification({
+          recipient: selectedBooking.tenant,
+          actor: session.user.id,
+          type: 'viewing_success',
+          message: `Your viewing for ${selectedBooking.property?.title} was marked as successful! The landlord may assign you to a property soon.`,
+          link: '/bookings'
+        })
+
+        if (rejectedCount > 0) {
+          showToast.success(`Viewing marked as successful.`, {
+            duration: 5000,
+            position: 'top-center',
+            transition: 'bounceIn'
+          })
+        } else {
+          showToast.success("Viewing marked as successful!", { duration: 4000, position: "top-center", transition: "bounceIn" });
+        }
+
+        router.push(`/assign-tenant?bookingId=${selectedBooking.id}`)
+      } else {
+        showToast.error('Failed to update booking. It may have already been processed.', { duration: 4000, position: "top-center", transition: "bounceIn" });
       }
     } finally { setProcessingAction(null) }
   }
@@ -467,7 +877,7 @@ export default function BookingsPage() {
 
       if (!error) {
         if (booking.time_slot_id) {
-          await supabase.from('available_time_slots').update({ is_booked: false }).eq('id', booking.time_slot_id)
+          await syncTimeSlotBookedFlags([booking.time_slot_id])
         }
         await createNotification({
           recipient: booking.tenant,
@@ -672,7 +1082,19 @@ export default function BookingsPage() {
     loadBookings()
   }
 
-  async function rejectBooking(booking) {
+  function promptRejectBooking(booking) {
+    setBookingToReject(booking)
+    setRejectionReason('')
+    setShowRejectModal(true)
+  }
+
+  async function rejectBooking(booking, reason) {
+    const normalizedReason = (reason || '').trim()
+    if (!normalizedReason) {
+      showToast.error('Please provide a reason for rejection.', { duration: 4000, transition: "bounceIn" })
+      return
+    }
+
     setProcessingAction(`reject-${booking.id}`)
     try {
       const { error } = await supabase
@@ -682,14 +1104,14 @@ export default function BookingsPage() {
 
       if (!error) {
         if (booking.time_slot_id) {
-          await supabase.from('available_time_slots').update({ is_booked: false }).eq('id', booking.time_slot_id)
+          await syncTimeSlotBookedFlags([booking.time_slot_id])
         }
 
         await createNotification({
           recipient: booking.tenant,
           actor: session.user.id,
           type: 'booking_rejected',
-          message: `Your viewing request for ${booking.property?.title} has been rejected.`,
+          message: `Your viewing request for ${booking.property?.title} has been rejected. Reason: ${normalizedReason}`,
           link: '/bookings'
         })
 
@@ -697,18 +1119,27 @@ export default function BookingsPage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            type: 'booking_status',
+            type: 'booking_rejected',
             recordId: booking.id,
-            actorId: session.user.id
+            actorId: session.user.id,
+            reason: normalizedReason
           })
-        })
+        }).catch(err => console.error('Reject notify error:', err))
 
-        showToast.success('Booking rejected', { duration: 4000, transition: "bounceIn" });
+        showToast.success('Booking rejected and tenant notified', { duration: 4000, transition: "bounceIn" });
+        setShowRejectModal(false)
+        setBookingToReject(null)
+        setRejectionReason('')
         loadBookings()
       } else {
         showToast.error('Failed to reject booking', { duration: 4000, transition: "bounceIn" });
       }
     } finally { setProcessingAction(null) }
+  }
+
+  async function confirmRejectBooking() {
+    if (!bookingToReject) return
+    await rejectBooking(bookingToReject, rejectionReason)
   }
 
   function canModifyBooking(bookingDate) {
@@ -737,7 +1168,7 @@ export default function BookingsPage() {
 
       if (!error) {
         if (bookingToCancel.time_slot_id) {
-          await supabase.from('available_time_slots').update({ is_booked: false }).eq('id', bookingToCancel.time_slot_id)
+          await syncTimeSlotBookedFlags([bookingToCancel.time_slot_id])
         }
         showToast.success('Booking cancelled', { duration: 4000, transition: "bounceIn" });
         loadBookings();
@@ -767,31 +1198,69 @@ export default function BookingsPage() {
       return
     }
 
-    if (!booking.property?.landlord) {
+    const { data: latestProperty, error: latestPropertyError } = await supabase
+      .from('properties')
+      .select('id, status, landlord, title')
+      .eq('id', booking.property_id)
+      .maybeSingle()
+
+    if (latestPropertyError || !latestProperty) {
+      showToast.error('Cannot schedule: Property information is unavailable right now.')
+      return
+    }
+
+    const latestStatus = String(latestProperty.status || '').toLowerCase()
+    if (latestStatus !== 'available') {
+      showToast.error('This property is already occupied or unavailable. You cannot book viewing again.', {
+        duration: 4000,
+        transition: 'bounceIn'
+      })
+      return
+    }
+
+    if (!latestProperty.landlord) {
       showToast.error("Cannot schedule: Landlord info missing")
       return
     }
 
-    setSelectedApplication(booking)
+    const bookingWithLatestProperty = {
+      ...booking,
+      property: {
+        ...booking.property,
+        status: latestProperty.status,
+        landlord: latestProperty.landlord,
+        title: latestProperty.title || booking.property?.title
+      }
+    }
+
+    setSelectedApplication(bookingWithLatestProperty)
     setShowBookingModal(true)
     setBookingNotes('')
     setSelectedTimeSlot('')
+    setSelectedBookingDate('')
+    setBookingCalendarMonth(new Date())
 
-    const { data } = await supabase
-      .from('available_time_slots')
-      .select('*')
-      .eq('landlord_id', booking.property.landlord)
-      .eq('is_booked', false)
-      .gte('start_time', new Date().toISOString())
-      .order('start_time', { ascending: true })
+    const excludeBookingId = shouldExcludeBookingFromAvailability(bookingWithLatestProperty)
+      ? bookingWithLatestProperty.id
+      : null
+    const fetchedSlots = await fetchOpenSlotsForProperty(bookingWithLatestProperty.property.landlord, bookingWithLatestProperty.property_id, excludeBookingId)
+    setAvailableTimeSlots(fetchedSlots)
 
-    setAvailableTimeSlots(data || [])
+    if (fetchedSlots.length > 0) {
+      const firstSlotDate = new Date(fetchedSlots[0].start_time)
+      if (!Number.isNaN(firstSlotDate.getTime())) {
+        setBookingCalendarMonth(new Date(firstSlotDate.getFullYear(), firstSlotDate.getMonth(), 1))
+      }
+    }
   }
 
   function closeBookingModal() {
     setShowBookingModal(false)
     setSelectedApplication(null)
     setAvailableTimeSlots([])
+    setSelectedTimeSlot('')
+    setSelectedBookingDate('')
+    setBookingCalendarMonth(new Date())
   }
 
   async function submitBooking(e) {
@@ -806,7 +1275,7 @@ export default function BookingsPage() {
       .from('bookings')
       .select('id')
       .eq('tenant', session.user.id)
-      .in('status', ['pending', 'pending_approval', 'approved', 'accepted'])
+      .in('status', ACTIVE_BOOKING_STATUSES)
       .maybeSingle()
 
     const { data: activeOccupancy } = await supabase
@@ -836,7 +1305,85 @@ export default function BookingsPage() {
       return
     }
 
+    const { data: currentProperty, error: currentPropertyError } = await supabase
+      .from('properties')
+      .select('status')
+      .eq('id', selectedApplication.property_id)
+      .maybeSingle()
+
+    if (currentPropertyError || !currentProperty) {
+      showToast.error('Cannot submit booking because property information is unavailable. Please try again.')
+      setSubmittingBooking(false)
+      return
+    }
+
+    const currentPropertyStatus = String(currentProperty.status || '').toLowerCase()
+    if (currentPropertyStatus !== 'available') {
+      showToast.error('This property is already occupied or unavailable. You cannot book viewing again.', {
+        duration: 4000,
+        transition: 'bounceIn'
+      })
+      setSubmittingBooking(false)
+      closeBookingModal()
+      return
+    }
+
+    const refreshAvailableSlots = async () => {
+      const data = await fetchOpenSlotsForProperty(
+        selectedApplication.property.landlord,
+        selectedApplication.property_id,
+        shouldExcludeBookingFromAvailability(selectedApplication) ? selectedApplication.id : null
+      )
+
+      setAvailableTimeSlots(data || [])
+    }
+
     const slot = availableTimeSlots.find(s => s.id === selectedTimeSlot)
+
+    if (!slot) {
+      await refreshAvailableSlots()
+      showToast.error('Selected time slot is no longer available. Please pick another schedule.', { duration: 4000, transition: "bounceIn" })
+      setSubmittingBooking(false)
+      return
+    }
+
+    // Best-effort check before insert. Final protection is DB-level unique index.
+    let slotConflictQuery = supabase
+      .from('bookings')
+      .select('id')
+      .eq('time_slot_id', slot.id)
+      .in('status', SLOT_LOCKING_BOOKING_STATUSES)
+
+    let scheduleConflictQuery = supabase
+      .from('bookings')
+      .select('id')
+      .eq('property_id', selectedApplication.property_id)
+      .eq('booking_date', slot.start_time)
+      .in('status', SLOT_LOCKING_BOOKING_STATUSES)
+
+    if (!selectedApplication.is_application) {
+      slotConflictQuery = slotConflictQuery.neq('id', selectedApplication.id)
+      scheduleConflictQuery = scheduleConflictQuery.neq('id', selectedApplication.id)
+    }
+
+    const { data: existingSlotBooking, error: slotCheckError } = await slotConflictQuery.limit(1).maybeSingle()
+    const { data: existingScheduleBooking, error: scheduleCheckError } = await scheduleConflictQuery.limit(1).maybeSingle()
+
+    if (slotCheckError || scheduleCheckError) {
+      console.error('Slot conflict check failed:', slotCheckError)
+      if (scheduleCheckError) console.error('Schedule conflict check failed:', scheduleCheckError)
+      showToast.error('Unable to validate the selected schedule. Please try again.', { duration: 4000, transition: "bounceIn" })
+      setSubmittingBooking(false)
+      return
+    }
+
+    if (existingSlotBooking || existingScheduleBooking) {
+      await refreshAvailableSlots()
+      setSelectedTimeSlot('')
+      showToast.error('This schedule has just been booked by another user. Please choose a different time slot.', { duration: 4000, transition: "bounceIn" })
+      setSubmittingBooking(false)
+      return
+    }
 
     // 1. Create NEW booking
     const { data: newBooking, error } = await supabase.from('bookings').insert({
@@ -853,13 +1400,24 @@ export default function BookingsPage() {
 
     if (error) {
       console.error('Booking Error:', error)
-      showToast.error(`Failed to book: ${error.message}`, { duration: 4000, transition: "bounceIn" })
+      const slotAlreadyTaken = error.code === '23505'
+        || error.message?.includes('bookings_unique_active_slot_idx')
+        || error.message?.includes('bookings_unique_active_property_datetime_idx')
+      if (slotAlreadyTaken) {
+        await refreshAvailableSlots()
+        setSelectedTimeSlot('')
+        showToast.error('This schedule has just been booked by another user. Please choose a different time slot.', {
+          duration: 4000,
+          transition: "bounceIn"
+        })
+      } else {
+        showToast.error(`Failed to book: ${error.message}`, { duration: 4000, transition: "bounceIn" })
+      }
       setSubmittingBooking(false)
       return
     }
 
-    // 2. Mark slot booked
-    await supabase.from('available_time_slots').update({ is_booked: true }).eq('id', slot.id)
+    const affectedSlotIds = [slot.id]
 
     // 3. Handle Status Updates
     if (!selectedApplication.is_application) {
@@ -867,10 +1425,12 @@ export default function BookingsPage() {
         await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', selectedApplication.id)
 
         if (selectedApplication.time_slot_id) {
-          await supabase.from('available_time_slots').update({ is_booked: false }).eq('id', selectedApplication.time_slot_id)
+          affectedSlotIds.push(selectedApplication.time_slot_id)
         }
       }
     }
+
+    await syncTimeSlotBookedFlags(affectedSlotIds)
 
     if (newBooking) {
       fetch('/api/notify', {
@@ -915,8 +1475,9 @@ export default function BookingsPage() {
       case 'viewing_done':
         return <span className="px-2.5 py-0.5 bg-indigo-50 text-indigo-700 text-[10px] font-bold uppercase tracking-wide border border-indigo-100 rounded-full">Waiting for Assigning</span>
       case 'rejected':
+        return <span className="px-2.5 py-0.5 bg-red-50 text-red-700 text-[10px] font-bold uppercase tracking-wide border border-red-100 rounded-full">Rejected</span>
       case 'cancelled':
-        return <span className="px-2.5 py-0.5 bg-red-50 text-red-700 text-[10px] font-bold uppercase tracking-wide border border-red-100 rounded-full">{status}</span>
+        return <span className="px-2.5 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-bold uppercase tracking-wide border border-slate-200 rounded-full">Cancelled</span>
       case 'completed':
         return <span className="px-2.5 py-0.5 bg-slate-100 text-slate-600 text-[10px] font-bold uppercase tracking-wide border border-slate-200 rounded-full">Completed</span>
       default:
@@ -924,22 +1485,26 @@ export default function BookingsPage() {
     }
   }
 
-  function getTimeSlotInfo(bookingDate) {
-    if (!bookingDate) return { emoji: '📅', label: 'Not Scheduled', time: 'Select a time' }
+  function getTimeSlotInfo(booking) {
+    const startValue = booking?.start_time || booking?.booking_date
+    const endValue = booking?.end_time
 
-    const date = new Date(bookingDate)
-    const hour = date.getHours()
-    if (hour === 8) {
-      return { emoji: '🌅', label: 'Morning', time: '8:00 AM - 11:00 AM' }
-    } else if (hour === 13) {
-      return { emoji: '☀️', label: 'Afternoon', time: '1:00 PM - 5:30 PM' }
-    } else {
-      return {
-        emoji: '⏰',
-        label: 'Custom',
-        time: date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-      }
+    if (!startValue) return { emoji: '📅', label: 'Not Scheduled', time: 'Select a time' }
+
+    const startDate = new Date(startValue)
+    if (Number.isNaN(startDate.getTime())) {
+      return { emoji: '📅', label: 'Not Scheduled', time: 'Select a time' }
     }
+
+    const startText = startDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+    const endDate = endValue ? new Date(endValue) : null
+
+    if (endDate && !Number.isNaN(endDate.getTime())) {
+      const endText = endDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+      return { emoji: '⏰', label: 'Scheduled', time: `${startText} - ${endText}` }
+    }
+
+    return { emoji: '⏰', label: 'Scheduled', time: startText }
   }
 
   function getProfileDisplayName(profileData, fallback = 'Unknown User') {
@@ -1010,10 +1575,10 @@ export default function BookingsPage() {
     </div>
   )
 
-  const pendingCount = bookings.filter(b => b.status === 'pending' || b.status === 'pending_approval').length
-  const approvedCount = bookings.filter(b => b.status === 'approved' || b.status === 'accepted').length
-  const rejectedCount = bookings.filter(b => b.status === 'rejected' || b.status === 'cancelled').length
-  const completedCount = bookings.filter(b => b.status === 'completed').length
+  const pendingCount = statusSummary.pending
+  const approvedCount = statusSummary.approved
+  const rejectedCount = statusSummary.rejected
+  const completedCount = statusSummary.completed
   const userRoleLower = (profile?.role || '').toLowerCase();
 
   const filteredBookings = bookings
@@ -1042,7 +1607,7 @@ export default function BookingsPage() {
   // --- GLOBAL BUTTON STATE ---
   // Check if user has ANY active booking currently displayed
   const hasGlobalActive = bookings.some(b =>
-    ['pending', 'pending_approval', 'approved', 'accepted'].includes(b.status)
+    ACTIVE_BOOKING_STATUSES.includes(b.status)
   )
   const hasBookingBlocked = hasGlobalActive || hasActiveOccupancy
 
@@ -1103,8 +1668,8 @@ export default function BookingsPage() {
                   : 'bg-transparent text-gray-500 hover:bg-gray-100'
                   }`}
               >
-                {f === 'pending_approval' ? 'Pending' : f.charAt(0).toUpperCase() + f.slice(1)} ({
-                  f === 'all' ? totalBookingCount :
+                {f === 'pending_approval' ? 'Pending' : f === 'rejected' ? 'Rejected/Cancelled' : f.charAt(0).toUpperCase() + f.slice(1)} ({
+                  f === 'all' ? statusSummary.total :
                     f === 'approved' ? approvedCount :
                       f === 'pending_approval' ? pendingCount :
                         f === 'completed' ? completedCount :
@@ -1129,10 +1694,12 @@ export default function BookingsPage() {
         ) : (
           <div className="space-y-4">
             {paginatedBookings.map((booking) => {
-              const timeInfo = getTimeSlotInfo(booking.booking_date)
+              const timeInfo = getTimeSlotInfo(booking)
               const bookingDate = new Date(booking.booking_date)
               const isPast = booking.booking_date && bookingDate < new Date()
               const statusLower = (booking.status || '').toLowerCase()
+              const propertyStatusLower = String(booking.property?.status || '').toLowerCase()
+              const isPropertyUnavailable = Boolean(propertyStatusLower) && propertyStatusLower !== 'available'
               const roleLower = (profile.role || '').toLowerCase()
 
               return (
@@ -1199,11 +1766,11 @@ export default function BookingsPage() {
                               {processingAction === `approve-${booking.id}` ? (<><svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>Processing...</>) : 'Accept'}
                             </button>
                             <button
-                              onClick={() => rejectBooking(booking)}
+                              onClick={() => promptRejectBooking(booking)}
                               disabled={processingAction === `reject-${booking.id}`}
                               className={`flex-1 md:flex-none px-4 py-2.5 border text-xs font-bold rounded-lg transition-colors shadow-sm flex items-center justify-center gap-2 ${processingAction === `reject-${booking.id}` ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' : 'bg-white border-gray-200 text-gray-700 cursor-pointer hover:bg-gray-50'}`}
                             >
-                              {processingAction === `reject-${booking.id}` ? (<><svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>Processing...</>) : 'Decline'}
+                              {processingAction === `reject-${booking.id}` ? (<><svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>Processing...</>) : 'Reject'}
                             </button>
                           </div>
                         )}
@@ -1213,7 +1780,7 @@ export default function BookingsPage() {
                         (statusLower === 'approved' || statusLower === 'accepted') && (
                           <div className="flex gap-2 w-full md:w-auto">
                             <button
-                              onClick={() => markViewingSuccess(booking)}
+                              onClick={() => handleViewingSuccessRequest(booking)}
                               disabled={processingAction === `viewing-${booking.id}`}
                               className={`flex-1 md:flex-none px-4 py-2.5 text-white text-xs font-bold rounded-lg transition-colors shadow-sm flex items-center justify-center gap-2 ${processingAction === `viewing-${booking.id}` ? 'bg-green-400 cursor-not-allowed' : 'bg-green-600 cursor-pointer hover:bg-green-700'}`}
                             >
@@ -1258,6 +1825,25 @@ export default function BookingsPage() {
                             >
                               {hasBookingBlocked ? 'Booking Limit Reached' : 'Schedule Viewing'}
                             </button>
+                          )}
+
+                          {/* Case 2: Rejected - "Book Again" */}
+                          {statusLower === 'rejected' && (
+                            (() => {
+                              const isBookAgainBlocked = hasBookingBlocked || isPropertyUnavailable
+                              return (
+                            <button
+                              onClick={() => !isBookAgainBlocked && openBookingModal(booking)}
+                              disabled={isBookAgainBlocked}
+                              className={`flex-1 md:flex-none px-4 py-2.5 text-xs font-bold rounded-lg transition-colors shadow-sm ${isBookAgainBlocked
+                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200'
+                                : 'bg-black text-white cursor-pointer hover:bg-gray-800'
+                                }`}
+                            >
+                              {isPropertyUnavailable ? 'Property Unavailable' : hasBookingBlocked ? 'Booking Limit Reached' : 'Book Again'}
+                            </button>
+                              )
+                            })()
                           )}
 
                           {/* Case 3: Pending/Approved - "Reschedule" (with 12h rule) */}
@@ -1324,6 +1910,98 @@ export default function BookingsPage() {
           </div>
         )}
       </div>
+
+      {/* --- VIEWING SUCCESS WARNING MODAL --- */}
+      {showViewingSuccessWarningModal && bookingToMarkSuccess && (
+        <div className="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+          <div className="bg-white shadow-2xl rounded-2xl max-w-md w-full p-6">
+            <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-600">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" /></svg>
+            </div>
+
+            <h3 className="text-lg font-bold text-gray-900 mb-2 text-center">Confirm Viewing Success</h3>
+            <p className="text-gray-600 text-sm text-center mb-5">
+              This property has <span className="font-bold text-gray-900">{sameDateConflictBookings.length + 1}</span> active booking request(s).
+              If you mark this request as viewing success, the other <span className="font-bold text-gray-900">{sameDateConflictBookings.length}</span> request(s)
+              will be automatically rejected.
+            </p>
+
+            <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 mb-5">
+              <p className="text-xs uppercase tracking-wider font-bold text-amber-700 mb-1">Selected Request</p>
+              <p className="text-sm font-bold text-gray-900 truncate">{bookingToMarkSuccess.property?.title || 'Property'}</p>
+              {bookingToMarkSuccess.booking_date && (
+                <p className="text-xs text-gray-600 mt-0.5">
+                  {new Date(bookingToMarkSuccess.booking_date).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                </p>
+              )}
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={closeViewingSuccessWarningModal}
+                className="flex-1 py-2.5 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmViewingSuccessWithWarning}
+                className="flex-1 py-2.5 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 transition-colors shadow-sm cursor-pointer"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- REJECT REASON MODAL --- */}
+      {showRejectModal && bookingToReject && (
+        <div className="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+          <div className="bg-white border border-gray-100 shadow-2xl rounded-2xl max-w-md w-full p-6">
+            <div className="w-12 h-12 bg-orange-50 rounded-full flex items-center justify-center mx-auto mb-4 text-orange-500">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" /></svg>
+            </div>
+
+            <h3 className="text-lg font-bold text-gray-900 mb-2 text-center">Reject Viewing Request</h3>
+            <p className="text-gray-500 text-sm mb-4 text-center">
+              Please provide a reason for rejecting <span className="font-semibold text-gray-900">{bookingToReject.property?.title}</span>.
+            </p>
+
+            <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">
+              Rejection Reason
+            </label>
+            <textarea
+              value={rejectionReason}
+              onChange={(e) => setRejectionReason(e.target.value)}
+              rows={4}
+              placeholder="Type the reason here..."
+              className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:bg-white focus:border-black outline-none transition-colors resize-none"
+            />
+
+            <div className="flex gap-3 mt-5">
+              <button
+                onClick={() => {
+                  setShowRejectModal(false)
+                  setBookingToReject(null)
+                  setRejectionReason('')
+                }}
+                disabled={processingAction === `reject-${bookingToReject.id}`}
+                className="flex-1 py-2.5 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmRejectBooking}
+                disabled={processingAction === `reject-${bookingToReject.id}` || !rejectionReason.trim()}
+                className={`flex-1 py-2.5 text-white font-bold rounded-xl transition-colors shadow-sm flex items-center justify-center gap-2 ${(processingAction === `reject-${bookingToReject.id}` || !rejectionReason.trim()) ? 'bg-gray-400 cursor-not-allowed' : 'bg-red-600 cursor-pointer hover:bg-red-700'}`}
+              >
+                {processingAction === `reject-${bookingToReject.id}` ? (<><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>Processing...</>) : 'Confirm Reject'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* --- CANCEL CONFIRMATION MODAL --- */}
       {showCancelModal && bookingToCancel && (
         <div className="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
@@ -1362,7 +2040,7 @@ export default function BookingsPage() {
         <div className="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white border border-gray-100 shadow-2xl rounded-2xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-gray-900">Schedule Viewing</h3>
+              <h3 className="text-xl font-bold text-gray-900">Reschedule Viewing</h3>
               <button
                 onClick={closeBookingModal}
                 className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-50 hover:bg-gray-100 text-gray-500 cursor-pointer"
@@ -1378,50 +2056,177 @@ export default function BookingsPage() {
 
             <form onSubmit={submitBooking} className="space-y-5">
               {availableTimeSlots.length > 0 ? (
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">
-                    Available Time Slots
-                  </label>
-                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
-                    {availableTimeSlots.map((slot) => {
-                      const startTime = new Date(slot.start_time)
+                (() => {
+                  const slotsByDate = {}
+                  const now = new Date()
 
-                      return (
-                        <label
-                          key={slot.id}
-                          className={`block p-3 border rounded-xl cursor-pointer transition-all ${selectedTimeSlot === slot.id
-                            ? 'border-black bg-black text-white shadow-md'
-                            : 'border-gray-200 bg-white hover:border-gray-300'
-                            }`}
-                        >
-                          <input
-                            type="radio"
-                            name="timeSlot"
-                            value={slot.id}
-                            checked={selectedTimeSlot === slot.id}
-                            onChange={(e) => setSelectedTimeSlot(e.target.value)}
-                            className="hidden"
-                            required
-                          />
-                          <div className="flex items-center gap-3">
-                            <div className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 ${selectedTimeSlot === slot.id ? 'border-white bg-white' : 'border-gray-300'
-                              }`}>
-                              {selectedTimeSlot === slot.id && <div className="w-2 h-2 rounded-full bg-black"></div>}
-                            </div>
-                            <div className="flex-1">
-                              <div className="text-sm font-bold">
-                                {startTime.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                              </div>
-                              <div className={`text-xs ${selectedTimeSlot === slot.id ? 'text-gray-300' : 'text-gray-500'}`}>
-                                {startTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} - {new Date(slot.end_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-                              </div>
-                            </div>
-                          </div>
+                  availableTimeSlots.forEach(slot => {
+                    const slotStart = new Date(slot.start_time)
+                    if (Number.isNaN(slotStart.getTime()) || slotStart < now) return
+
+                    const dateKey = `${slotStart.getFullYear()}-${String(slotStart.getMonth() + 1).padStart(2, '0')}-${String(slotStart.getDate()).padStart(2, '0')}`
+                    if (!slotsByDate[dateKey]) slotsByDate[dateKey] = []
+                    slotsByDate[dateKey].push(slot)
+                  })
+
+                  const monthStart = new Date(bookingCalendarMonth.getFullYear(), bookingCalendarMonth.getMonth(), 1)
+                  const monthEnd = new Date(bookingCalendarMonth.getFullYear(), bookingCalendarMonth.getMonth() + 1, 0)
+                  const daysInMonth = monthEnd.getDate()
+                  const firstDayIndex = monthStart.getDay()
+
+                  const today = new Date()
+                  today.setHours(0, 0, 0, 0)
+
+                  const monthKey = `${bookingCalendarMonth.getFullYear()}-${String(bookingCalendarMonth.getMonth() + 1).padStart(2, '0')}`
+                  const hasSlotsInMonth = Object.keys(slotsByDate).some(key => key.startsWith(monthKey))
+
+                  const selectedDateSlots = selectedBookingDate
+                    ? (slotsByDate[selectedBookingDate] || []).slice().sort((a, b) => new Date(a.start_time) - new Date(b.start_time))
+                    : []
+
+                  const calendarCells = []
+                  for (let i = 0; i < firstDayIndex; i++) calendarCells.push(null)
+                  for (let day = 1; day <= daysInMonth; day++) calendarCells.push(day)
+
+                  const minMonth = new Date()
+                  minMonth.setDate(1)
+                  minMonth.setHours(0, 0, 0, 0)
+                  const currentMonthStart = new Date(bookingCalendarMonth.getFullYear(), bookingCalendarMonth.getMonth(), 1)
+                  const canGoPrevMonth = currentMonthStart > minMonth
+
+                  return (
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">
+                          Select Date
                         </label>
-                      )
-                    })}
-                  </div>
-                </div>
+                        <div className="border border-gray-200 rounded-xl p-3">
+                          <div className="flex items-center justify-between mb-3">
+                            <button
+                              type="button"
+                              onClick={() => canGoPrevMonth && setBookingCalendarMonth(new Date(bookingCalendarMonth.getFullYear(), bookingCalendarMonth.getMonth() - 1, 1))}
+                              disabled={!canGoPrevMonth}
+                              className={`w-7 h-7 rounded-full flex items-center justify-center transition-colors ${canGoPrevMonth ? 'hover:bg-gray-100 text-gray-700 cursor-pointer' : 'text-gray-300 cursor-not-allowed'}`}
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                            </button>
+                            <p className="text-sm font-bold text-gray-900">
+                              {bookingCalendarMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => setBookingCalendarMonth(new Date(bookingCalendarMonth.getFullYear(), bookingCalendarMonth.getMonth() + 1, 1))}
+                              className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-gray-100 text-gray-700 transition-colors cursor-pointer"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-7 gap-1 mb-1">
+                            {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(day => (
+                              <div key={day} className="text-center text-[10px] font-bold text-gray-400 uppercase py-1">{day}</div>
+                            ))}
+                          </div>
+
+                          <div className="grid grid-cols-7 gap-1">
+                            {calendarCells.map((day, index) => {
+                              if (!day) return <div key={`blank-${index}`} className="h-9" />
+
+                              const dateKey = `${bookingCalendarMonth.getFullYear()}-${String(bookingCalendarMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+                              const dateObj = new Date(bookingCalendarMonth.getFullYear(), bookingCalendarMonth.getMonth(), day)
+                              const isPastDate = dateObj < today
+                              const hasSlots = Boolean(slotsByDate[dateKey])
+                              const isDisabled = !hasSlots || isPastDate
+                              const isSelected = selectedBookingDate === dateKey
+                              const isToday = dateObj.getTime() === today.getTime()
+
+                              return (
+                                <button
+                                  key={dateKey}
+                                  type="button"
+                                  disabled={isDisabled}
+                                  onClick={() => {
+                                    setSelectedBookingDate(dateKey)
+                                    setSelectedTimeSlot('')
+                                  }}
+                                  className={`h-9 rounded-lg text-xs font-bold transition-all relative ${isSelected
+                                    ? 'bg-black text-white'
+                                    : isDisabled
+                                      ? 'text-gray-300 cursor-not-allowed'
+                                      : 'text-gray-800 hover:bg-gray-100 cursor-pointer'
+                                    } ${isToday && !isSelected ? 'ring-1 ring-black ring-offset-1' : ''}`}
+                                >
+                                  {day}
+                                  {hasSlots && !isDisabled && !isSelected && <span className="absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-black rounded-full"></span>}
+                                </button>
+                              )
+                            })}
+                          </div>
+
+                          {!hasSlotsInMonth && (
+                            <p className="text-[11px] text-gray-500 text-center mt-3">No available dates in this month.</p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">
+                          Available Time Slots
+                        </label>
+
+                        {!selectedBookingDate ? (
+                          <div className="p-3 bg-gray-50 border border-gray-100 rounded-xl text-center">
+                            <p className="text-xs text-gray-500">Select a date to view available times.</p>
+                          </div>
+                        ) : selectedDateSlots.length === 0 ? (
+                          <div className="p-3 bg-gray-50 border border-gray-100 rounded-xl text-center">
+                            <p className="text-xs text-gray-500">No available time slots for the selected date.</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-2 max-h-52 overflow-y-auto pr-1 custom-scrollbar">
+                            {selectedDateSlots.map((slot) => {
+                              const slotStart = new Date(slot.start_time)
+                              const slotEnd = new Date(slot.end_time)
+
+                              return (
+                                <label
+                                  key={slot.id}
+                                  className={`block p-3 border rounded-xl cursor-pointer transition-all ${selectedTimeSlot === slot.id
+                                    ? 'border-black bg-black text-white shadow-md'
+                                    : 'border-gray-200 bg-white hover:border-gray-300'
+                                    }`}
+                                >
+                                  <input
+                                    type="radio"
+                                    name="timeSlot"
+                                    value={slot.id}
+                                    checked={selectedTimeSlot === slot.id}
+                                    onChange={(e) => setSelectedTimeSlot(e.target.value)}
+                                    className="hidden"
+                                  />
+                                  <div className="flex items-center gap-3">
+                                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 ${selectedTimeSlot === slot.id ? 'border-white bg-white' : 'border-gray-300'
+                                      }`}>
+                                      {selectedTimeSlot === slot.id && <div className="w-2 h-2 rounded-full bg-black"></div>}
+                                    </div>
+                                    <div className="flex-1">
+                                      <div className="text-sm font-bold">
+                                        {slotStart.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} - {slotEnd.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                                      </div>
+                                      <div className={`text-xs ${selectedTimeSlot === slot.id ? 'text-gray-300' : 'text-gray-500'}`}>
+                                        {slotStart.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </label>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()
               ) : (
                 <div className="p-4 bg-gray-50 border border-gray-100 rounded-xl text-center">
                   <p className="text-sm text-gray-500">
@@ -1446,7 +2251,7 @@ export default function BookingsPage() {
               <div className="pt-2">
                 <button
                   type="submit"
-                  disabled={submittingBooking || availableTimeSlots.length === 0}
+                  disabled={submittingBooking || availableTimeSlots.length === 0 || !selectedTimeSlot}
                   className="w-full py-3.5 bg-black text-white font-bold rounded-xl cursor-pointer hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-gray-200"
                 >
                   {submittingBooking ? 'Sending Request...' : 'Request Viewing'}

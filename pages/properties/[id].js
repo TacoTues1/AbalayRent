@@ -6,9 +6,10 @@ import Head from 'next/head'
 import { createNotification } from '../../lib/notifications'
 import AuthModal from '../../components/AuthModal'
 import { showToast } from 'nextjs-toast-notify'
-import Lottie from "lottie-react"
-import loadingAnimation from "../../assets/loading.json"
 import Footer from '@/components/Footer'
+
+const ACTIVE_BOOKING_STATUSES = ['pending', 'pending_approval', 'approved', 'accepted']
+const SLOT_LOCKING_BOOKING_STATUSES = ['pending', 'pending_approval', 'approved', 'accepted', 'rejected', 'cancelled']
 
 export default function PropertyDetail() {
   const router = useRouter()
@@ -166,21 +167,39 @@ export default function PropertyDetail() {
   }, [property])
 
   async function loadTimeSlots(landlordId) {
-    const { data } = await supabase
-      .from('available_time_slots')
-      .select('*')
-      .eq('landlord_id', landlordId)
-      .eq('is_booked', false)
-      .gte('start_time', new Date().toISOString())
-      .order('start_time', { ascending: true })
+    if (!id || !landlordId) {
+      setTimeSlots([])
+      return
+    }
 
-    if (data) {
-      setTimeSlots(data)
+    let availableSlots = []
+    try {
+      const response = await fetch(`/api/available-slots?propertyId=${encodeURIComponent(id)}&landlordId=${encodeURIComponent(landlordId)}`, {
+        method: 'GET',
+        cache: 'no-store'
+      })
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}))
+        throw new Error(payload?.error || `Availability API failed with status ${response.status}`)
+      }
+
+      const payload = await response.json()
+      availableSlots = Array.isArray(payload?.slots) ? payload.slots : []
+    } catch (error) {
+      console.error('Error loading slots:', error)
+      setTimeSlots([])
+      setSelectedSlotId('')
+      return
+    }
+
+    if (availableSlots) {
+      setTimeSlots(availableSlots)
       // Auto-select today's first available slot as default
-      if (data.length > 0 && !selectedSlotId) {
+      if (availableSlots.length > 0 && !selectedSlotId) {
         const today = new Date()
         const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-        const todaySlot = data.find(slot => {
+        const todaySlot = availableSlots.find(slot => {
           const d = new Date(slot.start_time)
           const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
           return key === todayKey
@@ -189,9 +208,25 @@ export default function PropertyDetail() {
           setSelectedSlotId(todaySlot.id)
         } else {
           // If no slots today, select the first available slot
-          setSelectedSlotId(data[0].id)
+          setSelectedSlotId(availableSlots[0].id)
         }
+      } else if (availableSlots.length === 0) {
+        setSelectedSlotId('')
       }
+    }
+  }
+
+  async function markConflictingSlotsBooked(slot, extraSlotIds = []) {
+    const slotIds = [...new Set([slot?.id, ...extraSlotIds].filter(Boolean))]
+    if (slotIds.length === 0) return
+
+    const { error } = await supabase
+      .from('available_time_slots')
+      .update({ is_booked: true })
+      .in('id', slotIds)
+
+    if (error) {
+      console.error('Failed to mark conflicting slot(s) as booked:', error)
     }
   }
 
@@ -541,7 +576,7 @@ export default function PropertyDetail() {
   };
 
   // Open the booking form and hide the main button
-  const handleOpenBooking = () => {
+  const handleOpenBooking = async () => {
     if (!session) {
       showToast.info("You Need to Login First", {
         duration: 1000,
@@ -563,6 +598,10 @@ export default function PropertyDetail() {
         transition: "bounceIn"
       })
       return
+    }
+
+    if (property?.landlord) {
+      await loadTimeSlots(property.landlord)
     }
 
     setShowBookingOptions(true)
@@ -618,7 +657,7 @@ export default function PropertyDetail() {
       .from('bookings')
       .select('id')
       .eq('tenant', session.user.id)
-      .in('status', ['pending', 'pending_approval', 'approved', 'accepted'])
+      .in('status', ACTIVE_BOOKING_STATUSES)
       .maybeSingle()
 
     if (globalActive) {
@@ -639,7 +678,50 @@ export default function PropertyDetail() {
       return
     }
 
-    // 4. Create Booking
+    // 4. Re-check slot conflict right before insert (best-effort UX guard).
+    const { data: existingSlotBooking, error: slotCheckError } = await supabase
+      .from('bookings')
+      .select('id, time_slot_id')
+      .eq('time_slot_id', slot.id)
+      .in('status', SLOT_LOCKING_BOOKING_STATUSES)
+      .limit(1)
+      .maybeSingle()
+
+    const { data: existingScheduleBooking, error: scheduleCheckError } = await supabase
+      .from('bookings')
+      .select('id, time_slot_id')
+      .eq('property_id', id)
+      .eq('booking_date', slot.start_time)
+      .in('status', SLOT_LOCKING_BOOKING_STATUSES)
+      .limit(1)
+      .maybeSingle()
+
+    if (slotCheckError || scheduleCheckError) {
+      console.error('Failed to re-check slot availability:', slotCheckError)
+      if (scheduleCheckError) console.error('Failed to re-check schedule availability:', scheduleCheckError)
+      showToast.error('Unable to validate the selected schedule. Please try again.', { duration: 4000, transition: "bounceIn" })
+      setSubmitting(false)
+      return
+    }
+
+    if (existingSlotBooking || existingScheduleBooking) {
+      const conflictSlotIds = [
+        existingSlotBooking?.time_slot_id,
+        existingScheduleBooking?.time_slot_id
+      ]
+      await markConflictingSlotsBooked(slot, conflictSlotIds)
+      await loadTimeSlots(property.landlord)
+      setSelectedSlotId('')
+      setSelectedBookingDate(null)
+      showToast.error('This schedule has just been booked by another user. Please choose a different time slot.', {
+        duration: 4000,
+        transition: "bounceIn"
+      })
+      setSubmitting(false)
+      return
+    }
+
+    // 5. Create Booking
     const { data: newBooking, error } = await supabase.from('bookings').insert({
       property_id: id,
       tenant: session.user.id,
@@ -653,12 +735,26 @@ export default function PropertyDetail() {
     }).select().single()
 
     if (error) {
-      showToast.error('Error submitting booking: ' + error.message, { duration: 4000, transition: "bounceIn" })
+      const slotAlreadyTaken = error.code === '23505'
+        || error.message?.includes('bookings_unique_active_slot_idx')
+        || error.message?.includes('bookings_unique_active_property_datetime_idx')
+      if (slotAlreadyTaken) {
+        await markConflictingSlotsBooked(slot)
+        await loadTimeSlots(property.landlord)
+        setSelectedSlotId('')
+        setSelectedBookingDate(null)
+        showToast.error('This schedule has just been booked by another user. Please choose a different time slot.', {
+          duration: 4000,
+          transition: "bounceIn"
+        })
+      } else {
+        showToast.error('Error submitting booking: ' + error.message, { duration: 4000, transition: "bounceIn" })
+      }
     } else {
-      // 5. Update Slot to Booked
-      await supabase.from('available_time_slots').update({ is_booked: true }).eq('id', slot.id)
+      // 6. Update Slot to Booked
+      await markConflictingSlotsBooked(slot)
 
-      // 6. Notify Landlord
+      // 7. Notify Landlord
       if (property.landlord) {
         await createNotification({
           recipient: property.landlord,
@@ -680,7 +776,7 @@ export default function PropertyDetail() {
         })
       }
 
-      // 7. SMS Notification
+      // 8. SMS Notification
       if (landlordProfile?.phone) {
         try {
           const smsMessage = `EaseRent Alert: New viewing request from ${profile?.first_name || 'A Tenant'} for "${property.title}". Log in to review.`
@@ -706,17 +802,67 @@ export default function PropertyDetail() {
 
   if (loading)
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F5F5F5]">
-        {/* Wrapper for animation + text */}
-        <div className="flex flex-col items-center">
-          <Lottie
-            animationData={loadingAnimation}
-            loop={true}
-            className="w-64 h-64"
-          />
-          <p className="text-gray-500 font-medium text-lg mt-4">
-            Loading Property Details...
-          </p>
+      <div className="min-h-[calc(100vh-64px)] bg-[#F3F4F5] px-4 pt-4 pb-0 font-sans">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex flex-col md:flex-row md:items-start justify-between mb-5 gap-4">
+            <div className="flex-1 space-y-2">
+              <div className="h-8 w-72 rounded bg-slate-200 skeleton-shimmer" />
+              <div className="h-4 w-64 rounded bg-slate-200 skeleton-shimmer" />
+            </div>
+            <div className="space-y-2 md:text-right">
+              <div className="h-9 w-36 rounded bg-slate-200 skeleton-shimmer" />
+              <div className="h-4 w-20 rounded bg-slate-200 skeleton-shimmer" />
+            </div>
+          </div>
+
+          <div className="mb-5 rounded-xl overflow-hidden border border-gray-100 shadow-sm">
+            <div className="h-[350px] md:h-[420px] bg-slate-200 skeleton-shimmer" />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 pb-10">
+            <div className="lg:col-span-2 flex flex-col gap-5">
+              <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm space-y-6">
+                <div className="flex flex-wrap gap-3">
+                  <div className="h-16 w-36 rounded-xl bg-slate-200 skeleton-shimmer" />
+                  <div className="h-16 w-36 rounded-xl bg-slate-200 skeleton-shimmer" />
+                  <div className="h-16 w-36 rounded-xl bg-slate-200 skeleton-shimmer" />
+                </div>
+                <div className="space-y-3">
+                  <div className="h-8 w-64 rounded bg-slate-200 skeleton-shimmer" />
+                  <div className="h-4 w-full rounded bg-slate-200 skeleton-shimmer" />
+                  <div className="h-4 w-11/12 rounded bg-slate-200 skeleton-shimmer" />
+                  <div className="h-4 w-4/5 rounded bg-slate-200 skeleton-shimmer" />
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm space-y-4">
+                <div className="h-6 w-48 rounded bg-slate-200 skeleton-shimmer" />
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  <div className="h-10 rounded bg-slate-200 skeleton-shimmer" />
+                  <div className="h-10 rounded bg-slate-200 skeleton-shimmer" />
+                  <div className="h-10 rounded bg-slate-200 skeleton-shimmer" />
+                  <div className="h-10 rounded bg-slate-200 skeleton-shimmer" />
+                  <div className="h-10 rounded bg-slate-200 skeleton-shimmer" />
+                  <div className="h-10 rounded bg-slate-200 skeleton-shimmer" />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-5">
+              <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm space-y-3">
+                <div className="h-6 w-40 rounded bg-slate-200 skeleton-shimmer" />
+                <div className="h-10 w-full rounded-xl bg-slate-200 skeleton-shimmer" />
+                <div className="h-10 w-full rounded-xl bg-slate-200 skeleton-shimmer" />
+                <div className="h-12 w-full rounded-xl bg-slate-200 skeleton-shimmer" />
+              </div>
+
+              <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm space-y-3">
+                <div className="h-5 w-36 rounded bg-slate-200 skeleton-shimmer" />
+                <div className="h-4 w-full rounded bg-slate-200 skeleton-shimmer" />
+                <div className="h-4 w-3/4 rounded bg-slate-200 skeleton-shimmer" />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     )
@@ -1264,7 +1410,7 @@ export default function PropertyDetail() {
                         {!showBookingOptions && (
                           <>
                             {/* Pre-selected Date Display */}
-                            {selectedSlotId && timeSlots.length > 0 && (() => {
+                            {/* {selectedSlotId && timeSlots.length > 0 && (() => {
                               const slot = timeSlots.find(s => s.id === selectedSlotId)
                               if (!slot) return null
                               return (
@@ -1282,7 +1428,7 @@ export default function PropertyDetail() {
                                   </div>
                                 </div>
                               )
-                            })()}
+                            })()} */}
                             <button
                               onClick={handleOpenBooking}
                               className="w-full py-3.5 bg-black text-white text-sm font-bold rounded-xl shadow-lg shadow-gray-200 hover:bg-gray-900 hover:shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2"
@@ -1320,13 +1466,16 @@ export default function PropertyDetail() {
                                   slotsByDate[key].push(slot)
                                 })
 
-                                // Classify a slot into AM1/AM2/PM1/PM2
-                                function classifySlot(slot) {
-                                  const h = new Date(slot.start_time).getHours()
-                                  if (h < 10) return 'AM1'
-                                  if (h < 12) return 'AM2'
-                                  if (h < 15) return 'PM1'
-                                  return 'PM2'
+                                function formatSlotTime(dateValue) {
+                                  return new Date(dateValue).toLocaleTimeString('en-US', {
+                                    hour: 'numeric',
+                                    minute: '2-digit',
+                                  })
+                                }
+
+                                function formatSlotRange(slot) {
+                                  if (!slot?.start_time || !slot?.end_time) return 'N/A'
+                                  return `${formatSlotTime(slot.start_time)} - ${formatSlotTime(slot.end_time)}`
                                 }
 
                                 const today = new Date()
@@ -1456,39 +1605,43 @@ export default function PropertyDetail() {
                                           </div>
                                         </div>
 
-                                        {/* Time Period Buttons */}
-                                        <div className="grid grid-cols-4 border-b border-gray-200">
-                                          {[
-                                            { key: 'AM1', label: 'AM 1', sub: '6–10 AM' },
-                                            { key: 'AM2', label: 'AM 2', sub: '10–12 PM' },
-                                            { key: 'PM1', label: 'PM 1', sub: '12–3 PM' },
-                                            { key: 'PM2', label: 'PM 2', sub: '3–6 PM' },
-                                          ].map((period, idx) => {
-                                            const dateSlots = slotsByDate[selectedBookingDate] || []
-                                            const periodSlot = dateSlots.find(s => classifySlot(s) === period.key)
-                                            const isAvailable = !!periodSlot
-                                            const isActive = selectedSlot && periodSlot && periodSlot.id === selectedSlot.id
+                                        {/* Available Time Slots */}
+                                        <div className="border-b border-gray-200 p-3 space-y-2">
+                                          {(() => {
+                                            const dateSlots = (slotsByDate[selectedBookingDate] || []).slice()
+                                              .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))
 
-                                            return (
-                                              <button
-                                                key={period.key}
-                                                type="button"
-                                                disabled={!isAvailable}
-                                                onClick={() => { if (periodSlot) setSelectedSlotId(periodSlot.id) }}
-                                                className={`py-3 px-1 text-center transition-all relative cursor-pointer disabled:cursor-not-allowed
-                                                ${idx < 3 ? 'border-r border-gray-200' : ''}
-                                                ${isActive ? 'bg-gray-50' : ''}
-                                                ${!isAvailable ? 'opacity-40' : 'hover:bg-gray-50'}
-                                              `}
-                                              >
-                                                <p className={`text-[9px] font-bold uppercase tracking-widest ${isActive ? 'text-black' : isAvailable ? 'text-gray-400' : 'text-gray-300'}`}>{period.label}</p>
-                                                <p className={`text-[10px] font-medium mt-0.5 ${isActive ? 'text-black font-bold' : isAvailable ? 'text-gray-600' : 'text-gray-300 line-through'}`}>
-                                                  {isAvailable ? period.sub : 'N/A'}
-                                                </p>
-                                                {isActive && <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-black rounded-full"></div>}
-                                              </button>
-                                            )
-                                          })}
+                                            if (dateSlots.length === 0) {
+                                              return (
+                                                <div className="text-[10px] text-gray-500 text-center py-2">
+                                                  No available slots for this date.
+                                                </div>
+                                              )
+                                            }
+
+                                            return dateSlots.map((slot) => {
+                                              const isActive = selectedSlot && slot.id === selectedSlot.id
+
+                                              return (
+                                                <button
+                                                  key={slot.id}
+                                                  type="button"
+                                                  onClick={() => setSelectedSlotId(slot.id)}
+                                                  className={`w-full flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-all cursor-pointer ${isActive
+                                                      ? 'border-black bg-gray-50'
+                                                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                                                    }`}
+                                                >
+                                                  <span className={`w-4 h-4 rounded-full border flex items-center justify-center ${isActive ? 'border-black' : 'border-gray-300'}`}>
+                                                    {isActive && <span className="w-2 h-2 rounded-full bg-black" />}
+                                                  </span>
+                                                  <span className={`text-xs font-bold ${isActive ? 'text-black' : 'text-gray-700'}`}>
+                                                    {formatSlotRange(slot)}
+                                                  </span>
+                                                </button>
+                                              )
+                                            })
+                                          })()}
                                         </div>
 
                                         {/* Selected Time Info */}
@@ -1497,12 +1650,12 @@ export default function PropertyDetail() {
                                             <div>
                                               <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Selected Time</p>
                                               <p className="text-xs font-bold text-gray-900">
-                                                {new Date(selectedSlot.start_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} – {new Date(selectedSlot.end_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                                                {formatSlotRange(selectedSlot)}
                                               </p>
                                             </div>
-                                            <div className="flex items-center gap-1 text-green-600">
+                                            <div className="flex items-center gap-1 text-gray-600">
                                               <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
-                                              <span className="text-[10px] font-bold">Available</span>
+                                              <span className="text-[10px] font-bold">Selected</span>
                                             </div>
                                           </div>
                                         )}

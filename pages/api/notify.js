@@ -2,7 +2,7 @@
 // Centralized API for sending SMS and Email notifications
 
 import { createClient } from '@supabase/supabase-js'
-import { sendBillNotification, sendNewBookingNotification, sendMoveInNotification, sendRenewalStatus, sendRenewalRequest, sendEndContractNotification, sendPaymentReceivedNotification, sendPaymentConfirmedNotification, sendMaintenanceDoneNotification, sendMaintenanceUpdate } from '../../lib/sms'
+import { sendBillNotification, sendNewBookingNotification, sendMoveInNotification, sendRenewalStatus, sendRenewalRequest, sendEndContractNotification, sendPaymentReceivedNotification, sendPaymentConfirmedNotification, sendMaintenanceDoneNotification, sendMaintenanceUpdate, sendSMS } from '../../lib/sms'
 import { sendNewPaymentBillEmail, sendNewBookingNotificationEmail, sendCashPaymentNotificationEmail, sendMoveInEmail, sendRenewalStatusEmail, sendRenewalRequestEmail, sendEndContractEmail, sendOnlinePaymentReceivedEmail, sendPaymentConfirmedEmail, sendNotificationEmail } from '../../lib/email'
 
 const supabaseAdmin = createClient(
@@ -18,6 +18,15 @@ function formatPhoneNumber(phone) {
     if (clean.startsWith('09')) return '+63' + clean.substring(1);
     if (clean.startsWith('63')) return '+' + clean;
     return '+' + clean;
+}
+
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
 }
 
 // Helper: Get family members for a tenant's occupancy on a property
@@ -392,6 +401,113 @@ export default async function handler(req, res) {
         if (type === 'booking_status') {
             // This already exists - just return success
             return res.status(200).json({ success: true, type: 'booking_status', message: 'Handled by existing logic' })
+        }
+
+        // ============================================
+        // NOTIFICATION TYPE: BOOKING REJECTED (For Tenant)
+        // ============================================
+        if (type === 'booking_rejected') {
+            const reason = String(req.body.reason || '').trim()
+            if (!reason) {
+                return res.status(400).json({ error: 'Missing rejection reason' })
+            }
+
+            const { data: booking, error } = await supabaseAdmin
+                .from('bookings')
+                .select(`
+                    id,
+                    tenant,
+                    booking_date,
+                    property:properties(title),
+                    tenant_profile:profiles!bookings_tenant_fkey(first_name, last_name, phone)
+                `)
+                .eq('id', recordId)
+                .single()
+
+            if (error || !booking) {
+                console.error('Booking not found for rejection notification:', error)
+                return res.status(404).json({ error: 'Booking not found' })
+            }
+
+            const propertyTitle = booking.property?.title || 'Property'
+            const tenantName = `${booking.tenant_profile?.first_name || ''} ${booking.tenant_profile?.last_name || ''}`.trim() || 'Tenant'
+            const tenantPhone = formatPhoneNumber(booking.tenant_profile?.phone)
+
+            let tenantEmail = null
+            if (booking.tenant) {
+                try {
+                    const { data: userData } = await supabaseAdmin.auth.admin.getUserById(booking.tenant)
+                    tenantEmail = userData?.user?.email || null
+                } catch (err) {
+                    console.error('Failed to fetch tenant email via auth admin:', err)
+                }
+
+                if (!tenantEmail) {
+                    try {
+                        const { data } = await supabaseAdmin.rpc('get_user_email', { user_id: booking.tenant })
+                        tenantEmail = data || null
+                    } catch (err) {
+                        console.error('Failed to fetch tenant email via RPC:', err)
+                    }
+                }
+            }
+
+            let landlordName = 'Landlord'
+            if (actorId) {
+                try {
+                    const { data: actorProfile } = await supabaseAdmin
+                        .from('profiles')
+                        .select('first_name, last_name')
+                        .eq('id', actorId)
+                        .maybeSingle()
+                    if (actorProfile) {
+                        landlordName = `${actorProfile.first_name || ''} ${actorProfile.last_name || ''}`.trim() || 'Landlord'
+                    }
+                } catch (err) {
+                    console.error('Failed to resolve landlord name for rejection notification:', err)
+                }
+            }
+
+            const safeReason = escapeHtml(reason)
+            const smsReason = reason.length > 220 ? `${reason.slice(0, 217)}...` : reason
+            const results = { sms: false, email: false }
+
+            if (tenantPhone) {
+                try {
+                    await sendSMS(tenantPhone, `Abalay: Your viewing request for "${propertyTitle}" was rejected. Reason: ${smsReason}`)
+                    results.sms = true
+                    console.log(`✅ Rejection SMS sent to tenant ${tenantPhone}`)
+                } catch (err) {
+                    console.error(`Rejection SMS failed for ${tenantPhone}:`, err.message)
+                }
+            }
+
+            if (tenantEmail) {
+                try {
+                    await sendNotificationEmail({
+                        to: tenantEmail,
+                        subject: `Viewing Request Rejected - ${propertyTitle}`,
+                        message: `
+                            <div style="font-family: Arial, sans-serif; color: #1f2937; line-height: 1.5;">
+                                <h2 style="margin: 0 0 12px; color: #b91c1c;">Viewing Request Rejected</h2>
+                                <p>Hi <strong>${escapeHtml(tenantName)}</strong>,</p>
+                                <p>Your viewing request for <strong>${escapeHtml(propertyTitle)}</strong> was rejected by ${escapeHtml(landlordName)}.</p>
+                                <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 10px; padding: 12px; margin: 16px 0;">
+                                    <p style="margin: 0 0 6px; font-weight: 700; color: #7f1d1d;">Reason from landlord:</p>
+                                    <p style="margin: 0; color: #991b1b;">${safeReason}</p>
+                                </div>
+                                <p style="margin: 0;">You can check your booking page for details and book another viewing schedule if needed.</p>
+                            </div>
+                        `
+                    })
+                    results.email = true
+                    console.log(`✅ Rejection email sent to tenant ${tenantEmail}`)
+                } catch (err) {
+                    console.error(`Rejection email failed for ${tenantEmail}:`, err.message)
+                }
+            }
+
+            return res.status(200).json({ success: true, type: 'booking_rejected', results })
         }
 
         // ============================================

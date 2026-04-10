@@ -65,6 +65,7 @@ export default function TenantDashboard({ session, profile }) {
   const [favorites, setFavorites] = useState([])
   const [propertyStats, setPropertyStats] = useState({})
   const [guestFavorites, setGuestFavorites] = useState([])
+  const [mostFavoriteProperties, setMostFavoriteProperties] = useState([])
   const [topRated, setTopRated] = useState([])
   const [userLocationCity, setUserLocationCity] = useState('')
   const [locationPermission, setLocationPermission] = useState('prompt')
@@ -176,7 +177,7 @@ export default function TenantDashboard({ session, profile }) {
   }
 
   useEffect(() => {
-    const allProperties = [...properties, ...guestFavorites, ...topRated]
+    const allProperties = [...properties, ...guestFavorites, ...mostFavoriteProperties, ...topRated]
     if (allProperties.length === 0) return
 
     const interval = setInterval(() => {
@@ -193,7 +194,7 @@ export default function TenantDashboard({ session, profile }) {
     }, 1450)
 
     return () => clearInterval(interval)
-  }, [properties, guestFavorites, topRated])
+  }, [properties, guestFavorites, mostFavoriteProperties, topRated])
 
 
   useEffect(() => {
@@ -541,6 +542,24 @@ export default function TenantDashboard({ session, profile }) {
     const currentOccupancy = occupancy || tenantOccupancy;
     const isOwn = currentOccupancy?.tenant_id === session.user.id;
 
+    const getFirstDueDateFromStart = (startDateValue) => {
+      const base = new Date(startDateValue)
+      if (Number.isNaN(base.getTime())) return null
+
+      const baseDateOnly = new Date(base)
+      baseDateOnly.setHours(0, 0, 0, 0)
+      const todayDateOnly = new Date()
+      todayDateOnly.setHours(0, 0, 0, 0)
+
+      if (baseDateOnly <= todayDateOnly) {
+        const shifted = new Date(base)
+        shifted.setMonth(shifted.getMonth() + 1)
+        return shifted
+      }
+
+      return base
+    }
+
     // 1. Check for pending bills first (including move-in payments)
     let allPendingBills = null;
     let allPaidBills = null;
@@ -563,14 +582,18 @@ export default function TenantDashboard({ session, profile }) {
         .in('status', ['paid', 'pending_confirmation'])
         .gt('rent_amount', 0)
         .order('due_date', { ascending: false })
-      allPaidBills = paidData;
+
+      const historyPaidBills = (paymentHistory || []).filter(bill => parseFloat(bill?.rent_amount || 0) > 0)
+      allPaidBills = historyPaidBills.length > 0 ? historyPaidBills : (paidData || []);
     } else {
       // Family member: use already-loaded state (from API)
       allPendingBills = pendingPayments.filter(p => p.status === 'pending' && parseFloat(p.rent_amount) > 0);
-      // Use the robust allPaidBills fetched from family-members.js to ensure advance_amount logic works
-      allPaidBills = familyPaidBills && familyPaidBills.length > 0
-        ? familyPaidBills
-        : [...paymentHistory].sort((a, b) => new Date(b.due_date) - new Date(a.due_date));
+      // Keep next due aligned with the tracker by using paymentHistory first.
+      allPaidBills = paymentHistory && paymentHistory.length > 0
+        ? [...paymentHistory].sort((a, b) => new Date(b.due_date) - new Date(a.due_date))
+        : (familyPaidBills && familyPaidBills.length > 0
+          ? familyPaidBills
+          : []);
     }
 
     // Filter to only bills for this occupancy/property, but be lenient
@@ -609,14 +632,44 @@ export default function TenantDashboard({ session, profile }) {
 
     console.log('Filtered paid bills for this occupancy/property:', filteredBills);
 
-    // Prioritize bills with advance_amount (original renewal bills) over advance payment bills
-    // This ensures we calculate monthsCovered correctly for renewal payments
-    // Move-in payments should be included (they have advance_amount = 0, so they'll be in filteredBills?.[0] if no advance bills exist)
-    // CRITICAL: For renewal payments, the bill's due_date should be the actual next due date (not contract end date)
-    // This is updated in payments.js when the renewal is confirmed
-    const lastBill = filteredBills?.find(bill => bill.advance_amount > 0 && bill.is_renewal_payment) ||
-      filteredBills?.find(bill => bill.advance_amount > 0) ||
-      filteredBills?.[0];
+    // Choose the bill with the farthest paid-through coverage so older renewal rows
+    // do not override newer paid months when calculating next due date.
+    const hasRentAmount = (bill) => parseFloat(bill?.rent_amount || 0) > 0
+
+    const getBillCoverageMonths = (bill) => {
+      const rentAmount = parseFloat(bill?.rent_amount || 0)
+      const advanceAmount = parseFloat(bill?.advance_amount || 0)
+      if (rentAmount > 0 && advanceAmount > 0) {
+        return 1 + Math.floor(advanceAmount / rentAmount)
+      }
+      return 1
+    }
+
+    const getCoverageEndTime = (bill) => {
+      if (!bill?.due_date) return Number.NEGATIVE_INFINITY
+      const dueDate = new Date(bill.due_date)
+      if (Number.isNaN(dueDate.getTime())) return Number.NEGATIVE_INFINITY
+
+      const monthsCovered = getBillCoverageMonths(bill)
+      const endDate = new Date(dueDate)
+      endDate.setMonth(endDate.getMonth() + monthsCovered)
+      return endDate.getTime()
+    }
+
+    const rankableBills = (filteredBills || []).filter(bill => hasRentAmount(bill) && bill?.due_date)
+    const lastBill = rankableBills.length > 0
+      ? [...rankableBills].sort((a, b) => {
+        const coverageDiff = getCoverageEndTime(b) - getCoverageEndTime(a)
+        if (coverageDiff !== 0) return coverageDiff
+        return new Date(b.due_date).getTime() - new Date(a.due_date).getTime()
+      })[0]
+      : filteredBills?.[0];
+
+    const coverageEndMs = rankableBills.reduce((max, bill) => {
+      const endMs = getCoverageEndTime(bill)
+      return endMs > max ? endMs : max
+    }, Number.NEGATIVE_INFINITY)
+    const coverageEndDate = Number.isFinite(coverageEndMs) ? new Date(coverageEndMs) : null
 
     console.log('Last paid bill for next due calc:', lastBill);
     console.log('Paid bills count:', filteredBills?.length || 0);
@@ -680,14 +733,15 @@ export default function TenantDashboard({ session, profile }) {
         }
       }
 
-      // If still no pending bill, use start_date (never show "All Paid" for new tenants)
+      // If still no pending bill, derive first due from start_date.
+      // For occupancies that already started, first due should be next month.
       console.log('⚠️ No pending bills found at all for newly assigned tenant, using start_date');
       if (currentOccupancy?.start_date) {
-        const startDate = new Date(currentOccupancy.start_date);
-        const formattedDate = startDate.toLocaleDateString('en-US', {
+        const firstDueDate = getFirstDueDateFromStart(currentOccupancy.start_date) || new Date(currentOccupancy.start_date);
+        const formattedDate = firstDueDate.toLocaleDateString('en-US', {
           month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC'
         });
-        console.log('✅ Setting nextPaymentDate to start_date for newly assigned tenant:', formattedDate);
+        console.log('✅ Setting nextPaymentDate from start_date fallback:', formattedDate);
         setNextPaymentDate(formattedDate);
         setLastRentPeriod("N/A");
         return; // CRITICAL: Return immediately to prevent "All Paid"
@@ -726,15 +780,15 @@ export default function TenantDashboard({ session, profile }) {
           billStatus: lastBill.status
         });
 
-        // Create a new date object from the bill's due_date
-        nextDue = new Date(lastBill.due_date);
+        // Use the farthest paid-through date to avoid older bills anchoring the next due date.
+        nextDue = coverageEndDate ? new Date(coverageEndDate) : new Date(lastBill.due_date);
 
         // Ensure we're working with a valid date
         if (isNaN(nextDue.getTime())) {
           console.error('Invalid date from lastBill.due_date:', lastBill.due_date);
           nextDue = new Date(startDate);
           nextDue.setUTCDate(startDay);
-        } else {
+        } else if (!coverageEndDate) {
           // Add months to the due date - CRITICAL: Preserve the day of month
           const originalDate = new Date(nextDue); // Save original for logging
           const currentMonth = nextDue.getMonth();
@@ -765,6 +819,13 @@ export default function TenantDashboard({ session, profile }) {
             monthDifference: (nextDue.getMonth() + 1) - (originalDate.getMonth() + 1),
             preservedDay: currentDay
           });
+        } else {
+          console.log('Using max coverage end date for next due:', {
+            coverageEndDate: coverageEndDate.toISOString(),
+            coverageEndFormatted: coverageEndDate.toLocaleDateString('en-US', {
+              month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC'
+            })
+          });
         }
 
         // CRITICAL: Set the calculated date and return immediately
@@ -793,8 +854,10 @@ export default function TenantDashboard({ session, profile }) {
             }
 
             // Calculate when the paid period ends
-            const paidPeriodEnd = new Date(lastPaidDate);
-            paidPeriodEnd.setMonth(paidPeriodEnd.getMonth() + monthsCoveredByPayment);
+            const paidPeriodEnd = coverageEndDate ? new Date(coverageEndDate) : new Date(lastPaidDate);
+            if (!coverageEndDate) {
+              paidPeriodEnd.setMonth(paidPeriodEnd.getMonth() + monthsCoveredByPayment);
+            }
 
             // CRITICAL: For move-in payments, they only cover the first month
             // The next due date should be start_date + 1 month, not "All Paid"
@@ -914,7 +977,8 @@ export default function TenantDashboard({ session, profile }) {
           return; // CRITICAL: Return immediately to prevent "All Paid" logic
         }
 
-        nextDue = new Date(startDate);
+        const projected = getFirstDueDateFromStart(startDate) || new Date(startDate)
+        nextDue = projected
         nextDue.setUTCDate(startDay);
       }
 
@@ -1006,22 +1070,25 @@ export default function TenantDashboard({ session, profile }) {
           isMoveIn: lastBill.is_move_in_payment
         });
 
-        const d = new Date(lastBill.due_date);
+        const d = coverageEndDate ? new Date(coverageEndDate) : new Date(lastBill.due_date);
         const originalDate = new Date(d); // Save original for logging
-        const currentMonth = d.getMonth();
-        const currentYear = d.getFullYear();
-        const currentDay = d.getDate(); // Preserve the day of month
 
-        // Calculate target month and year
-        const targetMonth = currentMonth + monthsCovered;
-        const targetYear = currentYear + Math.floor(targetMonth / 12);
-        let finalMonth = targetMonth % 12;
-        if (finalMonth < 0) finalMonth += 12;
+        if (!coverageEndDate) {
+          const currentMonth = d.getMonth();
+          const currentYear = d.getFullYear();
+          const currentDay = d.getDate(); // Preserve the day of month
 
-        // Set the new date
-        d.setFullYear(targetYear);
-        d.setMonth(finalMonth);
-        d.setDate(currentDay); // Preserve the day of month
+          // Calculate target month and year
+          const targetMonth = currentMonth + monthsCovered;
+          const targetYear = currentYear + Math.floor(targetMonth / 12);
+          let finalMonth = targetMonth % 12;
+          if (finalMonth < 0) finalMonth += 12;
+
+          // Set the new date
+          d.setFullYear(targetYear);
+          d.setMonth(finalMonth);
+          d.setDate(currentDay); // Preserve the day of month
+        }
 
         console.log('Calculated next due date (no baseDate):', {
           original: originalDate.toISOString(),
@@ -1036,8 +1103,10 @@ export default function TenantDashboard({ session, profile }) {
           const endDate = new Date(currentOccupancy.contract_end_date);
           // Only show "All Paid" if the PAID period already covers past contract end
           const lastPaidDate = new Date(lastBill.due_date);
-          const paidPeriodEnd = new Date(lastPaidDate);
-          paidPeriodEnd.setMonth(paidPeriodEnd.getMonth() + monthsCovered);
+          const paidPeriodEnd = coverageEndDate ? new Date(coverageEndDate) : new Date(lastPaidDate);
+          if (!coverageEndDate) {
+            paidPeriodEnd.setMonth(paidPeriodEnd.getMonth() + monthsCovered);
+          }
 
           // Only show "All Paid" if the paid period already extends past contract end
           if (paidPeriodEnd >= endDate) {
@@ -1380,7 +1449,38 @@ export default function TenantDashboard({ session, profile }) {
         setGuestFavorites([])
       }
 
-      const rated = allProps.filter(p => (statsMap[p.id]?.review_count || 0) > 0).sort((a, b) => (statsMap[b.id]?.avg_rating || 0) - (statsMap[a.id]?.avg_rating || 0)).slice(0, maxDisplayItems)
+      const mostFavorited = allProps
+        .filter((property) => (statsMap[property.id]?.favorite_count || 0) > 0)
+        .sort((a, b) => {
+          const favoriteDiff = (statsMap[b.id]?.favorite_count || 0) - (statsMap[a.id]?.favorite_count || 0)
+          if (favoriteDiff !== 0) return favoriteDiff
+
+          const ratingDiff = (statsMap[b.id]?.avg_rating || 0) - (statsMap[a.id]?.avg_rating || 0)
+          if (ratingDiff !== 0) return ratingDiff
+
+          const reviewDiff = (statsMap[b.id]?.review_count || 0) - (statsMap[a.id]?.review_count || 0)
+          if (reviewDiff !== 0) return reviewDiff
+
+          return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+        })
+        .slice(0, maxDisplayItems)
+      setMostFavoriteProperties(mostFavorited)
+
+      const rated = allProps
+        .filter((property) => (statsMap[property.id]?.review_count || 0) > 0)
+        .sort((a, b) => {
+          const favoriteDiff = (statsMap[b.id]?.favorite_count || 0) - (statsMap[a.id]?.favorite_count || 0)
+          if (favoriteDiff !== 0) return favoriteDiff
+
+          const ratingDiff = (statsMap[b.id]?.avg_rating || 0) - (statsMap[a.id]?.avg_rating || 0)
+          if (ratingDiff !== 0) return ratingDiff
+
+          const reviewDiff = (statsMap[b.id]?.review_count || 0) - (statsMap[a.id]?.review_count || 0)
+          if (reviewDiff !== 0) return reviewDiff
+
+          return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+        })
+        .slice(0, maxDisplayItems)
       setTopRated(rated)
     }
   }
@@ -2311,10 +2411,13 @@ export default function TenantDashboard({ session, profile }) {
                       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3 mb-2">
                         {['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((month, index) => {
                           const currentYear = new Date().getFullYear();
-                          const isPaid = paymentHistory.some(p => {
+                          const targetAbsoluteMonth = currentYear * 12 + index;
+
+                          const isMonthCoveredByPaidHistory = paymentHistory.some(p => {
                             if (!p.due_date || parseFloat(p.rent_amount) <= 0) return false;
 
                             const d = new Date(p.due_date);
+                            if (Number.isNaN(d.getTime())) return false;
                             const pMonth = d.getMonth();
                             const pYear = d.getFullYear();
 
@@ -2327,12 +2430,34 @@ export default function TenantDashboard({ session, profile }) {
                               monthsCovered += Math.floor(advance / rent);
                             }
 
-                            const targetAbsoluteMonth = currentYear * 12 + index;
                             const paymentStartAbsoluteMonth = pYear * 12 + pMonth;
                             const paymentEndAbsoluteMonth = paymentStartAbsoluteMonth + monthsCovered - 1;
 
                             return targetAbsoluteMonth >= paymentStartAbsoluteMonth && targetAbsoluteMonth <= paymentEndAbsoluteMonth;
                           });
+
+                          const occupancyStartDate = tenantOccupancy?.start_date ? new Date(tenantOccupancy.start_date) : null;
+                          const hasValidStartDate = occupancyStartDate && !Number.isNaN(occupancyStartDate.getTime());
+                          const occupancyStartAbsoluteMonth = hasValidStartDate
+                            ? (occupancyStartDate.getFullYear() * 12 + occupancyStartDate.getMonth())
+                            : null;
+
+                          const hasPendingRentForStartMonth = occupancyStartAbsoluteMonth !== null && pendingPayments.some(p => {
+                            if (!p?.due_date || parseFloat(p.rent_amount || 0) <= 0) return false;
+                            const pendingDate = new Date(p.due_date);
+                            if (Number.isNaN(pendingDate.getTime())) return false;
+                            const pendingAbsoluteMonth = pendingDate.getFullYear() * 12 + pendingDate.getMonth();
+                            return pendingAbsoluteMonth === occupancyStartAbsoluteMonth;
+                          });
+
+                          const currentAbsoluteMonth = (new Date().getFullYear() * 12) + new Date().getMonth();
+                          const fallbackStartMonthPaid = occupancyStartAbsoluteMonth !== null
+                            && targetAbsoluteMonth === occupancyStartAbsoluteMonth
+                            && occupancyStartAbsoluteMonth <= currentAbsoluteMonth
+                            && !isMonthCoveredByPaidHistory
+                            && !hasPendingRentForStartMonth;
+
+                          const isPaid = isMonthCoveredByPaidHistory || fallbackStartMonthPaid;
 
                           const isActiveMonth = new Date().getMonth() === index;
 
@@ -2491,6 +2616,47 @@ export default function TenantDashboard({ session, profile }) {
                 <Carousel className="w-full mx-auto sm:max-w-[calc(100%-100px)]">
                   <CarouselContent className="-ml-2">
                     {guestFavorites.slice(0, maxDisplayItems).map((item) => {
+                      const images = getPropertyImages(item)
+                      const currentIndex = currentImageIndex[item.id] || 0
+                      const isSelectedForCompare = comparisonList.some(p => p.id === item.id)
+                      const isFavorite = favorites.includes(item.id)
+                      const stats = propertyStats[item.id] || { favorite_count: 0, avg_rating: 0, review_count: 0 }
+
+                      return (
+                        <CarouselItem key={item.id} className={carouselItemClass}>
+                          <div className="p-1 h-full">
+                            {renderPropertyCard({
+                              property: item,
+                              images,
+                              currentIndex,
+                              isSelectedForCompare,
+                              isFavorite,
+                              stats
+                            })}
+                          </div>
+                        </CarouselItem>
+                      )
+                    })}
+                  </CarouselContent>
+                  <CarouselPrevious />
+                  <CarouselNext />
+                </Carousel>
+              </div>
+            )}
+
+            {/* Most Favorite Properties Section */}
+            {mostFavoriteProperties.length > 0 && (
+              <div className={`mb-2 mt-4 transition-all duration-700 delay-250 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
+                  <div>
+                    <div className="flex items-center gap-3 mb-1">
+                      <h2 className="text-2xl font-black text-black">Most Favorite Properties</h2>
+                    </div>
+                  </div>
+                </div>
+                <Carousel className="w-full mx-auto sm:max-w-[calc(100%-100px)]">
+                  <CarouselContent className="-ml-2">
+                    {mostFavoriteProperties.slice(0, maxDisplayItems).map((item) => {
                       const images = getPropertyImages(item)
                       const currentIndex = currentImageIndex[item.id] || 0
                       const isSelectedForCompare = comparisonList.some(p => p.id === item.id)

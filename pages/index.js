@@ -63,6 +63,7 @@ export default function Home({ setHomeNavbarLoading }) {
 
   // --- Featured Sections State ---
   const [guestFavorites, setGuestFavorites] = useState([])
+  const [mostFavoriteProperties, setMostFavoriteProperties] = useState([])
   const [topRated, setTopRated] = useState([])
   const [propertyStats, setPropertyStats] = useState({})
   const [userLocationCity, setUserLocationCity] = useState('')
@@ -104,7 +105,7 @@ export default function Home({ setHomeNavbarLoading }) {
 
   // Auto-slide images for property cards
   useEffect(() => {
-    const allProperties = [...properties, ...guestFavorites, ...topRated]
+    const allProperties = [...properties, ...guestFavorites, ...mostFavoriteProperties, ...topRated]
     if (allProperties.length === 0) return
 
     const interval = setInterval(() => {
@@ -121,7 +122,7 @@ export default function Home({ setHomeNavbarLoading }) {
     }, 1450) // Change image every 3 seconds
 
     return () => clearInterval(interval)
-  }, [properties, guestFavorites, topRated])
+  }, [properties, guestFavorites, mostFavoriteProperties, topRated])
 
   useEffect(() => {
     const initializeHome = async () => {
@@ -478,10 +479,38 @@ export default function Home({ setHomeNavbarLoading }) {
         setGuestFavorites([])
       }
 
+      const mostFavorited = allProps
+        .filter((property) => (statsMap[property.id]?.favorite_count || 0) > 0)
+        .sort((a, b) => {
+          const favoriteDiff = (statsMap[b.id]?.favorite_count || 0) - (statsMap[a.id]?.favorite_count || 0)
+          if (favoriteDiff !== 0) return favoriteDiff
+
+          const ratingDiff = (statsMap[b.id]?.avg_rating || 0) - (statsMap[a.id]?.avg_rating || 0)
+          if (ratingDiff !== 0) return ratingDiff
+
+          const reviewDiff = (statsMap[b.id]?.review_count || 0) - (statsMap[a.id]?.review_count || 0)
+          if (reviewDiff !== 0) return reviewDiff
+
+          return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+        })
+        .slice(0, maxDisplayItems)
+      setMostFavoriteProperties(mostFavorited)
+
       // 4. Top Rated (Highest Average Rating with at least 1 review)
       const rated = allProps
         .filter(p => (statsMap[p.id]?.review_count || 0) > 0) // Must have reviews
-        .sort((a, b) => (statsMap[b.id]?.avg_rating || 0) - (statsMap[a.id]?.avg_rating || 0))
+        .sort((a, b) => {
+          const favoriteDiff = (statsMap[b.id]?.favorite_count || 0) - (statsMap[a.id]?.favorite_count || 0)
+          if (favoriteDiff !== 0) return favoriteDiff
+
+          const ratingDiff = (statsMap[b.id]?.avg_rating || 0) - (statsMap[a.id]?.avg_rating || 0)
+          if (ratingDiff !== 0) return ratingDiff
+
+          const reviewDiff = (statsMap[b.id]?.review_count || 0) - (statsMap[a.id]?.review_count || 0)
+          if (reviewDiff !== 0) return reviewDiff
+
+          return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
+        })
         .slice(0, maxDisplayItems)
 
       setTopRated(rated)
@@ -911,6 +940,124 @@ export default function Home({ setHomeNavbarLoading }) {
                                   {stats.favorite_count}
                                 </span>
                               )}
+                            </div>
+                            <div className="absolute bottom-2 sm:bottom-3 left-2 sm:left-3 z-10 text-white">
+                              <p className="text-sm sm:text-lg font-bold drop-shadow-md">₱{Number(item.price).toLocaleString()}</p>
+                              <p className="text-[8px] sm:text-[9px] opacity-90 font-medium uppercase tracking-wider">per month</p>
+                            </div>
+                          </div>
+
+                          {/* Card Body */}
+                          <div className="p-1.5 sm:p-2">
+                            <div className="mb-0.5 sm:mb-1">
+                              <div className="flex justify-between items-start">
+                                <div className="flex flex-wrap items-center gap-1.5 min-w-0 pr-1">
+                                  <h3 className="text-xs sm:text-base font-bold text-gray-900 line-clamp-1">{item.title}</h3>
+                                  {mostFavoriteId && item.id === mostFavoriteId && (
+                                    <span className="shrink-0 px-1 py-0.5 bg-rose-100 text-rose-600 border border-rose-200 text-[8px] font-bold rounded uppercase tracking-wider">
+                                      Most Favorite
+                                    </span>
+                                  )}
+                                  {topRatedId && item.id === topRatedId && (
+                                    <span className="shrink-0 px-1 py-0.5 bg-amber-100 text-amber-600 border border-amber-200 text-[8px] font-bold rounded uppercase tracking-wider">
+                                      Top Rated
+                                    </span>
+                                  )}
+                                </div>
+                                {stats.review_count > 0 && (<div className="flex items-center gap-1 text-xs shrink-0"><svg className="w-3.5 h-3.5 text-yellow-400 fill-yellow-400" viewBox="0 0 24 24"><path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg><span className="font-bold text-gray-900">{stats.avg_rating.toFixed(1)}</span><span className="text-gray-400">({stats.review_count})</span></div>)}
+                              </div>
+                              <div className="flex items-center gap-1 text-gray-500 text-[10px] sm:text-xs">
+                                <span className="truncate">{item.city}, Philippines</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 sm:gap-3 text-gray-600 text-[10px] sm:text-xs">
+                              <span className="flex items-center gap-0.5 sm:gap-1 font-medium"><svg
+                                className="w-2.5 h-2.5 sm:w-3.5 sm:h-3.5"
+                                fill="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path d="M7 13c1.66 0 3-1.34 3-3S8.66 7 7 7s-3 1.34-3 3 1.34 3 3 3zm12-6h-8v7H3V5H1v15h2v-3h18v3h2v-9c0-2.21-1.79-4-4-4z" />
+                              </svg>{item.bedrooms}</span>
+                              <span className="w-0.5 h-0.5 bg-gray-300 rounded-full"></span>
+                              <span className="flex items-center gap-0.5 sm:gap-1 font-medium"><svg
+                                className="w-2.5 h-2.5 sm:w-3.5 sm:h-3.5"
+                                viewBox="0 0 24 24"
+                                fill="currentColor"
+                              >
+                                <path d="M21 10H7V7c0-1.103.897-2 2-2s2 .897 2 2h2c0-2.206-1.794-4-4-4S5 4.794 5 7v3H3a1 1 0 0 0-1 1v2c0 2.606 1.674 4.823 4 5.65V22h2v-3h8v3h2v-3.35c2.326-.827 4-3.044 4-5.65v-2a1 1 0 0 0-1-1z" />
+                              </svg>{item.bathrooms}</span>
+                              <span className="w-0.5 h-0.5 bg-gray-300 rounded-full"></span>
+                              <span className="flex items-center gap-0.5 sm:gap-1 font-medium"><svg className="w-2.5 h-2.5 sm:w-3.5 sm:h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>{item.area_sqft} sqm</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </CarouselItem>
+                  )
+                })}
+              </CarouselContent>
+              <CarouselPrevious />
+              <CarouselNext />
+            </Carousel>
+          </div>
+        )}
+
+        {/* Most Favorite Properties Section - Carousel */}
+        {!loading && mostFavoriteProperties.length > 0 && (
+          <div className={`mb-2 mt-4 ${mounted ? 'animate-fadeInUp delay-350' : 'opacity-0'}`}>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4">
+              <div>
+                <div className="flex items-center gap-3 mb-1">
+                  <h2 className="text-2xl font-black text-black">𝐌𝐨𝐬𝐭 𝐅𝐚𝐯𝐨𝐫𝐢𝐭𝐞 𝐏𝐫𝐨𝐩𝐞𝐫𝐭𝐢𝐞𝐬</h2>
+                </div>
+              </div>
+            </div>
+            <Carousel className="w-full mx-auto sm:max-w-[calc(100%-100px)]">
+              <CarouselContent className="-ml-2">
+                {mostFavoriteProperties.slice(0, maxDisplayItems).map((item) => {
+                  const images = getPropertyImages(item)
+                  const currentIndex = currentImageIndex[item.id] || 0
+                  const isSelectedForCompare = comparisonList.some(p => p.id === item.id)
+                  const isFavorite = favorites.includes(item.id)
+                  const stats = propertyStats[item.id] || { favorite_count: 0, avg_rating: 0, review_count: 0 }
+
+                  return (
+                    <CarouselItem key={item.id} className={carouselItemClass}>
+                      <div className="p-1 h-full">
+                        <div
+                          className={`group bg-white rounded-2xl shadow-sm border overflow-hidden flex flex-col cursor-pointer h-full card-hover ${isSelectedForCompare ? 'ring-2 ring-gray-900 border-gray-900' : 'border-gray-100 hover:border-gray-300'}`}
+                          onClick={() => router.push(`/properties/${item.id}`)}
+                        >
+                          <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-2xl">
+                            <img src={images[currentIndex]} alt={item.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+
+                            {/* Action Buttons */}
+                            <div className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 md:top-3 md:right-3 z-20 flex items-center gap-1 sm:gap-2" onClick={(e) => e.stopPropagation()}>
+                              <button onClick={(e) => toggleFavorite(e, item.id)} className={`w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center backdrop-blur-md shadow-sm transition-all cursor-pointer ${isFavorite ? 'bg-red-500 text-white' : 'bg-white/90 text-gray-400 hover:bg-white hover:text-red-500'}`}>
+                                <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4" fill={isFavorite ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" /></svg>
+                              </button>
+                              <label className="flex items-center cursor-pointer">
+                                <input type="checkbox" className="hidden" checked={isSelectedForCompare} onChange={(e) => toggleComparison(e, item)} />
+                                <div className={`w-6 h-6 sm:w-7 sm:h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center backdrop-blur-md shadow-sm transition-all ${isSelectedForCompare ? 'bg-black text-white' : 'bg-white/90 text-gray-400 hover:bg-white'}`}>
+                                  {isSelectedForCompare ? (<svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>) : (<svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 md:w-4 md:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>)}
+                                </div>
+                              </label>
+                            </div>
+
+                            {/* Image Indicators */}
+                            {images.length > 1 && (
+                              <div className="absolute bottom-1.5 sm:bottom-2 md:bottom-3 left-1/2 -translate-x-1/2 flex gap-0.5 sm:gap-1 z-10">
+                                {images.map((_, idx) => (
+                                  <div key={idx} className={`h-0.5 sm:h-1 rounded-full transition-all duration-300 shadow-sm ${idx === currentIndex ? 'w-3 sm:w-4 bg-white' : 'w-0.5 sm:w-1 bg-white/60'}`} />
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Gradient & Labels */}
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-60"></div>
+                            <div className="absolute top-1.5 sm:top-2 md:top-3 left-1.5 sm:left-2 md:left-3 z-10 flex flex-col gap-0.5 sm:gap-1 items-start">
+                              <span className={`px-1 py-0.5 text-[7px] sm:text-[8px] uppercase font-bold tracking-wider rounded shadow-sm backdrop-blur-md ${item.status === 'available' ? 'bg-white text-black' : 'bg-black/80 text-white'}`}>{item.status === 'available' ? 'Available' : item.status === 'occupied' ? 'Occupied' : 'Not Available'}</span>
+                              {stats.favorite_count >= 1 && (<span className="px-1 py-0.5 text-[7px] sm:text-[8px] uppercase font-bold tracking-wider rounded shadow-sm backdrop-blur-md bg-rose-500 text-white flex items-center gap-0.5"><svg className="w-2 h-2 sm:w-2.5 sm:h-2.5 fill-current" viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" /></svg>{stats.favorite_count}</span>)}
                             </div>
                             <div className="absolute bottom-2 sm:bottom-3 left-2 sm:left-3 z-10 text-white">
                               <p className="text-sm sm:text-lg font-bold drop-shadow-md">₱{Number(item.price).toLocaleString()}</p>

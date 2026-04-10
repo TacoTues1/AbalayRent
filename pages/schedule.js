@@ -16,6 +16,8 @@ export default function SchedulePage() {
   const [viewMode, setViewMode] = useState('calendar') // 'calendar' | 'timeSelection'
   const [selectedDate, setSelectedDate] = useState(null)
   const [selectedTimesForAdd, setSelectedTimesForAdd] = useState([]) // ['am1', 'pm2']
+  const [customStartTime, setCustomStartTime] = useState('')
+  const [customEndTime, setCustomEndTime] = useState('')
 
   // Define time slots
   const TIME_SLOTS = {
@@ -23,6 +25,25 @@ export default function SchedulePage() {
     am2: { label: 'AM 2', time: '10:00 AM - 11:30 AM', start: '10:00', end: '11:30' },
     pm1: { label: 'PM 1', time: '1:00 PM - 2:30 PM', start: '13:00', end: '14:30' },
     pm2: { label: 'PM 2', time: '2:30 PM - 4:00 PM', start: '14:30', end: '16:00' }
+  }
+
+  function parseTimeToMinutes(timeValue) {
+    if (!timeValue || !timeValue.includes(':')) return null
+    const [h, m] = timeValue.split(':')
+    const hour = Number(h)
+    const minute = Number(m)
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null
+    return hour * 60 + minute
+  }
+
+  function buildDateTime(baseDate, timeValue) {
+    const minutes = parseTimeToMinutes(timeValue)
+    if (!baseDate || !Number.isFinite(minutes)) return null
+    const hour = Math.floor(minutes / 60)
+    const minute = minutes % 60
+    const dateTime = new Date(baseDate)
+    dateTime.setHours(hour, minute, 0, 0)
+    return dateTime
   }
 
   useEffect(() => {
@@ -121,10 +142,26 @@ export default function SchedulePage() {
 
     setSelectedDate(date)
     setSelectedTimesForAdd([]) // Reset selection
+    setCustomStartTime('')
+    setCustomEndTime('')
     setViewMode('timeSelection')
   }
 
   function toggleTimeSelection(slotKey) {
+    if (!selectedDate) return
+
+    const config = TIME_SLOTS[slotKey]
+    if (!config) return
+
+    const [startHour, startMinute] = config.start.split(':')
+    const startDateTime = new Date(selectedDate)
+    startDateTime.setHours(parseInt(startHour), parseInt(startMinute), 0, 0)
+
+    if (startDateTime <= new Date()) {
+      showToast.warning("Cannot select a past time slot", { duration: 2000, position: "top-center" })
+      return
+    }
+
     setSelectedTimesForAdd(prev =>
       prev.includes(slotKey)
         ? prev.filter(k => k !== slotKey)
@@ -151,6 +188,9 @@ export default function SchedulePage() {
 
       const endDateTime = new Date(selectedDate)
       endDateTime.setHours(parseInt(endHour), parseInt(endMinute), 0, 0)
+
+      // Safety guard: never insert past slots.
+      if (startDateTime <= new Date()) continue
 
       // Check availability strictly client-side first to avoid simple dupes (optional)
       const isDuplicate = timeSlots.some(s =>
@@ -189,6 +229,69 @@ export default function SchedulePage() {
     setSubmitting(false)
   }
 
+  async function handleAddCustomSchedule() {
+    if (!selectedDate) {
+      showToast.warning("Please select a date first", { duration: 3000 })
+      return
+    }
+
+    if (!customStartTime || !customEndTime) {
+      showToast.warning("Please select both start and end time", { duration: 3000 })
+      return
+    }
+
+    const startDateTime = buildDateTime(selectedDate, customStartTime)
+    const endDateTime = buildDateTime(selectedDate, customEndTime)
+
+    if (!startDateTime || !endDateTime) {
+      showToast.error("Invalid custom time", { duration: 3000 })
+      return
+    }
+
+    if (endDateTime <= startDateTime) {
+      showToast.warning("End time must be later than start time", { duration: 3000 })
+      return
+    }
+
+    if (startDateTime <= new Date()) {
+      showToast.warning("Cannot set a past date/time", { duration: 3000 })
+      return
+    }
+
+    const duplicate = timeSlots.some((slot) => {
+      const slotStart = new Date(slot.start_time).getTime()
+      const slotEnd = new Date(slot.end_time).getTime()
+      return slotStart === startDateTime.getTime() && slotEnd === endDateTime.getTime()
+    })
+
+    if (duplicate) {
+      showToast.info("This custom schedule already exists", { duration: 3000 })
+      return
+    }
+
+    setSubmitting(true)
+    const { error } = await supabase
+      .from('available_time_slots')
+      .insert({
+        property_id: null,
+        landlord_id: session.user.id,
+        start_time: startDateTime.toISOString(),
+        end_time: endDateTime.toISOString(),
+        is_booked: false
+      })
+
+    if (error) {
+      console.error(error)
+      showToast.error("Failed to add custom schedule", { duration: 4000 })
+    } else {
+      showToast.success("Custom schedule added", { duration: 3500 })
+      setCustomStartTime('')
+      setCustomEndTime('')
+      loadTimeSlots()
+    }
+    setSubmitting(false)
+  }
+
   async function deleteTimeSlot(slotId) {
     if (!confirm('Are you sure you want to delete this slot?')) return
 
@@ -207,6 +310,7 @@ export default function SchedulePage() {
 
   function getTimeSlotLabel(startTime, endTime) {
     const start = new Date(startTime)
+    const end = new Date(endTime)
     const startHour = start.getHours()
     const startMinute = start.getMinutes()
 
@@ -217,7 +321,7 @@ export default function SchedulePage() {
 
     return {
       label: 'Custom',
-      time: `${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+      time: `${start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
     }
   }
 
@@ -313,24 +417,66 @@ export default function SchedulePage() {
             const isSelected = selectedTimesForAdd.includes(slotKey)
             const isExisting = existingSlotLabels.includes(slotKey)
             const config = TIME_SLOTS[slotKey]
+            const [startHour, startMinute] = config.start.split(':')
+            const slotStart = new Date(selectedDate)
+            slotStart.setHours(parseInt(startHour), parseInt(startMinute), 0, 0)
+            const isPastSlot = slotStart <= new Date()
+            const isDisabled = isExisting || isPastSlot
 
             return (
               <button
                 key={slotKey}
-                disabled={isExisting}
+                disabled={isDisabled}
                 onClick={() => toggleTimeSelection(slotKey)}
                 className={`
                                 p-4 rounded-xl border-2 text-left transition-all cursor-pointer
-                                ${isExisting ? 'bg-gray-50 border-gray-100 opacity-50 cursor-not-allowed' :
+                                ${isDisabled ? 'bg-gray-50 border-gray-100 opacity-50 cursor-not-allowed' :
                     isSelected ? 'border-black bg-black text-white' : 'border-gray-100 hover:border-gray-300'}
                             `}
               >
                 <div className="text-sm font-bold uppercase mb-1">{config.label}</div>
                 <div className={`text-xs ${isSelected ? 'text-gray-400' : 'text-gray-500'}`}>{config.time}</div>
                 {isExisting && <div className="text-[10px] text-green-600 font-bold mt-1">Added</div>}
+                {!isExisting && isPastSlot && <div className="text-[10px] text-red-600 font-bold mt-1">Past</div>}
               </button>
             )
           })}
+        </div>
+
+        <div className="border-t border-gray-200 pt-6 mt-2 mb-6">
+          <div className="mb-3">
+            <h3 className="text-sm font-bold text-gray-900">Custom Schedule</h3>
+            <p className="text-xs text-gray-500">Choose any time range. Past date/time is not allowed.</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1 uppercase tracking-wide">Start Time</label>
+              <input
+                type="time"
+                value={customStartTime}
+                onChange={(e) => setCustomStartTime(e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-black"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-500 mb-1 uppercase tracking-wide">End Time</label>
+              <input
+                type="time"
+                value={customEndTime}
+                onChange={(e) => setCustomEndTime(e.target.value)}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-black"
+              />
+            </div>
+          </div>
+
+          <button
+            onClick={handleAddCustomSchedule}
+            disabled={submitting || !customStartTime || !customEndTime}
+            className="w-full py-3 bg-white text-black border border-gray-300 font-bold rounded-xl hover:bg-gray-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+          >
+            {submitting ? 'Saving Custom...' : 'Add Custom Schedule'}
+          </button>
         </div>
 
         <button

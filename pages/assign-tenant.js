@@ -81,6 +81,39 @@ export default function AssignTenantPage() {
                 .maybeSingle()
 
             if (!bk) { showToast.error('Booking not found'); router.push('/bookings'); return }
+
+            const bookingStatus = String(bk.status || '').toLowerCase()
+            if (bookingStatus !== 'viewing_done') {
+                showToast.info('This booking is already assigned or no longer pending assignment.')
+                router.push('/bookings')
+                return
+            }
+
+            const { data: existingOccupancy, error: occupancyError } = await supabase
+                .from('tenant_occupancies')
+                .select('id')
+                .eq('tenant_id', bk.tenant)
+                .eq('property_id', bk.property_id)
+                .in('status', ['active', 'pending_end'])
+                .limit(1)
+                .maybeSingle()
+
+            if (occupancyError) {
+                console.error('Error checking existing occupancy for assign page:', occupancyError)
+            }
+
+            if (existingOccupancy) {
+                await supabase
+                    .from('bookings')
+                    .update({ status: 'completed' })
+                    .eq('id', bk.id)
+                    .eq('status', 'viewing_done')
+
+                showToast.info('Tenant is already assigned for this booking.')
+                router.push('/bookings')
+                return
+            }
+
             setBooking(bk)
 
             // Load tenant profile
@@ -206,7 +239,8 @@ export default function AssignTenantPage() {
 
         // Notifications
         let message = `You have been assigned to occupy "${selectedProp.title}" starting ${new Date(startDate).toLocaleDateString('en-US')}.`
-        if (securityDepositAmount > 0) message += ` Security deposit: ₱${Number(securityDepositAmount).toLocaleString()}.`
+        if (!alreadyPaid && securityDepositAmount > 0) message += ` Security deposit: ₱${Number(securityDepositAmount).toLocaleString()}.`
+        if (alreadyPaid) message += ` Move-in fees were marked as paid.`
         if (penaltyDetails && parseFloat(penaltyDetails) > 0) message += ` Late payment fee: ₱${Number(penaltyDetails).toLocaleString()}`
         if (contractPdfUrl) message += ` Contract PDF: ${contractPdfUrl}`
 
@@ -217,69 +251,77 @@ export default function AssignTenantPage() {
         }
         fetch('/api/send-email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookingId: booking.id, type: 'assignment', customMessage: message }) }).catch(err => console.error('Email Error:', err))
 
-        // Move-in notification
-        fetch('/api/notify', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                type: 'move_in', recordId: occupancyId,
-                tenantName: `${tenantProfile?.first_name || ''} ${tenantProfile?.last_name || ''}`.trim(),
-                tenantPhone: tenantProfile?.phone, tenantEmail: null,
-                propertyTitle: selectedProp.title, propertyAddress: '',
-                startDate,
-                landlordName: `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim(),
-                landlordPhone: profile?.phone || '',
-                securityDeposit: securityDepositAmount, rentAmount,
-                contractPdfUrl
-            })
-        }).catch(err => console.error('Move-in notification error:', err))
-
-        // Auto-bill 
-        const dueDate = new Date(startDate)
-        if (alreadyPaid) {
-            // If already paid, set the first bill for the *next* month
-            dueDate.setMonth(dueDate.getMonth() + 1)
+        // Only send move-in notification template when move-in fees are not yet paid.
+        if (!alreadyPaid) {
+            fetch('/api/notify', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    type: 'move_in', recordId: occupancyId,
+                    tenantName: `${tenantProfile?.first_name || ''} ${tenantProfile?.last_name || ''}`.trim(),
+                    tenantPhone: tenantProfile?.phone, tenantEmail: null,
+                    propertyTitle: selectedProp.title, propertyAddress: '',
+                    startDate,
+                    landlordName: `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim(),
+                    landlordPhone: profile?.phone || '',
+                    securityDeposit: securityDepositAmount, rentAmount,
+                    contractPdfUrl
+                })
+            }).catch(err => console.error('Move-in notification error:', err))
         }
 
-        try {
-            const { error: billError } = await supabase.from('payment_requests').insert({
-                landlord: session.user.id,
-                tenant: booking.tenant,
-                property_id: selectedPropertyId,
-                occupancy_id: occupancyId,
-                rent_amount: rentAmount,
-                security_deposit_amount: alreadyPaid ? 0 : securityDepositAmount,
-                advance_amount: alreadyPaid ? 0 : advanceAmount,
-                water_bill: 0,
-                electrical_bill: 0,
-                other_bills: 0,
-                bills_description: alreadyPaid ? 'Monthly Rent Payment' : 'Move-in Payment (Rent + Advance + Security Deposit)',
-                due_date: dueDate.toISOString(),
-                status: 'pending',
-                is_move_in_payment: !alreadyPaid
-            })
-            if (!billError) {
-                const totalAmount = rentAmount + (alreadyPaid ? 0 : advanceAmount + securityDepositAmount)
-                await createNotification({
-                    recipient: booking.tenant,
-                    actor: session.user.id,
-                    type: 'payment_request',
-                    message: alreadyPaid
-                        ? `Next rent payment: ₱${Number(rentAmount).toLocaleString()}. Due: ${dueDate.toLocaleDateString('en-US')}`
-                        : `Move-in payment: ₱${Number(totalAmount).toLocaleString()} Total. Due: ${dueDate.toLocaleDateString('en-US')}`,
-                    link: '/payments'
-                })
-            }
-        } catch (err) { console.error('Auto-bill exception:', err) }
+        if (!alreadyPaid) {
+            // Auto-bill for move-in only when not yet paid.
+            const dueDate = new Date(startDate)
 
-        toast('success', alreadyPaid ? 'Tenant assigned successfully!' : 'Tenant assigned! Move-in payment bill sent.')
+            try {
+                const { error: billError } = await supabase.from('payment_requests').insert({
+                    landlord: session.user.id,
+                    tenant: booking.tenant,
+                    property_id: selectedPropertyId,
+                    occupancy_id: occupancyId,
+                    rent_amount: rentAmount,
+                    security_deposit_amount: securityDepositAmount,
+                    advance_amount: advanceAmount,
+                    water_bill: 0,
+                    electrical_bill: 0,
+                    other_bills: 0,
+                    bills_description: 'Move-in Payment (Rent + Advance + Security Deposit)',
+                    due_date: dueDate.toISOString(),
+                    status: 'pending',
+                    is_move_in_payment: true
+                })
+                if (!billError) {
+                    const totalAmount = rentAmount + advanceAmount + securityDepositAmount
+                    await createNotification({
+                        recipient: booking.tenant,
+                        actor: session.user.id,
+                        type: 'payment_request',
+                        message: `Move-in payment: ₱${Number(totalAmount).toLocaleString()} Total. Due: ${dueDate.toLocaleDateString('en-US')}`,
+                        link: '/payments'
+                    })
+                }
+            } catch (err) { console.error('Auto-bill exception:', err) }
+        }
+
+        toast('success', alreadyPaid ? 'Tenant assigned successfully! No move-in payment bill was created.' : 'Tenant assigned! Move-in payment bill sent.')
         setTimeout(() => router.push('/bookings'), 1500)
     }
 
     // ── HELPERS ──
+    const REMINDER_WINDOW_DAYS = 3
+
+    const wrapDay = (startDay, offset) => {
+        const base = Number(startDay)
+        if (!base || base < 1 || base > 31) return null
+        return ((base - 1 + offset) % 31) + 1
+    }
+
     const getDueRange = (day) => {
         if (!day) return ''
-        const d = parseInt(day)
-        return `${d} to ${Math.min(d + 3, 28)} of each month`
+        const start = parseInt(day)
+        const end = wrapDay(start, REMINDER_WINDOW_DAYS - 1)
+        if (!end) return ''
+        return `${start} to ${end} of each month`
     }
 
     const todayStr = new Date().toISOString().split('T')[0]
@@ -415,9 +457,14 @@ export default function AssignTenantPage() {
 
     const DayPickerModal = ({ label, icon, selectedDay, onSelect, accentColor, pickerKey }) => {
         const days = Array.from({ length: 31 }, (_, i) => i + 1)
-        const rangeStart = selectedDay ? parseInt(selectedDay) : null
-        const rangeEnd = rangeStart ? Math.min(rangeStart + 3, 31) : null
-        const isInRange = (day) => rangeStart && day >= rangeStart && day <= rangeEnd
+        const parsedSelectedDay = selectedDay ? parseInt(selectedDay) : null
+        const rangeStart = parsedSelectedDay && parsedSelectedDay >= 1 && parsedSelectedDay <= 31 ? parsedSelectedDay : null
+        const rangeEnd = rangeStart ? wrapDay(rangeStart, REMINDER_WINDOW_DAYS - 1) : null
+        const isInRange = (day) => {
+            if (!rangeStart || !rangeEnd) return false
+            if (rangeStart <= rangeEnd) return day >= rangeStart && day <= rangeEnd
+            return day >= rangeStart || day <= rangeEnd
+        }
         const isSelected = (day) => rangeStart && day === rangeStart
         const colors = {
             rose: { bg: 'bg-rose-500', light: 'bg-rose-50 text-rose-600 border-rose-100', ring: 'ring-rose-300', badge: 'bg-rose-100 text-rose-700', iconBg: 'bg-rose-100 text-rose-600', headerBg: 'from-rose-500 to-rose-600' },
@@ -522,7 +569,7 @@ export default function AssignTenantPage() {
         )
         return (
             <div className="space-y-3">
-                <p className="text-xs text-gray-500 font-medium leading-relaxed">Select utility due days. A 4-day notification window will be highlighted.</p>
+                <p className="text-xs text-gray-500 font-medium leading-relaxed">Select utility due days. A 3-day notification window will be highlighted.</p>
                 {!isWaterFree ? <DayPickerModal label="Water" icon={waterIcon} selectedDay={waterDueDay} onSelect={setWaterDueDay} accentColor="blue" pickerKey="water" /> : <FreeBadge label="Free Water" icon={waterIcon} />}
                 {!isElecFree ? <DayPickerModal label="Electricity" icon={elecIcon} selectedDay={electricityDueDay} onSelect={setElectricityDueDay} accentColor="amber" pickerKey="electricity" /> : <FreeBadge label="Free Electricity" icon={elecIcon} />}
                 {!isWifiAvailable ? <UnavailableBadge label="WiFi" icon={wifiIcon} /> : !isWifiFree ? <DayPickerModal label="WiFi" icon={wifiIcon} selectedDay={wifiDueDay} onSelect={setWifiDueDay} accentColor="violet" pickerKey="wifi" /> : <FreeBadge label="Free WiFi" icon={wifiIcon} />}

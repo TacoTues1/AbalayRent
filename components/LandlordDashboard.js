@@ -108,6 +108,7 @@ export default function LandlordDashboard({ session, profile }) {
   const [pendingEndRequests, setPendingEndRequests] = useState([])
   const [pendingRenewalRequests, setPendingRenewalRequests] = useState([])
   const [dashboardTasks, setDashboardTasks] = useState({ maintenance: [], payments: [] })
+  const [scheduledTodayBookings, setScheduledTodayBookings] = useState([])
 
   // Advance Bill Confirmation Modal State
   const [advanceBillModal, setAdvanceBillModal] = useState({
@@ -161,6 +162,7 @@ export default function LandlordDashboard({ session, profile }) {
         loadOccupancies(),
         loadPendingEndRequests(),
         loadDashboardTasks(),
+        loadScheduledTodayBookings(),
         loadMonthlyIncome(),
         loadTotalIncome()
       ]).then(() => {
@@ -669,6 +671,25 @@ export default function LandlordDashboard({ session, profile }) {
       return candidate
     }
 
+    const getFirstDueDateFromStart = (startDateValue) => {
+      const base = new Date(startDateValue)
+      if (Number.isNaN(base.getTime())) return new Date()
+
+      const today = new Date()
+      const baseDateOnly = new Date(base)
+      baseDateOnly.setHours(0, 0, 0, 0)
+      const todayDateOnly = new Date(today)
+      todayDateOnly.setHours(0, 0, 0, 0)
+
+      if (baseDateOnly <= todayDateOnly) {
+        const shifted = new Date(base)
+        shifted.setMonth(shifted.getMonth() + 1)
+        return shifted
+      }
+
+      return base
+    }
+
     // 1. Fetch ALL bills for the landlord to analyze status correctly
     const { data: allBills } = await supabase
       .from('payment_requests')
@@ -732,11 +753,9 @@ export default function LandlordDashboard({ session, profile }) {
           nextDueDate = new Date(lastPaid.due_date)
           nextDueDate.setMonth(nextDueDate.getMonth() + monthsCovered)
         } else {
-          // No history, use Start Date
-          // If start date is in past and no bills, it means we missed bills? 
-          // Or maybe "Move-in" bill is pending (handled above in earliestPending).
-          // If no bills at all, it's Start Date.
-          nextDueDate = new Date(occ.start_date)
+          // No history: if tenancy already started, first due is next month.
+          // This aligns with "tenant already paid" assignments that intentionally create no move-in bill.
+          nextDueDate = getFirstDueDateFromStart(occ.start_date)
         }
       }
 
@@ -1161,12 +1180,74 @@ export default function LandlordDashboard({ session, profile }) {
       closeRenewalModal()
       loadPendingRenewalRequests()
       loadOccupancies()
+      loadScheduledTodayBookings()
     } catch (err) { console.error(err) } finally { setProcessingRenewal(false) }
   }
 
   async function loadOccupancies() {
     const { data } = await supabase.from('tenant_occupancies').select(`*, tenant:profiles!tenant_occupancies_tenant_id_fkey(id, first_name, middle_name, last_name, email, phone, avatar_url), property:properties(id, title, images, price, amenities)`).eq('landlord_id', session.user.id).eq('status', 'active')
     setOccupancies(data || [])
+  }
+
+  async function loadScheduledTodayBookings() {
+    if (!session?.user?.id) {
+      setScheduledTodayBookings([])
+      return
+    }
+
+    const now = new Date()
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+
+    const { data: bookingRows, error: bookingError } = await supabase
+      .from('bookings')
+      .select('id, tenant, property_id, booking_date, status')
+      .eq('landlord', session.user.id)
+      .in('status', ['pending', 'pending_approval', 'approved', 'accepted'])
+      .gte('booking_date', startOfDay.toISOString())
+      .lte('booking_date', endOfDay.toISOString())
+      .order('booking_date', { ascending: true })
+
+    if (bookingError) {
+      console.error('Error loading today bookings:', bookingError)
+      setScheduledTodayBookings([])
+      return
+    }
+
+    if (!bookingRows || bookingRows.length === 0) {
+      setScheduledTodayBookings([])
+      return
+    }
+
+    const tenantIds = [...new Set(bookingRows.map((booking) => booking.tenant).filter(Boolean))]
+    const propertyIds = [...new Set(bookingRows.map((booking) => booking.property_id).filter(Boolean))]
+
+    const [{ data: tenantProfiles }, { data: propertyRows }] = await Promise.all([
+      tenantIds.length > 0
+        ? supabase.from('profiles').select('id, first_name, last_name').in('id', tenantIds)
+        : Promise.resolve({ data: [] }),
+      propertyIds.length > 0
+        ? supabase.from('properties').select('id, title, address, city').in('id', propertyIds)
+        : Promise.resolve({ data: [] })
+    ])
+
+    const tenantMap = {}
+    ;(tenantProfiles || []).forEach((tenant) => {
+      tenantMap[tenant.id] = tenant
+    })
+
+    const propertyMap = {}
+    ;(propertyRows || []).forEach((property) => {
+      propertyMap[property.id] = property
+    })
+
+    const enrichedBookings = bookingRows.map((booking) => ({
+      ...booking,
+      tenant_profile: tenantMap[booking.tenant] || null,
+      property: propertyMap[booking.property_id] || null
+    }))
+
+    setScheduledTodayBookings(enrichedBookings)
   }
 
   // Load all tenants under landlord's properties for email notifications
@@ -1455,6 +1536,7 @@ export default function LandlordDashboard({ session, profile }) {
     setShowAssignModal(false);
     loadProperties();
     loadOccupancies();
+    loadScheduledTodayBookings();
   }
 
   async function cancelAssignment(booking) {
@@ -1482,6 +1564,7 @@ export default function LandlordDashboard({ session, profile }) {
 
       showToast.success('Cancelled', { duration: 4000, transition: "bounceIn" });
       loadAcceptedApplicationsForProperty(selectedProperty.id)
+      loadScheduledTodayBookings()
     } finally {
       setProcessingBookingId(null)
     }
@@ -1698,7 +1781,7 @@ export default function LandlordDashboard({ session, profile }) {
           }
           : prev.occupancy
       }))
-      await Promise.all([calculateBillingSchedule(), loadDashboardTasks(), loadOccupancies()])
+      await Promise.all([calculateBillingSchedule(), loadDashboardTasks(), loadOccupancies(), loadScheduledTodayBookings()])
     } catch (err) {
       console.error('Due date update failed:', err)
       showToast.error('Failed to update due date.', { duration: 3500, transition: 'bounceIn' })
@@ -1819,7 +1902,7 @@ export default function LandlordDashboard({ session, profile }) {
     }
 
     showToast.success('Contract ended successfully', { duration: 4000, transition: "bounceIn" });
-    loadProperties(); loadOccupancies()
+    loadProperties(); loadOccupancies(); loadScheduledTodayBookings()
   }
 
   // --- CONFIRMATION HANDLERS ---
@@ -1937,7 +2020,7 @@ export default function LandlordDashboard({ session, profile }) {
     }
 
     showToast.success('Approved successfully', { duration: 4000, transition: "bounceIn" });
-    loadPendingEndRequests(); loadOccupancies(); loadProperties()
+    loadPendingEndRequests(); loadOccupancies(); loadProperties(); loadScheduledTodayBookings()
   }
 
   async function rejectEndRequest(occupancyId) {
@@ -1986,6 +2069,12 @@ export default function LandlordDashboard({ session, profile }) {
 
   const isBillingRowsScrollable = filteredBillingSchedule.length > 10
   const nonOccupiedProperties = properties.filter((property) => property.status !== 'occupied')
+  const activeOccupancies = occupancies.filter((occupancy) => occupancy.status === 'active')
+  const metricsToolCount = properties.length
+  const billingToolCount = billingSchedule.length
+  const propertiesToolCount = activeOccupancies.length
+  const actionsToolCount = pendingEndRequests.length + pendingRenewalRequests.length + dashboardTasks.payments.length + dashboardTasks.maintenance.length
+  const scheduledToolCount = scheduledTodayBookings.length
 
   if (loading && !statsLoaded) {
     return (
@@ -2100,26 +2189,31 @@ export default function LandlordDashboard({ session, profile }) {
                 <svg className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
                 <span className="hidden sm:inline">Manage your Apartment</span>
                 <span className="sm:hidden">Manage</span>
+                <span className={`ml-auto min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-black border inline-flex items-center justify-center ${activePanel === 'metrics' ? 'bg-white/15 text-white border-white/25' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>{metricsToolCount}</span>
               </button>
               <button onClick={() => setActivePanel('billing')} className={`w-auto lg:w-full text-left px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 sm:gap-3 cursor-pointer ${activePanel === 'billing' ? 'bg-black text-white shadow-md' : 'text-gray-600 hover:bg-gray-50'}`}>
                 <svg className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                 <span className="hidden sm:inline">Billing Schedule</span>
                 <span className="sm:hidden">Billing</span>
+                <span className={`ml-auto min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-black border inline-flex items-center justify-center ${activePanel === 'billing' ? 'bg-white/15 text-white border-white/25' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>{billingToolCount}</span>
               </button>
               <button onClick={() => setActivePanel('properties')} className={`w-auto lg:w-full text-left px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 sm:gap-3 cursor-pointer ${activePanel === 'properties' ? 'bg-black text-white shadow-md' : 'text-gray-600 hover:bg-gray-50'}`}>
                 <svg className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
                 <span className="hidden sm:inline">Active Properties</span>
                 <span className="sm:hidden">Active</span>
+                <span className={`ml-auto min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-black border inline-flex items-center justify-center ${activePanel === 'properties' ? 'bg-white/15 text-white border-white/25' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>{propertiesToolCount}</span>
               </button>
               <button onClick={() => setActivePanel('actions')} className={`w-auto lg:w-full text-left px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 sm:gap-3 cursor-pointer ${activePanel === 'actions' ? 'bg-black text-white shadow-md' : 'text-gray-600 hover:bg-gray-50'}`}>
                 <svg className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
                 <span className="hidden sm:inline">Action Center</span>
                 <span className="sm:hidden">Actions</span>
+                <span className={`ml-auto min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-black border inline-flex items-center justify-center ${activePanel === 'actions' ? 'bg-white/15 text-white border-white/25' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>{actionsToolCount}</span>
               </button>
               <button onClick={() => setActivePanel('scheduled')} className={`w-auto lg:w-full text-left px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 sm:gap-3 cursor-pointer ${activePanel === 'scheduled' ? 'bg-black text-white shadow-md' : 'text-gray-600 hover:bg-gray-50'}`}>
                 <svg className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2v2m-6 0h6" /></svg>
                 <span className="hidden sm:inline">Scheduled Today</span>
                 <span className="sm:hidden">Scheduled</span>
+                <span className={`ml-auto min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-black border inline-flex items-center justify-center ${activePanel === 'scheduled' ? 'bg-white/15 text-white border-white/25' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>{scheduledToolCount}</span>
               </button>
             </div>
           </div>
@@ -2342,6 +2436,10 @@ export default function LandlordDashboard({ session, profile }) {
                           const autoSendDate = new Date(item.nextDueDate)
                           autoSendDate.setDate(autoSendDate.getDate() - 3)
                           const isEditing = editingDueDateItemId === item.id
+                          const sendNowKey = `${item.tenantId}-${item.billType}`
+                          const isSendingNow = sendingBillId === sendNowKey
+                          const hasBillAlreadySent = item.billType === 'rent' && !!item.paymentRequestId
+                          const disableSendNow = !autoBillingEnabled || (item.billType !== 'rent' && item.isEnabled === false) || isSendingNow || hasBillAlreadySent
                           return (
                             <div key={item.id} className="rounded-xl border border-gray-200 bg-white p-3 space-y-2">
                               <div className="flex items-start justify-between gap-2">
@@ -2417,10 +2515,10 @@ export default function LandlordDashboard({ session, profile }) {
                                     {item.status !== 'Contract Ending' && item.status !== 'Confirming' && (
                                       <button
                                         onClick={() => openAdvanceBillModal(item.tenantId, item.tenantName, item.propertyTitle, item.propertyPrice, item.billType, item.billLabel)}
-                                        disabled={!autoBillingEnabled || (item.billType !== 'rent' && item.isEnabled === false) || sendingBillId === `${item.tenantId}-${item.billType}`}
+                                        disabled={disableSendNow}
                                         className="text-[11px] font-bold bg-black text-white px-4 py-2 rounded-xl hover:bg-gray-800 transition-all disabled:opacity-50 cursor-pointer shadow-sm"
                                       >
-                                        Send Now
+                                        {isSendingNow ? 'Sending...' : hasBillAlreadySent ? 'Already Sent' : 'Send Now'}
                                       </button>
                                     )}
                                   </>
@@ -2449,6 +2547,10 @@ export default function LandlordDashboard({ session, profile }) {
                                 const autoSendDate = new Date(item.nextDueDate)
                                 autoSendDate.setDate(autoSendDate.getDate() - 3)
                                 const isEditing = editingDueDateItemId === item.id
+                                const sendNowKey = `${item.tenantId}-${item.billType}`
+                                const isSendingNow = sendingBillId === sendNowKey
+                                const hasBillAlreadySent = item.billType === 'rent' && !!item.paymentRequestId
+                                const disableSendNow = !autoBillingEnabled || (item.billType !== 'rent' && item.isEnabled === false) || isSendingNow || hasBillAlreadySent
                                 return (
                                   <tr key={item.id} className="hover:bg-gray-50/50 transition-colors group">
                                     <td className="py-4 pl-2">
@@ -2514,9 +2616,9 @@ export default function LandlordDashboard({ session, profile }) {
                                             </button>
                                           )}
                                           {item.status !== 'Contract Ending' && item.status !== 'Confirming' && (
-                                            <button onClick={() => openAdvanceBillModal(item.tenantId, item.tenantName, item.propertyTitle, item.propertyPrice, item.billType, item.billLabel)} disabled={!autoBillingEnabled || (item.billType !== 'rent' && item.isEnabled === false) || sendingBillId === `${item.tenantId}-${item.billType}`}
+                                            <button onClick={() => openAdvanceBillModal(item.tenantId, item.tenantName, item.propertyTitle, item.propertyPrice, item.billType, item.billLabel)} disabled={disableSendNow}
                                               className="text-[11px] font-bold bg-black text-white px-4 py-2 rounded-xl hover:bg-gray-800 transition-all disabled:opacity-50 cursor-pointer shadow-sm">
-                                              Send Now
+                                              {isSendingNow ? 'Sending...' : hasBillAlreadySent ? 'Already Sent' : 'Send Now'}
                                             </button>
                                           )}
                                         </div>
@@ -2540,17 +2642,17 @@ export default function LandlordDashboard({ session, profile }) {
                   <div className="flex items-center justify-between mb-4 sm:mb-6">
                     <div>
                       <h3 className="text-base sm:text-lg font-black text-gray-900 tracking-tight">Active Properties</h3>
-                      <p className="text-xs sm:text-sm font-medium text-gray-500 mt-0.5">{occupancies.filter(o => o.status === 'active').length} occupied units</p>
+                      <p className="text-xs sm:text-sm font-medium text-gray-500 mt-0.5">{activeOccupancies.length} occupied units</p>
                     </div>
                   </div>
 
                   <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 -mr-2 my-scrollbar">
-                    {occupancies.filter(o => o.status === 'active').length === 0 ? (
+                    {activeOccupancies.length === 0 ? (
                       <div className="py-8 text-center bg-gray-50/50 rounded-2xl border border-dashed border-gray-200">
                         <p className="text-gray-400 text-sm font-medium">No occupied properties</p>
                       </div>
                     ) : (
-                      occupancies.filter(o => o.status === 'active').map(occ => (
+                      activeOccupancies.map(occ => (
                         <div key={occ.id} className="flex items-center gap-4 p-3 rounded-xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all group bg-white">
                           <div className="w-12 h-12 rounded-xl bg-gray-100 overflow-hidden shrink-0 shadow-inner">
                             <img src={occ.property?.images?.[0] || '/placeholder-property.jpg'} className="w-full h-full object-cover" alt="" />
@@ -2643,46 +2745,46 @@ export default function LandlordDashboard({ session, profile }) {
 
               {/* SCHEDULED TODAY */}
               {activePanel === 'scheduled' && (
-                (() => {
-                  const todayStr = new Date().toISOString().split('T')[0]
-                  const scheduledToday = occupancies.filter(o => {
-                    if (!o.start_date) return false
-                    return new Date(o.start_date).toISOString().split('T')[0] === todayStr
-                  })
-                  return (
-                    <div className="bg-white rounded-xl sm:rounded-2xl p-3 sm:p-4 md:p-6 text-gray-900 shadow-md shadow-black/10 border border-gray-200">
-                      <div className="flex items-start justify-between mb-3 sm:mb-4">
-                        <div>
-                          <h3 className="font-black text-gray-900 text-base sm:text-lg">Booking Scheduled Today</h3>
-                          <p className="text-gray-500 text-sm mt-1">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p>
-                        </div>
-                        <button onClick={() => router.push('/bookings')} className="p-2 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors cursor-pointer">
-                          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                        </button>
-                      </div>
-
-                      {scheduledToday.length === 0 ? (
-                        <div className="py-6 text-center bg-gray-50 rounded-xl border border-gray-200">
-                          <p className="text-gray-500 text-sm font-medium">No Booking scheduled today.</p>
-                        </div>
-                      ) : (
-                        <div className="space-y-3">
-                          {scheduledToday.map(occ => (
-                            <div key={occ.id} className="flex items-center gap-3 p-3 rounded-xl bg-gray-50 border border-gray-200">
-                              <div className="w-10 h-10 rounded-full bg-white text-blue-700 font-bold flex items-center justify-center text-sm shadow-sm">
-                                {occ.tenant?.first_name?.charAt(0)}{occ.tenant?.last_name?.charAt(0)}
-                              </div>
-                              <div>
-                                <p className="font-bold text-sm text-gray-900 truncate">{occ.tenant?.first_name} {occ.tenant?.last_name}</p>
-                                <p className="text-xs text-gray-500 mt-0.5 truncate">{occ.property?.title}</p>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                <div className="bg-white rounded-xl sm:rounded-2xl p-3 sm:p-4 md:p-6 text-gray-900 shadow-md shadow-black/10 border border-gray-200">
+                  <div className="flex items-start justify-between mb-3 sm:mb-4">
+                    <div>
+                      <h3 className="font-black text-gray-900 text-base sm:text-lg">Booking Scheduled Today</h3>
+                      <p className="text-gray-500 text-sm mt-1">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p>
                     </div>
-                  )
-                })()
+                    <button onClick={() => router.push('/bookings')} className="p-2 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors cursor-pointer">
+                      <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                    </button>
+                  </div>
+
+                  {scheduledTodayBookings.length === 0 ? (
+                    <div className="py-6 text-center bg-gray-50 rounded-xl border border-gray-200">
+                      <p className="text-gray-500 text-sm font-medium">No Booking scheduled today.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {scheduledTodayBookings.map((booking) => {
+                        const bookingTime = booking.booking_date ? new Date(booking.booking_date) : null
+                        const firstName = booking.tenant_profile?.first_name || ''
+                        const lastName = booking.tenant_profile?.last_name || ''
+
+                        return (
+                          <div key={booking.id} className="flex items-center gap-3 p-3 rounded-xl bg-gray-50 border border-gray-200">
+                            <div className="w-10 h-10 rounded-full bg-white text-blue-700 font-bold flex items-center justify-center text-sm shadow-sm">
+                              {firstName.charAt(0)}{lastName.charAt(0)}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-bold text-sm text-gray-900 truncate">{`${firstName} ${lastName}`.trim() || 'Tenant'}</p>
+                              <p className="text-xs text-gray-500 mt-0.5 truncate">{booking.property?.title || 'Property'}</p>
+                              {bookingTime && !Number.isNaN(bookingTime.getTime()) && (
+                                <p className="text-[11px] text-gray-400 mt-0.5">{bookingTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</p>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>

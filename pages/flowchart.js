@@ -2,9 +2,8 @@ import { useState, useEffect, useRef } from 'react'
 import Head from 'next/head'
 import Link from 'next/link'
 
-// ==========================================
-// FLOWCHART DATA
-// ==========================================
+
+
 const systemFlows = {
     complete: {
         title: 'Complete System Workflow',

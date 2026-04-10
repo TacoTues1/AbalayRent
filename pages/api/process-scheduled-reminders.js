@@ -1,7 +1,3 @@
-// pages/api/process-scheduled-reminders.js
-// Processes any due reminders from the scheduled_reminders queue
-// Called automatically by Supabase pg_cron every minute, or by Navbar on user activity
-
 import { createClient } from '@supabase/supabase-js'
 import { sendNotificationEmail } from '../../lib/email'
 import { sendUnreadMessageNotification, sendBookingReminder } from '../../lib/sms'
@@ -271,8 +267,9 @@ async function processBookingReminder(reminder) {
 
     if (!booking) return
 
-    // Skip if already sent or cancelled/rejected
-    if (booking.reminder_sent || !['pending', 'approved', 'accepted'].includes(booking.status)) {
+    // Skip if already sent or cancelled/rejected.
+    // Keep this in sync with active booking statuses used by booking flows.
+    if (booking.reminder_sent || !['pending', 'pending_approval', 'approved', 'accepted'].includes(booking.status)) {
         return
     }
 
