@@ -1,18 +1,21 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { normalizeImageForUpload } from '../lib/imageCompression'
-import { Button, Input, Badge, Spinner } from './UI'
+import { Input, Badge, Spinner } from './UI'
 import { showToast } from 'nextjs-toast-notify'
 import { useRouter } from 'next/router'
 
-async function adminFetch(table, select = '*', filters = [], order = null) {
+async function adminFetch(table, select = '*', filters = [], order = null, pagination = null, includeCount = false) {
   const res = await fetch('/api/admin/list-data', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ table, select, filters, order })
+    body: JSON.stringify({ table, select, filters, order, pagination, includeCount })
   })
   const json = await res.json()
   if (!res.ok) throw new Error(json.error || 'Failed to fetch data')
+  if (includeCount) {
+    return { data: json.data || [], count: json.count || 0 }
+  }
   return json.data || []
 }
 
@@ -37,18 +40,20 @@ function AnimatedCounter({ value, prefix = '', duration = 1200 }) {
 export default function AdminDashboard({ session, profile }) {
   const router = useRouter()
   const [activeTab, setActiveTab] = useState('overview')
+  const [showLogoutModal, setShowLogoutModal] = useState(false)
 
   const navItems = [
     { id: 'overview', label: 'Overview', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
     { id: 'users', label: 'User Management', icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z' },
     { id: 'properties', label: 'All Properties', icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4' },
+    { id: 'occupancies', label: 'Active Occupancy', icon: 'M17.657 16.657L13.414 20.9a2 2 0 01-2.828 0l-4.243-4.243a8 8 0 1111.314 0zM15 11a3 3 0 11-6 0 3 3 0 016 0z' },
     { id: 'payments', label: 'Payment History', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
     { id: 'bookings', label: 'Bookings List', icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
     { id: 'schedules', label: 'Schedule Days', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
   ]
 
   async function handleLogout() {
-    if (!confirm("Are you sure you want to log out?")) return
+    setShowLogoutModal(false)
     try {
       await supabase.auth.signOut()
       if (typeof window !== 'undefined') {
@@ -66,12 +71,12 @@ export default function AdminDashboard({ session, profile }) {
   const clock = useRealTimeClock()
   const greeting = clock.getHours() < 12 ? 'Good Morning' : clock.getHours() < 17 ? 'Good Afternoon' : 'Good Evening'
   const currentLabel = navItems.find(n => n.id === activeTab)?.label || 'Overview'
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true)
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row font-sans bg-gray-50">
+    <div className="min-h-screen flex flex-col md:flex-row font-sans bg-gray-50 [&_button]:cursor-pointer">
       {/* SIDEBAR (Desktop) */}
-      <aside className={`${sidebarCollapsed ? 'w-20' : 'w-72'} hidden md:flex flex-col flex-shrink-0 h-screen sticky top-0 z-20 transition-all duration-300 bg-[#1a1a2e]`}>
+      <aside className={`${sidebarCollapsed ? 'w-16' : 'w-56'} hidden md:flex flex-col flex-shrink-0 h-screen sticky top-0 z-20 transition-all duration-300 bg-black`}>
         <div className={`p-6 ${sidebarCollapsed ? 'px-4' : ''} flex items-center justify-between`}>
           {!sidebarCollapsed && (
             <h1 className="text-xl font-black tracking-tighter uppercase flex items-center gap-2">
@@ -79,7 +84,7 @@ export default function AdminDashboard({ session, profile }) {
               <span className="text-white">Admin</span><span className="text-gray-400">Panel</span>
             </h1>
           )}
-          <button onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all cursor-pointer">
+          <button onClick={() => setSidebarCollapsed(!sidebarCollapsed)} className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 transition-all cursor-pointer">
             <svg className={`w-4 h-4 transition-transform ${sidebarCollapsed ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
           </button>
         </div>
@@ -92,7 +97,7 @@ export default function AdminDashboard({ session, profile }) {
               title={sidebarCollapsed ? item.label : ''}
               className={`w-full flex items-center gap-3 ${sidebarCollapsed ? 'justify-center px-2' : 'px-4'} py-3.5 rounded-xl text-sm font-semibold transition-all duration-200 cursor-pointer ${activeTab === item.id
                 ? 'text-white bg-white/15'
-                : 'text-slate-400 hover:text-white hover:bg-white/5'
+                : 'text-gray-400'
                 }`}
             >
               <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} /></svg>
@@ -113,21 +118,21 @@ export default function AdminDashboard({ session, profile }) {
               </div>
             )}
           </div>
-          <button onClick={handleLogout} className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-center gap-2'} px-3 py-2.5 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white rounded-xl text-xs font-bold transition-all cursor-pointer group border border-red-500/10`}>
-            <svg className="w-4 h-4 group-hover:-translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+          <button onClick={() => setShowLogoutModal(true)} className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-center gap-2'} px-3 py-2.5 bg-red-700 text-black-700 rounded-xl text-xs font-bold transition-all cursor-pointer group border border-white-300`}>
+            <svg className="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
             {!sidebarCollapsed && 'Log Out'}
           </button>
         </div>
       </aside>
 
       {/* MOBILE NAV (Bottom Fixed) */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex justify-between px-4 py-3 pb-5 overflow-x-auto border-t border-gray-800 bg-[#1a1a2e]">
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex justify-between px-4 py-3 pb-5 overflow-x-auto border-t border-gray-800 bg-black">
         {navItems.map(item => (
-          <button key={item.id} onClick={() => setActiveTab(item.id)} className={`p-3 rounded-2xl transition-all cursor-pointer flex-shrink-0 ${activeTab === item.id ? 'text-white bg-white/15 transform -translate-y-1.5' : 'text-slate-500'}`}>
+          <button key={item.id} onClick={() => setActiveTab(item.id)} className={`p-3 rounded-2xl transition-all cursor-pointer flex-shrink-0 ${activeTab === item.id ? 'text-white bg-white/15 transform -translate-y-1.5' : 'text-gray-500'}`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} /></svg>
           </button>
         ))}
-        <button onClick={handleLogout} className="p-3 rounded-2xl text-red-400 hover:bg-red-900/30 cursor-pointer flex-shrink-0">
+        <button onClick={() => setShowLogoutModal(true)} className="p-3 rounded-2xl text-gray-700 cursor-pointer flex-shrink-0">
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
         </button>
       </div>
@@ -153,30 +158,40 @@ export default function AdminDashboard({ session, profile }) {
           {activeTab === 'overview' && <OverviewView />}
           {activeTab === 'users' && <UsersView />}
           {activeTab === 'properties' && <PropertiesView />}
+          {activeTab === 'occupancies' && <ActiveOccupanciesView />}
           {activeTab === 'payments' && <PaymentsView />}
           {activeTab === 'bookings' && <BookingsView />}
           {activeTab === 'schedules' && <SchedulesView />}
           {activeTab === 'profile' && <AdminProfileView session={session} profile={profile} />}
         </main>
       </div>
+
+      <DeleteModal
+        isOpen={showLogoutModal}
+        onClose={() => setShowLogoutModal(false)}
+        onConfirm={handleLogout}
+        title="Log Out"
+        message="Are you sure you want to log out?"
+        confirmText="Log Out"
+      />
     </div>
   )
 }
 
 
-function DeleteModal({ isOpen, onClose, onConfirm, title, message }) {
+function DeleteModal({ isOpen, onClose, onConfirm, title, message, confirmText = 'Delete' }) {
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[70] p-4 animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl w-full max-w-sm p-7 text-center shadow-2xl mx-4 border border-gray-100">
-        <div className="w-16 h-16 rounded-2xl bg-red-50 flex items-center justify-center mx-auto mb-5">
-          <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+        <div className="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center mx-auto mb-5">
+          <svg className="w-8 h-8 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
         </div>
         <h3 className="text-xl font-black text-gray-900 mb-2">{title}</h3>
         <p className="text-sm text-gray-500 mb-7 leading-relaxed">{message}</p>
         <div className="flex flex-col sm:flex-row gap-3">
-          <button onClick={onClose} className="w-full py-3 bg-gray-50 border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-100 transition-all cursor-pointer">Cancel</button>
-          <button onClick={onConfirm} className="w-full py-3 bg-red-600 text-white font-bold rounded-xl transition-all cursor-pointer hover:bg-red-700">Delete</button>
+          <button onClick={onClose} className="w-full py-3 bg-gray-50 border border-gray-200 text-gray-700 font-bold rounded-xl transition-all cursor-pointer">Cancel</button>
+          <button onClick={onConfirm} className="w-full py-3 bg-black text-white font-bold rounded-xl transition-all cursor-pointer">{confirmText}</button>
         </div>
       </div>
     </div>
@@ -203,7 +218,7 @@ function EmptyStateRow({ colSpan, message }) {
 // --- SUB-VIEWS ---
 
 function OverviewView() {
-  const [stats, setStats] = useState({ users: 0, properties: 0, bookings: 0, revenue: 0 })
+  const [stats, setStats] = useState({ users: 0, properties: 0, bookings: 0 })
   const [recentUsers, setRecentUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [monthlyStatementReport, setMonthlyStatementReport] = useState(null)
@@ -351,35 +366,25 @@ function OverviewView() {
 
   async function loadStats() {
     setLoading(true)
-    const [usersRes, propsRes, bookingsData, paymentsData] = await Promise.all([
+    const [usersRes, propsRes, bookingsData] = await Promise.all([
       supabase.from('profiles').select('id, first_name, last_name, role, created_at', { count: 'exact' }).eq('is_deleted', false).order('created_at', { ascending: false }).limit(5),
       supabase.from('properties').select('id', { count: 'exact' }).eq('is_deleted', false),
-      adminFetch('bookings', 'id'),
-      adminFetch('payment_requests', 'rent_amount, water_bill, electrical_bill, other_bills', [{ type: 'in', column: 'status', value: ['paid', 'completed', 'confirmed'] }])
+      adminFetch('bookings', 'id')
     ])
 
-    const totalRevenue = paymentsData?.reduce((sum, p) => {
-      const rent = parseFloat(p.rent_amount || 0)
-      const water = parseFloat(p.water_bill || 0)
-      const elec = parseFloat(p.electrical_bill || 0)
-      const other = parseFloat(p.other_bills || 0)
-      return sum + rent + water + elec + other
-    }, 0) || 0
     setStats({
       users: usersRes.count || 0,
       properties: propsRes.count || 0,
-      bookings: bookingsData.length || 0,
-      revenue: totalRevenue
+      bookings: bookingsData.length || 0
     })
     setRecentUsers(usersRes.data || [])
     setLoading(false)
   }
 
   const statCards = [
-    { label: 'Total Users', value: stats.users, icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z', bg: '#2563eb' },
-    { label: 'Properties', value: stats.properties, icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4', bg: '#7c3aed' },
-    { label: 'Bookings', value: stats.bookings, icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z', bg: '#d97706' },
-    { label: 'Total Revenue', value: stats.revenue, prefix: '₱', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z', bg: '#059669' },
+    { label: 'Total Users', value: stats.users, icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z' },
+    { label: 'Properties', value: stats.properties, icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4' },
+    { label: 'Bookings', value: stats.bookings, icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
   ]
 
   if (loading) return <Spinner />
@@ -387,9 +392,9 @@ function OverviewView() {
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       {/* Stats Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-5">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-5">
         {statCards.map((card, i) => (
-          <div key={i} className="rounded-2xl p-5 text-white relative overflow-hidden hover:-translate-y-1 transition-all duration-300 cursor-default" style={{ backgroundColor: card.bg }}>
+          <div key={i} className="rounded-2xl p-5 text-white relative overflow-hidden bg-black border border-gray-800 transition-all duration-300 cursor-default">
             <div className="relative z-10">
               <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center mb-3">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={card.icon} /></svg>
@@ -463,7 +468,7 @@ function OverviewView() {
               } catch (err) { showToast.error("Failed to connect to server") }
               finally { btn.innerText = originalText; btn.disabled = false }
             }}
-            className="self-center px-6 py-3 bg-gray-800 text-white font-bold rounded-xl hover:bg-black transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap"
+            className="self-center px-6 py-3 bg-gray-800 text-white font-bold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap"
           >
             Send Now
           </button>
@@ -480,7 +485,7 @@ function OverviewView() {
               <div className="bg-white rounded-lg border border-gray-200 p-3">
                 <p className="text-sm font-bold text-gray-900">Tenants</p>
                 <p className="text-xs text-gray-500 mt-1">Processed: {monthlyStatementReport.tenants?.processed || 0} / {monthlyStatementReport.tenants?.total || 0}</p>
-                <p className="text-xs text-red-600 mt-1">Failed: {monthlyStatementReport.tenants?.errors?.length || 0}</p>
+                <p className="text-xs text-gray-700 mt-1">Failed: {monthlyStatementReport.tenants?.errors?.length || 0}</p>
                 {(monthlyStatementReport.tenants?.sentRecipients?.length || 0) > 0 && (
                   <div className="mt-2 max-h-28 overflow-y-auto text-xs text-gray-700 space-y-1">
                     {monthlyStatementReport.tenants.sentRecipients.map((r, i) => (
@@ -493,8 +498,8 @@ function OverviewView() {
               <div className="bg-white rounded-lg border border-gray-200 p-3">
                 <p className="text-sm font-bold text-gray-900">Landlords</p>
                 <p className="text-xs text-gray-500 mt-1">Processed: {monthlyStatementReport.landlords?.processed || 0}</p>
-                <p className="text-xs text-amber-600 mt-1">Skipped overlap: {monthlyStatementReport.landlords?.skippedTenantOverlap || 0}</p>
-                <p className="text-xs text-red-600 mt-1">Failed: {monthlyStatementReport.landlords?.errors?.length || 0}</p>
+                <p className="text-xs text-gray-700 mt-1">Skipped overlap: {monthlyStatementReport.landlords?.skippedTenantOverlap || 0}</p>
+                <p className="text-xs text-gray-700 mt-1">Failed: {monthlyStatementReport.landlords?.errors?.length || 0}</p>
                 {(monthlyStatementReport.landlords?.sentRecipients?.length || 0) > 0 && (
                   <div className="mt-2 max-h-28 overflow-y-auto text-xs text-gray-700 space-y-1">
                     {monthlyStatementReport.landlords.sentRecipients.map((r, i) => (
@@ -506,7 +511,7 @@ function OverviewView() {
             </div>
 
             {(monthlyStatementReport.tenants?.errors?.length || 0) > 0 && (
-              <div className="bg-red-50 rounded-lg border border-red-200 p-3 text-xs text-red-700 max-h-28 overflow-y-auto space-y-1">
+              <div className="bg-gray-100 rounded-lg border border-gray-300 p-3 text-xs text-gray-700 max-h-28 overflow-y-auto space-y-1">
                 {monthlyStatementReport.tenants.errors.map((e, i) => (
                   <p key={`tenant-err-${i}`}>Tenant error: {e.tenant || e.occupancyId || 'Unknown'} - {e.error}</p>
                 ))}
@@ -514,7 +519,7 @@ function OverviewView() {
             )}
 
             {(monthlyStatementReport.landlords?.errors?.length || 0) > 0 && (
-              <div className="bg-red-50 rounded-lg border border-red-200 p-3 text-xs text-red-700 max-h-28 overflow-y-auto space-y-1">
+              <div className="bg-gray-100 rounded-lg border border-gray-300 p-3 text-xs text-gray-700 max-h-28 overflow-y-auto space-y-1">
                 {monthlyStatementReport.landlords.errors.map((e, i) => (
                   <p key={`landlord-err-${i}`}>Landlord error: {e.landlord || e.landlordId || 'Unknown'} - {e.error}</p>
                 ))}
@@ -530,12 +535,12 @@ function OverviewView() {
             <p className="text-sm text-gray-500 mt-1">Automatically email/SMS tenants about upcoming due dates.</p>
             <div className="mt-2">
               {remindersEnabled ? (
-                <span className="text-xs text-green-700 font-bold bg-green-100 px-3 py-1.5 rounded-full flex items-center gap-1.5 w-fit">
-                  <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> ACTIVE
+                <span className="text-xs text-gray-700 font-bold bg-gray-100 px-3 py-1.5 rounded-full flex items-center gap-1.5 w-fit">
+                  <span className="w-2 h-2 rounded-full bg-gray-700 animate-pulse"></span> ACTIVE
                 </span>
               ) : (
-                <span className="text-xs text-red-700 font-bold bg-red-100 px-3 py-1.5 rounded-full flex items-center gap-1.5 w-fit">
-                  <span className="w-2 h-2 rounded-full bg-red-500"></span> STOPPED
+                <span className="text-xs text-gray-700 font-bold bg-gray-100 px-3 py-1.5 rounded-full flex items-center gap-1.5 w-fit">
+                  <span className="w-2 h-2 rounded-full bg-black"></span> STOPPED
                 </span>
               )}
             </div>
@@ -544,10 +549,10 @@ function OverviewView() {
             onClick={toggleReminders}
             disabled={togglingReminders}
             className={`self-center px-6 py-3 font-bold rounded-xl transition-all cursor-pointer min-w-[140px] whitespace-nowrap ${remindersEnabled
-              ? 'bg-red-50 text-red-600 hover:bg-red-600 hover:text-white border border-red-200'
-              : 'text-white shadow-lg hover:opacity-90'
+              ? 'bg-gray-100 text-gray-700 border border-gray-300'
+              : 'text-white shadow-lg'
               }`}
-            style={!remindersEnabled ? { backgroundColor: '#059669' } : {}}
+            style={!remindersEnabled ? { backgroundColor: '#000000' } : {}}
           >
             {togglingReminders ? 'Processing...' : remindersEnabled ? 'Stop Reminders' : 'Start Reminders'}
           </button>
@@ -563,7 +568,7 @@ function OverviewView() {
           </div>
           <button
             onClick={() => setShowBulkEmailModal(true)}
-            className="self-center px-6 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all cursor-pointer min-w-[170px] whitespace-nowrap"
+            className="self-center px-6 py-3 bg-black text-white font-bold rounded-xl transition-all cursor-pointer min-w-[170px] whitespace-nowrap"
           >
             Compose Bulk Email
           </button>
@@ -573,13 +578,13 @@ function OverviewView() {
       {/* Recent Users */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200">
         <h3 className="font-bold text-lg mb-5 flex items-center gap-2">
-          <span className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center"><svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg></span>
+          <span className="w-8 h-8 rounded-lg bg-black flex items-center justify-center"><svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg></span>
           Recent Users
           <span className="text-xs text-gray-400 font-medium ml-auto">Last 5 registered</span>
         </h3>
         <div className="space-y-3">
           {recentUsers.map((user, idx) => (
-            <div key={user.id} className="flex items-center justify-between p-4 bg-gradient-to-r from-gray-50 to-transparent rounded-xl hover:from-indigo-50/50 transition-all duration-300 group">
+            <div key={user.id} className="flex items-center justify-between p-4 rounded-xl transition-all duration-300 group">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm text-white bg-gray-600">
                   {user.first_name?.[0]}
@@ -592,7 +597,7 @@ function OverviewView() {
                   </p>
                 </div>
               </div>
-              <Badge variant={user.role === 'admin' ? 'danger' : user.role === 'landlord' ? 'info' : 'success'}>{user.role}</Badge>
+              <Badge variant='default'>{user.role}</Badge>
             </div>
           ))}
         </div>
@@ -609,7 +614,7 @@ function OverviewView() {
                     setShowBulkEmailModal(false)
                   }
                 }}
-                className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-400 cursor-pointer"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 cursor-pointer"
                 disabled={sendingBulkEmail}
               >
                 ✕
@@ -658,14 +663,14 @@ function OverviewView() {
                   resetBulkEmailForm()
                 }}
                 disabled={sendingBulkEmail}
-                className="px-6 py-3 border border-gray-300 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-50 cursor-pointer disabled:opacity-50"
+                className="px-6 py-3 border border-gray-300 text-gray-700 rounded-xl font-bold text-sm cursor-pointer disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={sendBulkEmailFromAdmin}
                 disabled={sendingBulkEmail}
-                className="px-8 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                className="px-8 py-3 bg-black text-white rounded-xl font-bold text-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
                 {sendingBulkEmail ? 'Sending...' : 'Send Emails'}
               </button>
@@ -678,10 +683,13 @@ function OverviewView() {
 }
 
 function UsersView() {
+  const USERS_PAGE_SIZE = 10
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [roleFilter, setRoleFilter] = useState('all')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalUsers, setTotalUsers] = useState(0)
   const [showPassword, setShowPassword] = useState(false)
   const [editingUser, setEditingUser] = useState(null)
   const [editForm, setEditForm] = useState({})
@@ -689,28 +697,104 @@ function UsersView() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [newUserForm, setNewUserForm] = useState({ first_name: '', middle_name: '', last_name: '', email: '', phone: '', password: '', role: 'tenant', birthday: '', gender: '', avatar_url: '' })
   const [isCreating, setIsCreating] = useState(false)
-  useEffect(() => { fetchUsers() }, [])
+  const [familySubscriptions, setFamilySubscriptions] = useState({})
+  const [addingSlotForUserId, setAddingSlotForUserId] = useState(null)
+
+  useEffect(() => { setCurrentPage(1) }, [search, roleFilter])
+  useEffect(() => { fetchUsers() }, [currentPage, search, roleFilter])
+
   async function fetchUsers() {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*, email')
-      .eq('is_deleted', false)
-      .neq('role', 'admin')
-      .order('created_at', { ascending: false })
-    if (error) console.error(error)
-    else setUsers(data || [])
+    try {
+      let query = supabase
+        .from('profiles')
+        .select('*, email', { count: 'exact' })
+        .eq('is_deleted', false)
+        .neq('role', 'admin')
+
+      if (roleFilter !== 'all') {
+        query = query.eq('role', roleFilter)
+      }
+
+      const term = search.trim()
+      if (term) {
+        const like = `%${term}%`
+        query = query.or(`first_name.ilike.${like},last_name.ilike.${like},email.ilike.${like},phone.ilike.${like}`)
+      }
+
+      const from = (currentPage - 1) * USERS_PAGE_SIZE
+      const to = from + USERS_PAGE_SIZE - 1
+      const { data, error, count } = await query.order('created_at', { ascending: false }).range(from, to)
+
+      if (error) throw error
+      setUsers(data || [])
+      setTotalUsers(count || 0)
+      await loadFamilySubscriptions(data || [])
+    } catch (error) {
+      console.error(error)
+      setUsers([])
+      setTotalUsers(0)
+      setFamilySubscriptions({})
+    }
     setLoading(false)
   }
-  const filteredUsers = users.filter(user => {
-    const term = search.toLowerCase()
-    const matchesSearch = user.first_name?.toLowerCase().includes(term) || user.last_name?.toLowerCase().includes(term) || user.email?.toLowerCase().includes(term) || user.phone?.includes(term)
-    const matchesRole = roleFilter === 'all' || user.role === roleFilter
-    return matchesSearch && matchesRole
-  })
+
+  async function loadFamilySubscriptions(userRows) {
+    const tenantIds = (userRows || []).filter((u) => u.role === 'tenant').map((u) => u.id)
+    if (!tenantIds.length) {
+      setFamilySubscriptions({})
+      return
+    }
+
+    try {
+      const response = await fetch('/api/admin/family-subscriptions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'stats', tenantIds })
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to load family subscriptions')
+      setFamilySubscriptions(data.stats || {})
+    } catch (error) {
+      console.error('Failed to load family subscriptions:', error)
+      setFamilySubscriptions({})
+    }
+  }
+
+  async function addFamilySlot(userId) {
+    if (!userId) return
+    setAddingSlotForUserId(userId)
+    try {
+      const response = await fetch('/api/admin/family-subscriptions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add-slot', tenantId: userId })
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to add family slot')
+
+      showToast.success(data.message || 'Family slot added successfully')
+      await fetchUsers()
+    } catch (error) {
+      showToast.error(error.message || 'Failed to add family slot')
+    }
+    setAddingSlotForUserId(null)
+  }
 
   async function handleUpdate() {
     try {
+      const currentAcceptedPayments = (editForm.accepted_payments && typeof editForm.accepted_payments === 'object')
+        ? editForm.accepted_payments
+        : {}
+
+      const acceptedPayments = {
+        ...currentAcceptedPayments,
+        cash: !!editForm.accepted_cash,
+        qr_code: !!editForm.accepted_qr_code,
+        paymongo: !!editForm.accepted_paymongo,
+        stripe: !!editForm.accepted_stripe,
+      }
+
       const response = await fetch('/api/admin/update-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -727,7 +811,10 @@ function UsersView() {
             email: editForm.email,
             birthday: editForm.birthday || null,
             gender: editForm.gender || null,
-            avatar_url: editForm.avatar_url || null
+            avatar_url: editForm.avatar_url || null,
+            phone_verified: !!editForm.phone_verified,
+            business_name: editForm.business_name || null,
+            accepted_payments: acceptedPayments,
           }
         })
       })
@@ -809,8 +896,8 @@ function UsersView() {
           </select>
           <button
             onClick={() => setShowAddModal(true)}
-            className="px-4 py-2 text-white font-bold rounded-xl hover:opacity-90 transition-all cursor-pointer flex items-center gap-2 justify-center shadow-lg shadow-indigo-200"
-            style={{ background: 'linear-gradient(135deg,#6366f1,#818cf8)' }}
+            className="px-4 py-2 text-white font-bold rounded-xl transition-all cursor-pointer flex items-center gap-2 justify-center shadow-lg shadow-gray-300"
+            style={{ backgroundColor: '#000000' }}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
             Add User
@@ -827,12 +914,13 @@ function UsersView() {
                   <th className="p-4 md:p-5 text-xs font-black text-gray-500 uppercase tracking-wider">User</th>
                   <th className="p-4 md:p-5 text-xs font-black text-gray-500 uppercase tracking-wider">Email / Phone</th>
                   <th className="p-4 md:p-5 text-xs font-black text-gray-500 uppercase tracking-wider">Role</th>
+                  <th className="p-4 md:p-5 text-xs font-black text-gray-500 uppercase tracking-wider">Family Subscription</th>
                   <th className="p-4 md:p-5 text-xs font-black text-gray-500 uppercase tracking-wider text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {filteredUsers.map(user => (
-                  <tr key={user.id} className="hover:bg-gray-50/50 transition-colors group">
+                {users.map(user => (
+                  <tr key={user.id} className="transition-colors group">
                     <td className="p-4 md:p-5">
                       <div className="font-bold text-gray-900 text-sm md:text-base whitespace-nowrap">{user.first_name} {user.middle_name ? user.middle_name + ' ' : ''}{user.last_name}</div>
                       <div className="text-xs text-gray-400 font-mono mt-0.5">ID: {user.id.slice(0, 8)}...</div>
@@ -842,30 +930,77 @@ function UsersView() {
                       <div className="text-xs text-gray-500 mt-0.5">{user.phone || 'N/A'}</div>
                     </td>
                     <td className="p-4 md:p-5">
-                      <Badge variant={user.role === 'admin' ? 'danger' : user.role === 'landlord' ? 'info' : 'success'}>
+                      <Badge variant='default'>
                         {user.role}
                       </Badge>
                     </td>
+                    <td className="p-4 md:p-5">
+                      {user.role === 'tenant' ? (
+                        (() => {
+                          const stats = familySubscriptions[user.id]
+                          if (!stats) {
+                            return <span className="text-xs text-gray-400">Loading...</span>
+                          }
+                          return (
+                            <div className="text-xs text-gray-700">
+                              <div className="font-bold">{stats.has_subscription ? 'Subscribed' : 'No record'}</div>
+                              <div className="text-gray-500">{stats.used_slots || 0}/{stats.total_slots || 1} used</div>
+                            </div>
+                          )
+                        })()
+                      ) : (
+                        <span className="text-xs text-gray-400">N/A</span>
+                      )}
+                    </td>
                     <td className="p-4 md:p-5 flex justify-end gap-2">
+                      {user.role === 'tenant' && (
+                        <button
+                          onClick={() => addFamilySlot(user.id)}
+                          disabled={addingSlotForUserId === user.id}
+                          className="px-3 py-1.5 md:px-4 md:py-2 bg-black text-white rounded-xl text-xs font-bold cursor-pointer whitespace-nowrap disabled:opacity-50"
+                        >
+                          {addingSlotForUserId === user.id ? 'Adding...' : 'Add Slot'}
+                        </button>
+                      )}
                       <button
-                        onClick={() => { setEditingUser(user); setEditForm({ ...user, password: '' }); }}
-                        className="px-3 py-1.5 md:px-4 md:py-2 bg-gray-100 hover:bg-black hover:text-white rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap"
+                        onClick={() => {
+                          const accepted = (user.accepted_payments && typeof user.accepted_payments === 'object') ? user.accepted_payments : {}
+                          setEditingUser(user)
+                          setEditForm({
+                            ...user,
+                            password: '',
+                            phone_verified: !!user.phone_verified,
+                            business_name: user.business_name || '',
+                            accepted_cash: !!accepted.cash,
+                            accepted_qr_code: !!accepted.qr_code,
+                            accepted_paymongo: !!accepted.paymongo,
+                            accepted_stripe: !!accepted.stripe,
+                          })
+                        }}
+                        className="px-3 py-1.5 md:px-4 md:py-2 bg-gray-100 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap"
                       >
                         Edit
                       </button>
                       <button
                         onClick={() => setDeleteId(user.id)}
-                        className="px-3 py-1.5 md:px-4 md:py-2 bg-red-50 text-red-600 hover:bg-red-600 hover:text-white rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap"
+                        className="px-3 py-1.5 md:px-4 md:py-2 bg-gray-100 text-gray-700 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap"
                       >
                         Delete
                       </button>
                     </td>
                   </tr>
                 ))}
-                {filteredUsers.length === 0 && <EmptyStateRow colSpan={4} message="No users found." />}
+                {users.length === 0 && <EmptyStateRow colSpan={5} message="No users found." />}
               </tbody>
             </table>
           </div>
+          <PaginationControls
+            currentPage={currentPage}
+            totalItems={totalUsers}
+            pageSize={USERS_PAGE_SIZE}
+            onPageChange={setCurrentPage}
+            label="users"
+          />
         </div>
       )}
 
@@ -875,7 +1010,7 @@ function UsersView() {
           <div className="bg-white rounded-3xl w-full max-w-lg p-6 md:p-8 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl md:text-2xl font-black tracking-tight">Edit User Profile</h3>
-              <button onClick={() => setEditingUser(null)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 cursor-pointer text-gray-400">✕</button>
+              <button onClick={() => setEditingUser(null)} className="w-8 h-8 flex items-center justify-center rounded-full cursor-pointer text-gray-400">✕</button>
             </div>
 
             <div className="grid grid-cols-1 gap-4">
@@ -890,13 +1025,95 @@ function UsersView() {
               <Input label="Email Address" type="email" value={editForm.email || ''} onChange={e => setEditForm({ ...editForm, email: e.target.value })} />
               <Input label="Phone Number" value={editForm.phone || ''} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Input label="Business Name" value={editForm.business_name || ''} onChange={e => setEditForm({ ...editForm, business_name: e.target.value })} />
+                <div className="space-y-1">
+                  <label className="block text-sm font-bold text-gray-700 mb-1">Phone Verified</label>
+                  <select
+                    value={editForm.phone_verified ? 'true' : 'false'}
+                    onChange={e => setEditForm({ ...editForm, phone_verified: e.target.value === 'true' })}
+                    className="w-full border rounded-xl px-4 py-3 cursor-pointer bg-white focus:ring-2 focus:ring-black outline-none transition-shadow"
+                  >
+                    <option value="true">Verified</option>
+                    <option value="false">Not Verified</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-sm font-bold text-gray-700">Accepted Payments</label>
+                <div className="grid grid-cols-2 gap-2 rounded-xl border border-gray-200 p-3 bg-gray-50">
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={!!editForm.accepted_cash}
+                      onChange={(e) => setEditForm({ ...editForm, accepted_cash: e.target.checked })}
+                      className="w-4 h-4"
+                    />
+                    Cash
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={!!editForm.accepted_qr_code}
+                      onChange={(e) => setEditForm({ ...editForm, accepted_qr_code: e.target.checked })}
+                      className="w-4 h-4"
+                    />
+                    QR Code
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={!!editForm.accepted_paymongo}
+                      onChange={(e) => setEditForm({ ...editForm, accepted_paymongo: e.target.checked })}
+                      className="w-4 h-4"
+                    />
+                    PayMongo
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={!!editForm.accepted_stripe}
+                      onChange={(e) => setEditForm({ ...editForm, accepted_stripe: e.target.checked })}
+                      className="w-4 h-4"
+                    />
+                    Stripe
+                  </label>
+                </div>
+              </div>
+
+              {editForm.role === 'tenant' && (
+                <div className="space-y-2">
+                  <label className="block text-sm font-bold text-gray-700">Family Subscription</label>
+                  <div className="rounded-xl border border-gray-200 p-3 bg-gray-50">
+                    <p className="text-sm font-bold text-gray-900">
+                      {familySubscriptions[editingUser.id]?.has_subscription ? 'Subscribed' : 'No subscription record'}
+                    </p>
+                    <p className="text-xs text-gray-600 mt-1">
+                      Slots: {familySubscriptions[editingUser.id]?.used_slots || 0}/{familySubscriptions[editingUser.id]?.total_slots || 1} used
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Available: {familySubscriptions[editingUser.id]?.available_slots ?? 1}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => addFamilySlot(editingUser.id)}
+                      disabled={addingSlotForUserId === editingUser.id}
+                      className="mt-3 px-3 py-2 bg-black text-white rounded-lg text-xs font-bold cursor-pointer disabled:opacity-50"
+                    >
+                      {addingSlotForUserId === editingUser.id ? 'Adding...' : 'Add Family Slot'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Input label="Date of Birth" type="date" value={editForm.birthday ? editForm.birthday.split('T')[0] : ''} onChange={e => setEditForm({ ...editForm, birthday: e.target.value })} />
                 <div className="space-y-1">
                   <label className="block text-sm font-bold text-gray-700 mb-1">Gender</label>
                   <select
                     value={editForm.gender || ''}
                     onChange={e => setEditForm({ ...editForm, gender: e.target.value })}
-                    className="w-full border rounded-xl px-4 py-3 cursor-pointer bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-shadow"
+                    className="w-full border rounded-xl px-4 py-3 cursor-pointer bg-white focus:ring-2 focus:ring-black outline-none transition-shadow"
                   >
                     <option value="" disabled>Select Gender</option>
                     <option value="Male">Male</option>
@@ -913,14 +1130,14 @@ function UsersView() {
                   <input
                     type={showPassword ? "text" : "password"}
                     placeholder="Enter new password to reset..."
-                    className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 outline-none"
+                    className="w-full bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm focus:border-black outline-none"
                     value={editForm.password || ''}
                     onChange={e => setEditForm({ ...editForm, password: e.target.value })}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-indigo-600 cursor-pointer"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 cursor-pointer"
                   >
                     {showPassword ? "Hide" : "Show"}
                   </button>
@@ -933,7 +1150,7 @@ function UsersView() {
                 <select
                   value={editForm.role}
                   onChange={e => setEditForm({ ...editForm, role: e.target.value })}
-                  className="w-full border rounded-xl px-4 py-3 cursor-pointer bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-shadow"
+                  className="w-full border rounded-xl px-4 py-3 cursor-pointer bg-white focus:ring-2 focus:ring-black outline-none transition-shadow"
                 >
                   <option value="tenant">Tenant</option>
                   <option value="landlord">Landlord</option>
@@ -943,8 +1160,8 @@ function UsersView() {
             </div>
 
             <div className="flex flex-col sm:flex-row gap-3 pt-8">
-              <Button variant="secondary" className="flex-1 py-3.5 cursor-pointer rounded-xl" onClick={() => setEditingUser(null)}>Cancel</Button>
-              <Button className="flex-1 py-3.5 text-white hover:opacity-90 cursor-pointer rounded-xl shadow-lg" style={{ background: 'linear-gradient(135deg,#6366f1,#818cf8)' }} onClick={handleUpdate}>Save Changes</Button>
+              <button type="button" className="flex-1 py-3.5 cursor-pointer rounded-xl bg-gray-200 text-gray-700 font-medium" onClick={() => setEditingUser(null)}>Cancel</button>
+              <button type="button" className="flex-1 py-3.5 text-white cursor-pointer rounded-xl shadow-lg font-medium" style={{ backgroundColor: '#000000' }} onClick={handleUpdate}>Save Changes</button>
             </div>
           </div>
         </div>
@@ -956,7 +1173,7 @@ function UsersView() {
           <div className="bg-white rounded-2xl w-full max-w-lg p-6 md:p-8 shadow-2xl max-h-[90vh] overflow-y-auto border border-gray-100">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl md:text-2xl font-black tracking-tight">Create New User</h3>
-              <button onClick={() => setShowAddModal(false)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 cursor-pointer text-gray-400">✕</button>
+              <button onClick={() => setShowAddModal(false)} className="w-8 h-8 flex items-center justify-center rounded-full cursor-pointer text-gray-400">✕</button>
             </div>
 
             <div className="grid grid-cols-1 gap-4">
@@ -975,7 +1192,7 @@ function UsersView() {
                   <select
                     value={newUserForm.gender}
                     onChange={e => setNewUserForm({ ...newUserForm, gender: e.target.value })}
-                    className="w-full border rounded-xl px-4 py-3 cursor-pointer bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-shadow"
+                    className="w-full border rounded-xl px-4 py-3 cursor-pointer bg-white focus:ring-2 focus:ring-black outline-none transition-shadow"
                   >
                     <option value="" disabled>Select Gender</option>
                     <option value="Male">Male</option>
@@ -991,7 +1208,7 @@ function UsersView() {
                 <select
                   value={newUserForm.role}
                   onChange={e => setNewUserForm({ ...newUserForm, role: e.target.value })}
-                  className="w-full border rounded-xl px-4 py-3 cursor-pointer bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-shadow"
+                  className="w-full border rounded-xl px-4 py-3 cursor-pointer bg-white focus:ring-2 focus:ring-black outline-none transition-shadow"
                 >
                   <option value="tenant">Tenant</option>
                   <option value="landlord">Landlord</option>
@@ -1001,15 +1218,16 @@ function UsersView() {
             </div>
 
             <div className="flex flex-col sm:flex-row gap-3 pt-8">
-              <Button variant="secondary" className="flex-1 py-3.5 cursor-pointer rounded-xl" onClick={() => setShowAddModal(false)}>Cancel</Button>
-              <Button
-                className="flex-1 py-3.5 text-white hover:opacity-90 cursor-pointer rounded-xl shadow-lg disabled:opacity-50"
-                style={{ background: 'linear-gradient(135deg,#6366f1,#818cf8)' }}
+              <button type="button" className="flex-1 py-3.5 cursor-pointer rounded-xl bg-gray-200 text-gray-700 font-medium" onClick={() => setShowAddModal(false)}>Cancel</button>
+              <button
+                type="button"
+                className="flex-1 py-3.5 text-white cursor-pointer rounded-xl shadow-lg disabled:opacity-50 font-medium"
+                style={{ backgroundColor: '#000000' }}
                 onClick={handleCreateUser}
                 disabled={isCreating}
               >
                 {isCreating ? 'Creating...' : 'Create User'}
-              </Button>
+              </button>
             </div>
           </div>
         </div>
@@ -1021,9 +1239,12 @@ function UsersView() {
 }
 
 function PropertiesView() {
+  const PROPERTIES_PAGE_SIZE = 10
   const [properties, setProperties] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalProperties, setTotalProperties] = useState(0)
   const [editingProp, setEditingProp] = useState(null)
   const [propForm, setPropForm] = useState({})
   const [deleteId, setDeleteId] = useState(null)
@@ -1031,13 +1252,39 @@ function PropertiesView() {
   const [uploadingImages, setUploadingImages] = useState({})
   const [statusFilter, setStatusFilter] = useState('all')
 
-  useEffect(() => { loadProperties() }, [])
+  useEffect(() => { setCurrentPage(1) }, [search, statusFilter])
+  useEffect(() => { loadProperties() }, [currentPage, search, statusFilter])
 
   async function loadProperties() {
     setLoading(true)
-    const { data, error } = await supabase.from('properties').select('*, landlord_profile:profiles!properties_landlord_fkey(first_name, last_name)').eq('is_deleted', false).order('created_at', { ascending: false })
-    if (error) console.error(error)
-    else setProperties(data || [])
+    try {
+      let query = supabase
+        .from('properties')
+        .select('*, landlord_profile:profiles!properties_landlord_fkey(first_name, last_name)', { count: 'exact' })
+        .eq('is_deleted', false)
+
+      if (statusFilter !== 'all') {
+        query = query.eq('status', statusFilter)
+      }
+
+      const term = search.trim()
+      if (term) {
+        const like = `%${term}%`
+        query = query.or(`title.ilike.${like},city.ilike.${like},address.ilike.${like}`)
+      }
+
+      const from = (currentPage - 1) * PROPERTIES_PAGE_SIZE
+      const to = from + PROPERTIES_PAGE_SIZE - 1
+      const { data, error, count } = await query.order('created_at', { ascending: false }).range(from, to)
+      if (error) throw error
+
+      setProperties(data || [])
+      setTotalProperties(count || 0)
+    } catch (error) {
+      console.error(error)
+      setProperties([])
+      setTotalProperties(0)
+    }
     setLoading(false)
   }
 
@@ -1047,9 +1294,7 @@ function PropertiesView() {
     setImageUrls(p.images && p.images.length > 0 ? [...p.images] : [''])
   }
 
-  async function handleImageUpload(e, index) {
-    const file = e.target.files?.[0]
-    if (e.target) e.target.value = ''
+  async function uploadImageFile(file, index) {
     if (!file) return
     if (!file.type.startsWith('image/')) { showToast.error('Please upload an image file'); return }
 
@@ -1070,6 +1315,21 @@ function PropertiesView() {
     }
   }
 
+  async function handleImageUpload(e, index) {
+    const file = e.target.files?.[0]
+    if (e.target) e.target.value = ''
+    await uploadImageFile(file, index)
+  }
+
+  async function handleQuickImageUpload(e) {
+    const file = e.target.files?.[0]
+    if (e.target) e.target.value = ''
+    if (!file) return
+    const nextIndex = imageUrls.length
+    setImageUrls(prev => [...prev, ''])
+    await uploadImageFile(file, nextIndex)
+  }
+
   function removeImageSlot(index) {
     const newUrls = imageUrls.filter((_, i) => i !== index)
     setImageUrls(newUrls.length === 0 ? [''] : newUrls)
@@ -1078,7 +1338,7 @@ function PropertiesView() {
   async function handleUpdateProperty() {
     const validImageUrls = imageUrls.filter(url => url && url.trim() !== '')
     const { error } = await supabase.from('properties').update({
-      title: propForm.title, address: propForm.address, city: propForm.city, price: propForm.price,
+      title: propForm.title, address: propForm.address, city: propForm.city, country: propForm.country, state_province: propForm.state_province, price: propForm.price,
       description: propForm.description, bedrooms: propForm.bedrooms, bathrooms: propForm.bathrooms,
       area_sqft: propForm.area_sqft, status: propForm.status, utilities_cost: propForm.utilities_cost,
       internet_cost: propForm.internet_cost, association_dues: propForm.association_dues,
@@ -1088,7 +1348,11 @@ function PropertiesView() {
       images: validImageUrls.length > 0 ? validImageUrls : null
     }).eq('id', editingProp.id)
     if (error) showToast.error("Failed to update property")
-    else { showToast.success("Property updated successfully"); setEditingProp(null); loadProperties() }
+    else {
+      showToast.success("Property updated successfully")
+      setEditingProp(null)
+      loadProperties()
+    }
   }
 
   async function confirmDelete() {
@@ -1109,13 +1373,10 @@ function PropertiesView() {
     setDeleteId(null)
   }
 
-  const filtered = properties.filter(p => {
-    const matchesSearch = (p.title || '').toLowerCase().includes(search.toLowerCase()) || (p.city || '').toLowerCase().includes(search.toLowerCase()) || (p.address || '').toLowerCase().includes(search.toLowerCase())
-    const matchesStatus = statusFilter === 'all' || p.status === statusFilter
-    return matchesSearch && matchesStatus
-  })
-
-  const availableAmenities = ['Wifi', 'Air Condition', 'Washing Machine', 'Parking', 'Hot Shower', 'Bathroom', 'Smoke Alarm', 'Veranda', 'Fire Extinguisher', 'Outside Garden', 'Furnished', 'Semi-Furnished', 'Pet Friendly', 'Kitchen', 'Smart TV']
+  const availableAmenities = ['Kitchen', 'Pool', 'TV', 'Elevator', 'Air conditioning', 'Heating', 'Basketball court',
+    'Washing machine', 'Dryer', 'Parking', 'Gym', 'Security', 'Balcony', 'Garden', "Kid's Playground",
+    'Pet friendly', 'Furnished', 'Carbon monoxide alarm', 'Smoke alarm', 'Fire extinguisher', 'First aid kit'
+]
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -1149,8 +1410,8 @@ function PropertiesView() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {filtered.map(p => (
-                  <tr key={p.id} className="hover:bg-gray-50 transition-colors">
+                {properties.map(p => (
+                  <tr key={p.id} className="transition-colors">
                     <td className="p-4 md:p-5">
                       <div className="flex items-center gap-3">
                         <div className="w-12 h-12 rounded-xl overflow-hidden bg-gray-100 flex-shrink-0 border border-gray-200">
@@ -1175,17 +1436,24 @@ function PropertiesView() {
                       <div className="font-bold">₱{Number(p.price).toLocaleString()}</div>
                       <div className="text-xs text-gray-400">{p.bedrooms}bd • {p.bathrooms}ba • {p.area_sqft}sqft</div>
                     </td>
-                    <td className="p-4 md:p-5"><Badge variant={p.status === 'available' ? 'success' : p.status === 'occupied' ? 'warning' : 'danger'}>{p.status}</Badge></td>
+                    <td className="p-4 md:p-5"><Badge variant='default'>{p.status}</Badge></td>
                     <td className="p-4 md:p-5 text-right flex justify-end gap-2">
-                      <button onClick={() => openEditModal(p)} className="text-black bg-gray-100 hover:bg-black hover:text-white font-bold text-xs cursor-pointer px-3 py-2 rounded-lg transition-colors whitespace-nowrap">Edit Details</button>
-                      <button onClick={() => setDeleteId(p.id)} className="text-red-600 hover:text-white hover:bg-red-600 font-bold text-xs cursor-pointer px-3 py-2 bg-red-50 rounded-lg transition-colors whitespace-nowrap">Delete</button>
+                      <button onClick={() => openEditModal(p)} className="text-black bg-gray-100 font-bold text-xs cursor-pointer px-3 py-2 rounded-lg transition-colors whitespace-nowrap">Edit Details</button>
+                      <button onClick={() => setDeleteId(p.id)} className="text-gray-700 font-bold text-xs cursor-pointer px-3 py-2 bg-gray-100 rounded-lg transition-colors whitespace-nowrap">Delete</button>
                     </td>
                   </tr>
                 ))}
-                {filtered.length === 0 && <EmptyStateRow colSpan={5} message="No properties found." />}
+                {properties.length === 0 && <EmptyStateRow colSpan={5} message="No properties found." />}
               </tbody>
             </table>
           </div>
+          <PaginationControls
+            currentPage={currentPage}
+            totalItems={totalProperties}
+            pageSize={PROPERTIES_PAGE_SIZE}
+            onPageChange={setCurrentPage}
+            label="properties"
+          />
         </div>
       )}
 
@@ -1195,7 +1463,7 @@ function PropertiesView() {
           <div className="bg-white rounded-2xl w-full max-w-4xl p-6 md:p-8 shadow-2xl max-h-[90vh] overflow-y-auto border border-gray-100">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl md:text-2xl font-black tracking-tight">Edit Property</h3>
-              <button onClick={() => setEditingProp(null)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 cursor-pointer text-gray-400">✕</button>
+              <button onClick={() => setEditingProp(null)} className="w-8 h-8 flex items-center justify-center rounded-full cursor-pointer text-gray-400">✕</button>
             </div>
 
             {/* Image Management */}
@@ -1204,19 +1472,24 @@ function PropertiesView() {
                 <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                 Property Photos (Max 10)
               </label>
+              <label className="inline-flex items-center gap-2 px-3 py-2 mb-3 bg-white border border-gray-300 rounded-lg text-xs font-bold text-gray-700 cursor-pointer">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                Upload Photo
+                <input type="file" accept="image/*" className="hidden" onChange={handleQuickImageUpload} />
+              </label>
               <div className="grid grid-cols-5 sm:grid-cols-6 md:grid-cols-8 gap-2">
                 {imageUrls.map((url, index) => (
                   <div key={index} className="relative aspect-square">
                     <label className="cursor-pointer block h-full">
                       {url ? (
-                        <div className="w-full h-full rounded-lg overflow-hidden border-2 border-green-300 relative group">
+                        <div className="w-full h-full rounded-lg overflow-hidden border-2 border-gray-300 relative group">
                           <img src={url} alt={`Photo ${index + 1}`} className="w-full h-full object-cover" />
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <div className="absolute inset-0 bg-black/40 opacity-0 transition-opacity flex items-center justify-center">
                             <span className="text-white text-[10px] font-bold">Change</span>
                           </div>
                         </div>
                       ) : (
-                        <div className={`w-full h-full border-2 border-dashed rounded-lg flex items-center justify-center text-xs transition-colors ${uploadingImages[index] ? 'bg-yellow-50 border-yellow-300' : 'bg-white border-gray-300 text-gray-400 hover:border-gray-500'}`}>
+                        <div className={`w-full h-full border-2 border-dashed rounded-lg flex items-center justify-center text-xs transition-colors ${uploadingImages[index] ? 'bg-gray-100 border-gray-300' : 'bg-white border-gray-300 text-gray-400'}`}>
                           {uploadingImages[index] ? (
                             <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
                           ) : <span className="text-lg">+</span>}
@@ -1225,144 +1498,631 @@ function PropertiesView() {
                       <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, index)} disabled={uploadingImages[index]} />
                     </label>
                     {url && imageUrls.length > 1 && (
-                      <button type="button" onClick={() => removeImageSlot(index)} className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center cursor-pointer shadow-sm border border-white hover:bg-red-600">×</button>
+                      <button type="button" onClick={() => removeImageSlot(index)} className="absolute -top-1 -right-1 w-4 h-4 bg-black text-white text-[10px] rounded-full flex items-center justify-center cursor-pointer shadow-sm border border-white">×</button>
                     )}
                   </div>
                 ))}
                 {imageUrls.length < 10 && (
-                  <button type="button" onClick={() => setImageUrls([...imageUrls, ''])} className="aspect-square rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 cursor-pointer bg-white hover:bg-gray-50 hover:border-gray-500 transition-colors text-lg">+</button>
+                  <button type="button" onClick={() => setImageUrls([...imageUrls, ''])} className="aspect-square rounded-lg border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 cursor-pointer bg-white transition-colors text-lg">+</button>
                 )}
               </div>
               <p className="text-[10px] text-gray-400 mt-2">Max 2MB per image. Click to upload or replace.</p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <div className="md:col-span-2">
-                <Input label="Property Title" value={propForm.title || ''} onChange={e => setPropForm({ ...propForm, title: e.target.value })} />
+            <div className="space-y-6">
+              <div className="pb-6 border-b border-gray-50">
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">Rent Title *</label>
+                <input
+                  type="text"
+                  className="w-full bg-gray-50 border-2 border-transparent focus:bg-white focus:border-black rounded-xl px-4 py-4 text-xl font-medium transition-all outline-none placeholder-gray-400"
+                  placeholder="e.g. Modern Loft in Downtown"
+                  value={propForm.title || ''}
+                  onChange={e => setPropForm({ ...propForm, title: e.target.value })}
+                />
               </div>
-              <Input label="City" value={propForm.city || ''} onChange={e => setPropForm({ ...propForm, city: e.target.value })} />
-              <Input label="Barangay / Address" value={propForm.address || ''} onChange={e => setPropForm({ ...propForm, address: e.target.value })} />
-              <Input label="Building No." value={propForm.building_no || ''} onChange={e => setPropForm({ ...propForm, building_no: e.target.value })} />
-              <Input label="Street" value={propForm.street || ''} onChange={e => setPropForm({ ...propForm, street: e.target.value })} />
-              <Input label="ZIP Code" value={propForm.zip || ''} onChange={e => setPropForm({ ...propForm, zip: e.target.value })} />
-              <Input label="Google Map Link" value={propForm.location_link || ''} onChange={e => setPropForm({ ...propForm, location_link: e.target.value })} />
-              <Input label="Owner Phone" value={propForm.owner_phone || ''} onChange={e => setPropForm({ ...propForm, owner_phone: e.target.value })} />
-              <Input label="Owner Email" value={propForm.owner_email || ''} onChange={e => setPropForm({ ...propForm, owner_email: e.target.value })} />
-              <Input label="Bedrooms" type="number" value={propForm.bedrooms || ''} onChange={e => setPropForm({ ...propForm, bedrooms: e.target.value })} />
-              <Input label="Bathrooms" type="number" value={propForm.bathrooms || ''} onChange={e => setPropForm({ ...propForm, bathrooms: e.target.value })} />
-              <Input label="Area (Sqft)" type="number" value={propForm.area_sqft || ''} onChange={e => setPropForm({ ...propForm, area_sqft: e.target.value })} />
-              <div className="space-y-1">
-                <label className="block text-sm font-bold text-gray-700 mb-1">Status</label>
-                <select value={propForm.status} onChange={e => setPropForm({ ...propForm, status: e.target.value })} className="w-full border rounded-xl px-4 py-3 cursor-pointer bg-white focus:ring-2 focus:ring-black outline-none">
-                  <option value="available">Available</option>
-                  <option value="occupied">Occupied</option>
-                  <option value="not available">Not Available</option>
-                </select>
-              </div>
-              <div className="md:col-span-2 pt-2 border-t border-gray-100">
-                <h4 className="text-sm font-bold text-gray-900 mb-3">Financials</h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <Input label="Monthly Price (₱)" type="number" value={propForm.price || ''} onChange={e => setPropForm({ ...propForm, price: e.target.value })} />
-                  <Input label="Assoc Dues (₱)" type="number" value={propForm.association_dues || ''} onChange={e => setPropForm({ ...propForm, association_dues: e.target.value })} />
-                  <Input label="Utilities (₱)" type="number" value={propForm.utilities_cost || ''} onChange={e => setPropForm({ ...propForm, utilities_cost: e.target.value })} />
-                  <Input label="Internet (₱)" type="number" value={propForm.internet_cost || ''} onChange={e => setPropForm({ ...propForm, internet_cost: e.target.value })} />
+
+              <div>
+                <h4 className="text-sm font-bold text-gray-900 mb-5 flex items-center gap-2">
+                  <span className="w-1.5 h-4 bg-black rounded-full"></span> Location
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-500 ml-1">Bldg No.</label>
+                    <input
+                      type="text"
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black focus:ring-0 outline-none"
+                      value={propForm.building_no || ''}
+                      onChange={e => setPropForm({ ...propForm, building_no: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-500 ml-1">Street</label>
+                    <input
+                      type="text"
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black focus:ring-0 outline-none"
+                      value={propForm.street || ''}
+                      onChange={e => setPropForm({ ...propForm, street: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-500 ml-1">Barangay</label>
+                    <input
+                      type="text"
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black focus:ring-0 outline-none"
+                      value={propForm.address || ''}
+                      onChange={e => setPropForm({ ...propForm, address: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-500 ml-1">City</label>
+                    <input
+                      type="text"
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black focus:ring-0 outline-none"
+                      value={propForm.city || ''}
+                      onChange={e => setPropForm({ ...propForm, city: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-500 ml-1">Country</label>
+                    <input
+                      type="text"
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black focus:ring-0 outline-none"
+                      value={propForm.country || ''}
+                      onChange={e => setPropForm({ ...propForm, country: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-500 ml-1">State / Province</label>
+                    <input
+                      type="text"
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black focus:ring-0 outline-none"
+                      value={propForm.state_province || ''}
+                      onChange={e => setPropForm({ ...propForm, state_province: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-500 ml-1">ZIP</label>
+                    <input
+                      type="number"
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black focus:ring-0 outline-none"
+                      value={propForm.zip || ''}
+                      onChange={e => setPropForm({ ...propForm, zip: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1 md:col-span-3">
+                    <label className="text-xs font-semibold text-gray-500 ml-1">Google Map Link (Preferred)</label>
+                    <input
+                      type="url"
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black focus:ring-0 outline-none text-blue-600"
+                      value={propForm.location_link || ''}
+                      onChange={e => setPropForm({ ...propForm, location_link: e.target.value })}
+                    />
+                  </div>
                 </div>
               </div>
-              {/* Amenities */}
-              <div className="md:col-span-2 pt-2 border-t border-gray-100">
-                <h4 className="text-sm font-bold text-gray-900 mb-3">Amenities</h4>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-2 border-t border-gray-100">
+                <div>
+                  <h4 className="text-sm font-bold text-gray-900 mb-5 flex items-center gap-2">
+                    <span className="w-1.5 h-4 bg-black rounded-full"></span> Contact
+                  </h4>
+                  <div className="space-y-4">
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-gray-500 ml-1">Phone</label>
+                      <input
+                        type="tel"
+                        className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black focus:ring-0 outline-none"
+                        value={propForm.owner_phone || ''}
+                        onChange={e => setPropForm({ ...propForm, owner_phone: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-gray-500 ml-1">Email</label>
+                      <input
+                        type="email"
+                        className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black focus:ring-0 outline-none"
+                        value={propForm.owner_email || ''}
+                        onChange={e => setPropForm({ ...propForm, owner_email: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="text-sm font-bold text-gray-900 mb-5 flex items-center gap-2">
+                    <span className="w-1.5 h-4 bg-black rounded-full"></span> Details
+                  </h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1 col-span-2">
+                      <label className="text-xs font-bold text-gray-700 ml-1">Monthly Price (₱)</label>
+                      <input
+                        type="number"
+                        className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:bg-white focus:border-black outline-none font-semibold"
+                        value={propForm.price || ''}
+                        onChange={e => setPropForm({ ...propForm, price: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-gray-500 ml-1">Beds</label>
+                      <input
+                        type="number"
+                        className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none"
+                        value={propForm.bedrooms || ''}
+                        onChange={e => setPropForm({ ...propForm, bedrooms: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-gray-500 ml-1">Baths</label>
+                      <input
+                        type="number"
+                        className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none"
+                        value={propForm.bathrooms || ''}
+                        onChange={e => setPropForm({ ...propForm, bathrooms: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-gray-500 ml-1">Sqft</label>
+                      <input
+                        type="number"
+                        className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none"
+                        value={propForm.area_sqft || ''}
+                        onChange={e => setPropForm({ ...propForm, area_sqft: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-semibold text-gray-500 ml-1">Status</label>
+                      <select
+                        value={propForm.status || 'available'}
+                        onChange={e => setPropForm({ ...propForm, status: e.target.value })}
+                        className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none cursor-pointer"
+                      >
+                        <option value="available">Available</option>
+                        <option value="occupied">Occupied</option>
+                        <option value="not available">Unavailable</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1 col-span-2">
+                      <label className="text-xs font-semibold text-gray-500 ml-1">Internet (₱)</label>
+                      <input
+                        type="number"
+                        className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none"
+                        value={propForm.internet_cost || ''}
+                        onChange={e => setPropForm({ ...propForm, internet_cost: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h4 className="text-sm font-bold text-gray-900 mb-5 flex items-center gap-2">
+                  <span className="w-1.5 h-4 bg-black rounded-full"></span> Amenities
+                </h4>
                 <div className="flex flex-wrap gap-2">
                   {availableAmenities.map(amenity => (
                     <button key={amenity} type="button" onClick={() => {
                       const current = propForm.amenities || []
                       setPropForm({ ...propForm, amenities: current.includes(amenity) ? current.filter(a => a !== amenity) : [...current, amenity] })
-                    }} className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer ${(propForm.amenities || []).includes(amenity) ? 'border-black bg-black text-white' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400'}`}>
+                    }} className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer ${(propForm.amenities || []).includes(amenity) ? 'border-black bg-black text-white' : 'border-gray-200 bg-white text-gray-600'}`}>
                       {amenity}
                     </button>
                   ))}
                 </div>
               </div>
-              <div className="md:col-span-2">
-                <label className="block text-sm font-bold text-gray-700 mb-1">Description</label>
-                <textarea className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-black outline-none transition-all resize-none" rows={4} value={propForm.description || ''} onChange={e => setPropForm({ ...propForm, description: e.target.value })} />
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 ml-1 mb-1">Description</label>
+                <textarea className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black outline-none resize-none" rows={4} value={propForm.description || ''} onChange={e => setPropForm({ ...propForm, description: e.target.value })} />
               </div>
-              {/* Terms & Conditions URL */}
-              <div className="md:col-span-2">
-                <Input label="Terms & Conditions URL" value={propForm.terms_conditions || ''} onChange={e => setPropForm({ ...propForm, terms_conditions: e.target.value })} />
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-gray-500 ml-1">Terms & Conditions URL</label>
+                <input
+                  type="url"
+                  className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black outline-none"
+                  value={propForm.terms_conditions || ''}
+                  onChange={e => setPropForm({ ...propForm, terms_conditions: e.target.value })}
+                />
               </div>
             </div>
             <div className="flex flex-col sm:flex-row gap-3 pt-8">
-              <Button variant="secondary" className="flex-1 py-3.5 cursor-pointer rounded-xl" onClick={() => setEditingProp(null)}>Cancel</Button>
-              <Button className="flex-1 py-3.5 bg-black text-white hover:bg-gray-800 cursor-pointer rounded-xl" onClick={handleUpdateProperty}>Update Property</Button>
+              <button type="button" className="flex-1 py-3.5 cursor-pointer rounded-xl bg-gray-200 text-gray-700 font-medium" onClick={() => setEditingProp(null)}>Cancel</button>
+              <button type="button" className="flex-1 py-3.5 bg-black text-white cursor-pointer rounded-xl font-medium" onClick={handleUpdateProperty}>Update Property</button>
             </div>
           </div>
         </div>
       )}
+
       <DeleteModal isOpen={!!deleteId} onClose={() => setDeleteId(null)} onConfirm={confirmDelete} title="Delete Property" message="Are you sure? This will remove the property from the listing." />
     </div>
   )
 }
 
+function ActiveOccupanciesView() {
+  const ACTIVE_OCCUPANCIES_PAGE_SIZE = 10
+  const [activeOccupancies, setActiveOccupancies] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalActiveOccupancies, setTotalActiveOccupancies] = useState(0)
+  const [selectedOccupancy, setSelectedOccupancy] = useState(null)
+  const [occupancyDetails, setOccupancyDetails] = useState(null)
+  const [detailsLoading, setDetailsLoading] = useState(false)
+
+  useEffect(() => { loadActiveOccupancies() }, [currentPage])
+
+  async function loadActiveOccupancies() {
+    setLoading(true)
+    try {
+      const { data, count } = await adminFetch(
+        'tenant_occupancies',
+        'id, created_at, tenant:profiles!tenant_occupancies_tenant_id_fkey(id, first_name, last_name, phone), property:properties(id, title, address, city, landlord_profile:profiles!properties_landlord_fkey(first_name, last_name))',
+        [{ type: 'eq', column: 'status', value: 'active' }],
+        { column: 'created_at', ascending: false },
+        { page: currentPage, pageSize: ACTIVE_OCCUPANCIES_PAGE_SIZE },
+        true
+      )
+
+      setActiveOccupancies(data || [])
+      setTotalActiveOccupancies(count || 0)
+    } catch (error) {
+      console.error('Failed to load active occupancies:', error)
+      setActiveOccupancies([])
+      setTotalActiveOccupancies(0)
+    }
+    setLoading(false)
+  }
+
+  async function openOccupancyDetails(occupancy) {
+    setSelectedOccupancy(occupancy)
+    setOccupancyDetails(null)
+    setDetailsLoading(true)
+    try {
+      const response = await fetch(`/api/admin/occupancy-details?occupancy_id=${encodeURIComponent(occupancy.id)}`)
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Failed to load occupancy details')
+      setOccupancyDetails(data)
+    } catch (error) {
+      showToast.error(error.message || 'Failed to load occupancy details')
+      setOccupancyDetails(null)
+    }
+    setDetailsLoading(false)
+  }
+
+  function closeOccupancyDetails() {
+    setSelectedOccupancy(null)
+    setOccupancyDetails(null)
+    setDetailsLoading(false)
+  }
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white/80 backdrop-blur-sm p-6 rounded-2xl shadow-sm border border-gray-100/80">
+        <div>
+          <h2 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight">Active Occupancy</h2>
+          <p className="text-gray-500 mt-1 text-sm md:text-base">Track active tenants, their properties, and assigned landlords.</p>
+        </div>
+      </div>
+
+      {loading ? (
+        <Spinner />
+      ) : (
+        <div className="bg-white rounded-3xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left min-w-[900px] md:min-w-0">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>
+                  <th className="p-4 md:p-5 text-xs font-black text-gray-500 uppercase">Tenant</th>
+                  <th className="p-4 md:p-5 text-xs font-black text-gray-500 uppercase">Property</th>
+                  <th className="p-4 md:p-5 text-xs font-black text-gray-500 uppercase">Landlord</th>
+                  <th className="p-4 md:p-5 text-xs font-black text-gray-500 uppercase">Date Added</th>
+                  <th className="p-4 md:p-5 text-xs font-black text-gray-500 uppercase">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {activeOccupancies.map(occ => (
+                  <tr key={occ.id} onClick={() => openOccupancyDetails(occ)} className="cursor-pointer">
+                    <td className="p-4 md:p-5 text-sm font-medium text-gray-800 whitespace-nowrap">
+                      {occ.tenant ? `${occ.tenant.first_name || ''} ${occ.tenant.last_name || ''}`.trim() : 'Unknown Tenant'}
+                    </td>
+                    <td className="p-4 md:p-5 text-sm text-gray-700">
+                      <div className="font-semibold text-gray-900 whitespace-nowrap">{occ.property?.title || 'Unknown Property'}</div>
+                      <div className="text-xs text-gray-500 whitespace-nowrap">{occ.property?.city || ''}{occ.property?.city && occ.property?.address ? ', ' : ''}{occ.property?.address || ''}</div>
+                    </td>
+                    <td className="p-4 md:p-5 text-sm text-gray-700 whitespace-nowrap">
+                      {occ.property?.landlord_profile ? `${occ.property.landlord_profile.first_name || ''} ${occ.property.landlord_profile.last_name || ''}`.trim() : 'Unknown'}
+                    </td>
+                    <td className="p-4 md:p-5 text-sm text-gray-700 whitespace-nowrap">
+                      {occ.created_at ? new Date(occ.created_at).toLocaleDateString() : 'N/A'}
+                    </td>
+                    <td className="p-4 md:p-5">
+                      <Badge variant='success'>Active</Badge>
+                    </td>
+                  </tr>
+                ))}
+                {activeOccupancies.length === 0 && <EmptyStateRow colSpan={5} message="No active occupancies found." />}
+              </tbody>
+            </table>
+          </div>
+          <PaginationControls
+            currentPage={currentPage}
+            totalItems={totalActiveOccupancies}
+            pageSize={ACTIVE_OCCUPANCIES_PAGE_SIZE}
+            onPageChange={setCurrentPage}
+            label="active occupancies"
+          />
+        </div>
+      )}
+
+      {selectedOccupancy && (
+        <div className="fixed inset-0 z-[95] flex">
+          <div className="flex-1 bg-black/50" onClick={closeOccupancyDetails}></div>
+          <aside className="w-full max-w-xl bg-white h-full overflow-y-auto shadow-2xl border-l border-gray-200">
+            <div className="p-6 border-b border-gray-100 flex items-start justify-between">
+              <div>
+                <h3 className="text-xl font-black text-gray-900">Occupancy Details</h3>
+                <p className="text-sm text-gray-500 mt-1">ID: {selectedOccupancy.id}</p>
+              </div>
+              <button onClick={closeOccupancyDetails} className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 cursor-pointer">✕</button>
+            </div>
+
+            {detailsLoading ? (
+              <div className="p-8 flex justify-center"><Spinner /></div>
+            ) : (
+              <div className="p-6 space-y-6">
+                <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
+                  <p className="text-xs font-black text-gray-500 uppercase mb-2">Tenant</p>
+                  <p className="text-sm font-bold text-gray-900">
+                    {occupancyDetails?.occupancy?.tenant
+                      ? `${occupancyDetails.occupancy.tenant.first_name || ''} ${occupancyDetails.occupancy.tenant.middle_name ? `${occupancyDetails.occupancy.tenant.middle_name} ` : ''}${occupancyDetails.occupancy.tenant.last_name || ''}`.trim()
+                      : 'Unknown Tenant'}
+                  </p>
+                  <p className="text-xs text-gray-600 mt-1">{occupancyDetails?.occupancy?.tenant?.email || 'No email'}</p>
+                  <p className="text-xs text-gray-600">{occupancyDetails?.occupancy?.tenant?.phone || 'No phone'}</p>
+                </div>
+
+                <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
+                  <p className="text-xs font-black text-gray-500 uppercase mb-2">Property</p>
+                  <p className="text-sm font-bold text-gray-900">{occupancyDetails?.occupancy?.property?.title || 'Unknown Property'}</p>
+                  <p className="text-xs text-gray-600 mt-1">
+                    {occupancyDetails?.occupancy?.property?.city || ''}
+                    {occupancyDetails?.occupancy?.property?.city && occupancyDetails?.occupancy?.property?.address ? ', ' : ''}
+                    {occupancyDetails?.occupancy?.property?.address || ''}
+                  </p>
+                  <p className="text-xs text-gray-600">Monthly Rent: ₱{Number(occupancyDetails?.occupancy?.property?.price || 0).toLocaleString()}</p>
+                </div>
+
+                <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
+                  <p className="text-xs font-black text-gray-500 uppercase mb-2">Landlord</p>
+                  <p className="text-sm font-bold text-gray-900">
+                    {occupancyDetails?.occupancy?.landlord
+                      ? `${occupancyDetails.occupancy.landlord.first_name || ''} ${occupancyDetails.occupancy.landlord.middle_name ? `${occupancyDetails.occupancy.landlord.middle_name} ` : ''}${occupancyDetails.occupancy.landlord.last_name || ''}`.trim()
+                      : 'Unknown Landlord'}
+                  </p>
+                  <p className="text-xs text-gray-600 mt-1">{occupancyDetails?.occupancy?.landlord?.email || 'No email'}</p>
+                  <p className="text-xs text-gray-600">{occupancyDetails?.occupancy?.landlord?.phone || 'No phone'}</p>
+                </div>
+
+                <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
+                  <p className="text-xs font-black text-gray-500 uppercase mb-2">Occupancy Meta</p>
+                  <div className="grid grid-cols-2 gap-3 text-xs text-gray-700">
+                    <div>
+                      <p className="text-gray-500">Status</p>
+                      <p className="font-semibold">{occupancyDetails?.occupancy?.status || 'active'}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Date Added</p>
+                      <p className="font-semibold">{occupancyDetails?.occupancy?.created_at ? new Date(occupancyDetails.occupancy.created_at).toLocaleDateString() : 'N/A'}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Start Date</p>
+                      <p className="font-semibold">{occupancyDetails?.occupancy?.start_date ? new Date(occupancyDetails.occupancy.start_date).toLocaleDateString() : 'N/A'}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">End Date</p>
+                      <p className="font-semibold">{occupancyDetails?.occupancy?.end_date ? new Date(occupancyDetails.occupancy.end_date).toLocaleDateString() : 'N/A'}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
+                  <p className="text-xs font-black text-gray-500 uppercase mb-2">Family Subscription</p>
+                  <p className="text-sm text-gray-800">
+                    {occupancyDetails?.subscription
+                      ? `${occupancyDetails.subscription.used_slots || 0}/${occupancyDetails.subscription.total_slots || 1} used`
+                      : 'No subscription record (default free slot applies)'}
+                  </p>
+                </div>
+
+                <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
+                  <p className="text-xs font-black text-gray-500 uppercase mb-3">Family Members</p>
+                  {(occupancyDetails?.familyMembers || []).length === 0 ? (
+                    <p className="text-sm text-gray-500">No family members linked to this occupancy.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {(occupancyDetails?.familyMembers || []).map((member) => (
+                        <div key={member.id} className="rounded-lg border border-gray-200 bg-white p-3">
+                          <p className="text-sm font-bold text-gray-900">
+                            {member.member_profile
+                              ? `${member.member_profile.first_name || ''} ${member.member_profile.middle_name ? `${member.member_profile.middle_name} ` : ''}${member.member_profile.last_name || ''}`.trim()
+                              : 'Unknown Member'}
+                          </p>
+                          <p className="text-xs text-gray-600 mt-1">{member.member_profile?.email || 'No email'}</p>
+                          <p className="text-xs text-gray-600">{member.member_profile?.phone || 'No phone'}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </aside>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function PaymentsView() {
+  const PAYMENTS_PAGE_SIZE = 10
   const [payments, setPayments] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [landlords, setLandlords] = useState([])
   const [selectedLandlordId, setSelectedLandlordId] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalPayments, setTotalPayments] = useState(0)
+  const [selectedPaymentLog, setSelectedPaymentLog] = useState(null)
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => { loadLandlords() }, [])
+  useEffect(() => { setCurrentPage(1) }, [statusFilter, selectedLandlordId])
+  useEffect(() => { loadData() }, [currentPage, statusFilter, selectedLandlordId])
+
+  async function loadLandlords() {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, first_name, last_name')
+        .eq('is_deleted', false)
+        .eq('role', 'landlord')
+        .order('first_name', { ascending: true })
+        .range(0, 199)
+
+      if (error) throw error
+      setLandlords((data || []).map((l) => ({ id: l.id, name: `${l.first_name} ${l.last_name}` })))
+    } catch (error) {
+      console.error('Failed to load landlords:', error)
+      setLandlords([])
+    }
+  }
 
   async function loadData() {
     setLoading(true)
     try {
-      const rawPayments = await adminFetch('payment_requests', '*, property:properties(id, title, landlord_profile:profiles!properties_landlord_fkey(id, first_name, last_name)), tenant_profile:profiles!payment_requests_tenant_fkey(id, first_name, last_name)', [], { column: 'created_at', ascending: false })
+      const filters = []
+      if (statusFilter !== 'all') {
+        filters.push({ type: 'eq', column: 'status', value: statusFilter })
+      }
+      if (selectedLandlordId !== 'all') {
+        filters.push({ type: 'eq', column: 'landlord', value: selectedLandlordId })
+      }
+
+      const { data: rawPayments, count } = await adminFetch(
+        'payment_requests',
+        '*, property:properties(id, title, address, city, area_sqft, landlord_profile:profiles!properties_landlord_fkey(id, first_name, last_name)), tenant_profile:profiles!payment_requests_tenant_fkey(id, first_name, last_name)',
+        filters,
+        { column: 'created_at', ascending: false },
+        { page: currentPage, pageSize: PAYMENTS_PAGE_SIZE },
+        true
+      )
+
       // Compute display amount: use amount field, or sum components
       const enriched = rawPayments.map(p => ({
         ...p,
         display_amount: p.amount || (parseFloat(p.rent_amount || 0) + parseFloat(p.water_bill || 0) + parseFloat(p.electrical_bill || 0) + parseFloat(p.other_bills || 0))
       }))
       setPayments(enriched)
-      const uniqueLandlords = []
-      const map = new Map()
-      for (const p of enriched) {
-        const lProfile = p.property?.landlord_profile
-        if (lProfile && !map.has(lProfile.id)) {
-          map.set(lProfile.id, true)
-          uniqueLandlords.push({ id: lProfile.id, name: `${lProfile.first_name} ${lProfile.last_name}` })
-        }
-      }
-      setLandlords(uniqueLandlords)
+      setTotalPayments(count || 0)
     } catch (error) {
       console.error('Failed to load payments:', error)
+      setPayments([])
+      setTotalPayments(0)
     }
     setLoading(false)
   }
 
+  const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
   const graphData = useMemo(() => {
-    const subset = selectedLandlordId === 'all' ? payments : payments.filter(p => p.property?.landlord_profile?.id === selectedLandlordId)
-    const months = {}
-    subset.forEach(p => {
+    const totals = new Array(12).fill(0)
+    payments.forEach((p) => {
       if (['paid', 'completed', 'confirmed'].includes(p.status)) {
-        const date = new Date(p.created_at)
-        const key = date.toLocaleString('default', { month: 'short' })
-        if (!months[key]) months[key] = 0
-        months[key] += (p.display_amount || 0)
+        const monthIndex = new Date(p.created_at).getMonth()
+        if (monthIndex >= 0 && monthIndex <= 11) {
+          totals[monthIndex] += (p.display_amount || 0)
+        }
       }
     })
-    return Object.entries(months).slice(-6)
-  }, [payments, selectedLandlordId])
+    return monthLabels.map((month, index) => ({ month, value: totals[index] }))
+  }, [payments])
 
-  const maxIncome = Math.max(...graphData.map(([, val]) => val), 1)
+  const maxIncomeRaw = Math.max(...graphData.map((item) => item.value), 1)
+  const yStep = Math.max(50000, Math.ceil(maxIncomeRaw / 4 / 50000) * 50000)
+  const maxIncome = yStep * 4
+  const yTicks = [0, yStep, yStep * 2, yStep * 3, yStep * 4]
+  const chartWidth = 980
+  const chartHeight = 260
+  const chartPadding = { top: 16, right: 20, bottom: 38, left: 60 }
+  const plotWidth = chartWidth - chartPadding.left - chartPadding.right
+  const plotHeight = chartHeight - chartPadding.top - chartPadding.bottom
+  const baseY = chartPadding.top + plotHeight
+
+  const chartPoints = graphData.map((item, index) => {
+    const x = chartPadding.left + (index * plotWidth) / (graphData.length - 1)
+    const y = baseY - (item.value / maxIncome) * plotHeight
+    return { ...item, x, y }
+  })
+  const totalIncome = graphData.reduce((sum, item) => sum + item.value, 0)
+
+  function buildSmoothPath(points) {
+    if (!points.length) return ''
+    if (points.length === 1) return `M ${points[0].x} ${points[0].y}`
+
+    let path = `M ${points[0].x} ${points[0].y}`
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[i - 1] || points[i]
+      const p1 = points[i]
+      const p2 = points[i + 1]
+      const p3 = points[i + 2] || p2
+
+      const cp1x = p1.x + (p2.x - p0.x) / 6
+      const rawCp1y = p1.y + (p2.y - p0.y) / 6
+      const cp2x = p2.x - (p3.x - p1.x) / 6
+      const rawCp2y = p2.y - (p3.y - p1.y) / 6
+
+      // Keep bezier control points within segment bounds and above baseline
+      // so the curve doesn't dip below zero between months.
+      const minY = Math.min(p1.y, p2.y)
+      const maxY = Math.min(baseY, Math.max(p1.y, p2.y))
+      const cp1y = Math.max(minY, Math.min(maxY, rawCp1y))
+      const cp2y = Math.max(minY, Math.min(maxY, rawCp2y))
+
+      path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`
+    }
+    return path
+  }
+
+  const linePath = buildSmoothPath(chartPoints)
+  const areaPath = chartPoints.length
+    ? `${linePath} L ${chartPoints[chartPoints.length - 1].x} ${baseY} L ${chartPoints[0].x} ${baseY} Z`
+    : ''
+
+  const formatYAxis = (value) => `₱${Math.round(value / 1000)}k`
+  const getRentMonth = (dueDateString) => {
+    if (!dueDateString) return '-'
+    const due = new Date(dueDateString)
+    return due.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  }
+
+  const getBillType = (r) => {
+    const rent = parseFloat(r.rent_amount) || 0
+    const water = parseFloat(r.water_bill) || 0
+    const electric = parseFloat(r.electrical_bill) || 0
+    const wifi = parseFloat(r.wifi_bill) || 0
+    if (rent > 0) return 'House Rent'
+    if (electric > 0) return 'Electric Bill'
+    if (water > 0) return 'Water Bill'
+    if (wifi > 0) return 'Wifi Bill'
+    return 'Other Bill'
+  }
 
   const filteredPayments = payments.filter(p => {
     const term = search.toLowerCase()
     const tenant = p.tenant_profile ? `${p.tenant_profile.first_name} ${p.tenant_profile.last_name}` : ''
     const landlord = p.property?.landlord_profile ? `${p.property.landlord_profile.first_name} ${p.property.landlord_profile.last_name}` : ''
     const matchesSearch = tenant.toLowerCase().includes(term) || landlord.toLowerCase().includes(term) || (p.property?.title || '').toLowerCase().includes(term)
-    const matchesLandlord = selectedLandlordId === 'all' || p.property?.landlord_profile?.id === selectedLandlordId
-    const matchesStatus = statusFilter === 'all' || p.status === statusFilter
-    return matchesSearch && matchesLandlord && matchesStatus
+    return matchesSearch
   })
 
   if (loading) return <Spinner />
@@ -1373,28 +2133,78 @@ function PaymentsView() {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
           <div>
             <h3 className="font-bold text-lg flex items-center gap-2">
-              <span className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center"><svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg></span>
+              <span className="w-8 h-8 rounded-lg bg-black flex items-center justify-center"><svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg></span>
               Income Analytics
             </h3>
             <p className="text-sm text-gray-500 mt-1">Showing: <span className="font-bold text-gray-900">{selectedLandlordId === 'all' ? 'All Landlords' : landlords.find(l => l.id === selectedLandlordId)?.name}</span></p>
+            <p className="text-sm text-gray-700 mt-1">Total Income: <span className="font-bold text-gray-900">₱{totalIncome.toLocaleString()}</span></p>
           </div>
           <select value={selectedLandlordId} onChange={(e) => setSelectedLandlordId(e.target.value)} className="bg-gray-50 border border-gray-200 text-sm rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-black outline-none cursor-pointer font-medium w-full md:w-auto">
             <option value="all">All Landlords (Total)</option>
             {landlords.map(l => (<option key={l.id} value={l.id}>{l.name}</option>))}
           </select>
         </div>
-        <div className="flex items-end justify-between h-52 gap-3 px-2 pt-4 overflow-x-auto">
-          {graphData.length === 0 ? <div className="w-full h-full flex items-center justify-center text-gray-400 italic">No income data</div> :
-            graphData.map(([month, value]) => (
-              <div key={month} className="flex flex-col items-center flex-1 group min-w-[55px]">
-                <div className="relative w-full flex items-end justify-center h-44 bg-gray-50 rounded-2xl overflow-hidden border border-gray-100">
-                  <div className="w-full mx-1.5 rounded-t-xl transition-all duration-700 ease-out group-hover:opacity-90 bg-gray-800" style={{ height: `${Math.max((value / maxIncome) * 100, 5)}%` }}></div>
-                  <div className="absolute top-2 bg-white shadow-lg border border-gray-100 text-gray-900 text-[10px] font-bold px-2.5 py-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-200 transform group-hover:-translate-y-1">₱{value.toLocaleString()}</div>
-                </div>
-                <p className="mt-2.5 text-xs font-bold text-gray-400 uppercase tracking-wider">{month}</p>
-              </div>
-            ))
-          }
+        <div className="pt-2">
+          <div className="w-full overflow-x-auto">
+            <div className="min-w-[980px] rounded-2xl border border-gray-200 bg-[#f5f5f5] p-2">
+              {chartPoints.every((point) => point.value === 0) ? (
+                <div className="h-56 flex items-center justify-center text-gray-400 italic">No income data</div>
+              ) : (
+                <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="w-full h-64" role="img" aria-label="Income analytics line graph">
+                  {yTicks.map((tickValue, index) => {
+                    const y = baseY - (tickValue / maxIncome) * plotHeight
+                    return (
+                      <g key={`tick-${index}`}>
+                        <line
+                          x1={chartPadding.left}
+                          y1={y}
+                          x2={chartWidth - chartPadding.right}
+                          y2={y}
+                          stroke="#d7d7d7"
+                          strokeWidth="1"
+                          strokeDasharray="4 6"
+                        />
+                        <text
+                          x={chartPadding.left - 10}
+                          y={y + 4}
+                          textAnchor="end"
+                          fontSize="12"
+                          fill="#94a3b8"
+                          fontWeight="600"
+                        >
+                          {formatYAxis(tickValue)}
+                        </text>
+                      </g>
+                    )
+                  })}
+
+                  <path d={areaPath} fill="#4cd34c" fillOpacity="0.12" />
+                  <path
+                    d={linePath}
+                    fill="none"
+                    stroke="#4cd34c"
+                    strokeWidth="4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+
+                  {chartPoints.map((point) => (
+                    <text
+                      key={`month-${point.month}`}
+                      x={point.x}
+                      y={chartHeight - 8}
+                      textAnchor="middle"
+                      fontSize="12"
+                      fill="#94a3b8"
+                      fontWeight="500"
+                    >
+                      {point.month}
+                    </text>
+                  ))}
+                </svg>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1428,38 +2238,161 @@ function PaymentsView() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {filteredPayments.map(p => (
-                  <tr key={p.id} className="hover:bg-gray-50 transition-colors">
+                  <tr key={p.id} className="transition-colors cursor-pointer" onClick={() => setSelectedPaymentLog(p)}>
                     <td className="p-4 md:p-5 text-xs text-gray-500 font-mono whitespace-nowrap">{new Date(p.created_at).toLocaleDateString()}</td>
                     <td className="p-4 md:p-5 font-bold text-gray-900 whitespace-nowrap">{p.tenant_profile?.first_name} {p.tenant_profile?.last_name}</td>
                     <td className="p-4 md:p-5 text-sm text-gray-700 whitespace-nowrap">{p.property?.landlord_profile?.first_name || 'N/A'} {p.property?.landlord_profile?.last_name || ''}</td>
                     <td className="p-4 md:p-5 text-sm text-gray-600 max-w-[150px] truncate" title={p.property?.title}>{p.property?.title || 'N/A'}</td>
-                    <td className="p-4 md:p-5 text-right font-bold text-green-600 whitespace-nowrap">₱{(p.display_amount || 0).toLocaleString()}</td>
-                    <td className="p-4 md:p-5 text-right whitespace-nowrap"><Badge variant={['paid', 'completed', 'confirmed'].includes(p.status) ? 'success' : p.status === 'overdue' ? 'danger' : 'warning'}>{p.status}</Badge></td>
+                    <td className="p-4 md:p-5 text-right font-bold text-gray-900 whitespace-nowrap">₱{(p.display_amount || 0).toLocaleString()}</td>
+                    <td className="p-4 md:p-5 text-right whitespace-nowrap"><Badge variant='default'>{p.status}</Badge></td>
                   </tr>
                 ))}
                 {filteredPayments.length === 0 && <EmptyStateRow colSpan={6} message="No transactions found." />}
               </tbody>
             </table>
           </div>
+          <PaginationControls
+            currentPage={currentPage}
+            totalItems={totalPayments}
+            pageSize={PAYMENTS_PAGE_SIZE}
+            onPageChange={setCurrentPage}
+            label="payments"
+          />
         </div>
       </div>
+
+      {selectedPaymentLog && (() => {
+        const r = selectedPaymentLog
+        const rent = parseFloat(r.rent_amount) || 0
+        const water = parseFloat(r.water_bill) || 0
+        const electric = parseFloat(r.electrical_bill) || 0
+        const wifi = parseFloat(r.wifi_bill) || 0
+        const other = parseFloat(r.other_bills) || 0
+        const securityDeposit = parseFloat(r.security_deposit_amount) || 0
+        const advance = parseFloat(r.advance_amount) || 0
+        const total = rent + water + electric + wifi + other + securityDeposit + advance
+        const billType = getBillType(r)
+        const isPastDue = r.due_date && new Date(r.due_date) < new Date() && r.status === 'pending'
+
+        return (
+          <div className="fixed inset-0 z-50 flex justify-end">
+            <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setSelectedPaymentLog(null)} />
+            <div className="relative w-full max-w-md bg-white shadow-2xl overflow-y-auto animate-in slide-in-from-right duration-300">
+              <div className="sticky top-0 bg-white z-10 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+                <h3 className="text-lg font-black">Bill Details</h3>
+                <button onClick={() => setSelectedPaymentLog(null)} className="p-2 rounded-full transition-colors cursor-pointer">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+
+              <div className="p-6 space-y-5">
+                <div className="flex items-center justify-between">
+                  <span className={`px-3 py-1.5 text-xs font-bold uppercase tracking-wider rounded-full border ${r.status === 'paid' ? 'bg-green-50 text-green-700 border-green-200' : r.status === 'pending_confirmation' ? 'bg-yellow-50 text-yellow-700 border-yellow-200 border-dashed' : r.status === 'cancelled' ? 'bg-gray-100 text-gray-600 border-gray-300' : r.status === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' : isPastDue ? 'bg-red-50 text-red-600 border-red-200' : 'bg-yellow-50 text-yellow-700 border-yellow-200'}`}>
+                    {r.status === 'pending_confirmation' ? 'Confirming' : isPastDue ? 'Overdue' : (r.status || 'Pending')}
+                  </span>
+                  <span className="text-xs font-bold bg-gray-100 px-2 py-1 rounded">{billType}</span>
+                </div>
+
+                <div className="bg-gray-50 rounded-xl p-4">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Property</label>
+                  <p className="font-bold text-gray-900 mt-0.5">{r.property?.title || 'N/A'}{r.property?.area_sqft ? ` - ${r.property.area_sqft} sqm` : ''}</p>
+                  {(r.property?.address || r.property?.city) && <p className="text-xs text-gray-500 mt-0.5">{r.property?.address || ''}{r.property?.city ? `${r.property?.address ? ', ' : ''}${r.property?.city}` : ''}</p>}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-gray-50 rounded-xl p-3">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Landlord</label>
+                    <p className="font-bold text-sm mt-0.5">{r.property?.landlord_profile?.first_name || ''} {r.property?.landlord_profile?.last_name || ''}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-3">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Tenant</label>
+                    <p className="font-bold text-sm mt-0.5">{r.tenant_profile?.first_name || ''} {r.tenant_profile?.last_name || ''}</p>
+                  </div>
+                </div>
+
+                <div className="border border-gray-100 rounded-xl overflow-hidden">
+                  <div className="bg-gray-50 px-4 py-2">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Amount Breakdown</label>
+                  </div>
+                  <div className="p-4 space-y-2">
+                    {rent > 0 && <div className="flex justify-between text-sm"><span className="text-gray-600">Rent</span><span className="font-bold">₱{rent.toLocaleString()}</span></div>}
+                    {securityDeposit > 0 && <div className="flex justify-between text-sm"><span className="text-gray-600">Security Deposit</span><span className="font-bold">₱{securityDeposit.toLocaleString()}</span></div>}
+                    {advance > 0 && <div className="flex justify-between text-sm"><span className="text-gray-600">Advance</span><span className="font-bold">₱{advance.toLocaleString()}</span></div>}
+                    {water > 0 && <div className="flex justify-between text-sm"><span className="text-gray-600">Water Bill</span><span className="font-bold">₱{water.toLocaleString()}</span></div>}
+                    {electric > 0 && <div className="flex justify-between text-sm"><span className="text-gray-600">Electric Bill</span><span className="font-bold">₱{electric.toLocaleString()}</span></div>}
+                    {wifi > 0 && <div className="flex justify-between text-sm"><span className="text-gray-600">Wifi Bill</span><span className="font-bold">₱{wifi.toLocaleString()}</span></div>}
+                    {other > 0 && <div className="flex justify-between text-sm"><span className="text-gray-600">Other Charges</span><span className="font-bold">₱{other.toLocaleString()}</span></div>}
+                    <div className="border-t border-gray-100 pt-2 flex justify-between font-bold">
+                      <span>Total</span>
+                      <span className="text-lg">₱{total.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center py-2 border-b border-gray-50">
+                    <span className="text-xs font-bold text-gray-400 uppercase">Due Date</span>
+                    <span className={`text-sm font-bold ${isPastDue ? 'text-red-600' : 'text-gray-900'}`}>{r.due_date ? new Date(r.due_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : 'N/A'}</span>
+                  </div>
+                  {billType === 'House Rent' && r.due_date && (
+                    <div className="flex justify-between items-center py-2 border-b border-gray-50">
+                      <span className="text-xs font-bold text-gray-400 uppercase">Rent Month</span>
+                      <span className="text-sm font-bold text-gray-900">{getRentMonth(r.due_date)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center py-2 border-b border-gray-50">
+                    <span className="text-xs font-bold text-gray-400 uppercase">Payment Method</span>
+                    <span className="text-sm font-bold text-gray-900">{r.payment_method === 'paymongo' ? 'E-Wallet / Cards' : r.payment_method === 'stripe' ? 'Stripe' : r.payment_method === 'qr_code' ? 'QR Code' : r.payment_method === 'cash' ? 'Cash' : '-'}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-2 border-b border-gray-50">
+                    <span className="text-xs font-bold text-gray-400 uppercase">Reference No.</span>
+                    <span className="text-sm font-bold font-mono text-gray-900">{r.tenant_reference_number || r.reference_number || '-'}</span>
+                  </div>
+                  <div className="py-2 border-b border-gray-50">
+                    <span className="text-xs font-bold text-gray-400 uppercase block mb-1">Message / Description</span>
+                    <p className="text-sm text-gray-700">{r.bills_description || r.description || '-'}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
 
 function BookingsView() {
+  const BOOKINGS_PAGE_SIZE = 10
   const [bookings, setBookings] = useState([])
   const [loading, setLoading] = useState(true)
   const [deleteId, setDeleteId] = useState(null)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalBookings, setTotalBookings] = useState(0)
 
-  useEffect(() => { loadBookings() }, [])
+  useEffect(() => { setCurrentPage(1) }, [statusFilter])
+  useEffect(() => { loadBookings() }, [currentPage, statusFilter])
 
   async function loadBookings() {
     setLoading(true)
     try {
-      const bookingsData = await adminFetch('bookings', '*', [], { column: 'created_at', ascending: false })
+      const filters = []
+      if (statusFilter !== 'all') {
+        filters.push({ type: 'eq', column: 'status', value: statusFilter })
+      }
+
+      const { data: bookingsData, count } = await adminFetch(
+        'bookings',
+        '*',
+        filters,
+        { column: 'created_at', ascending: false },
+        { page: currentPage, pageSize: BOOKINGS_PAGE_SIZE },
+        true
+      )
+
+      setTotalBookings(count || 0)
       if (bookingsData && bookingsData.length > 0) {
         const propIds = [...new Set(bookingsData.map(b => b.property_id).filter(Boolean))]
         const userIds = [...new Set([...bookingsData.map(b => b.tenant), ...bookingsData.map(b => b.landlord)].filter(Boolean))]
@@ -1488,6 +2421,8 @@ function BookingsView() {
       }
     } catch (err) {
       console.error('Failed to load bookings:', err)
+      setBookings([])
+      setTotalBookings(0)
     }
     setLoading(false)
   }
@@ -1504,8 +2439,7 @@ function BookingsView() {
     const matchesSearch = b.property_title.toLowerCase().includes(search.toLowerCase()) ||
       b.tenant_name.toLowerCase().includes(search.toLowerCase()) ||
       b.landlord_name.toLowerCase().includes(search.toLowerCase())
-    const matchesStatus = statusFilter === 'all' || b.status === statusFilter
-    return matchesSearch && matchesStatus
+    return matchesSearch
   })
 
   const uniqueStatuses = [...new Set(bookings.map(b => b.status).filter(Boolean))]
@@ -1542,14 +2476,14 @@ function BookingsView() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {filtered.map(b => (
-                  <tr key={b.id} className="hover:bg-gray-50 transition-colors">
+                  <tr key={b.id} className="transition-colors">
                     <td className="p-4 md:p-5 font-bold text-gray-900 text-sm whitespace-nowrap">{b.property_title}</td>
                     <td className="p-4 md:p-5 text-sm text-gray-600 whitespace-nowrap">{b.tenant_name}</td>
                     <td className="p-4 md:p-5 text-sm text-gray-600 whitespace-nowrap">{b.landlord_name}</td>
                     <td className="p-4 md:p-5 text-sm text-gray-600 whitespace-nowrap">{b.booking_date ? new Date(b.booking_date).toLocaleDateString() : 'N/A'}</td>
-                    <td className="p-4 md:p-5"><Badge variant={b.status === 'confirmed' || b.status === 'approved' ? 'success' : b.status === 'cancelled' || b.status === 'rejected' ? 'danger' : 'warning'}>{b.status}</Badge></td>
+                    <td className="p-4 md:p-5"><Badge variant='default'>{b.status}</Badge></td>
                     <td className="p-4 md:p-5 text-right">
-                      <button onClick={() => setDeleteId(b.id)} className="text-red-600 hover:text-white hover:bg-red-600 font-bold text-xs cursor-pointer px-3 py-1.5 bg-red-50 rounded-lg transition-colors whitespace-nowrap">Delete</button>
+                      <button onClick={() => setDeleteId(b.id)} className="text-gray-700 font-bold text-xs cursor-pointer px-3 py-1.5 bg-gray-100 rounded-lg transition-colors whitespace-nowrap">Delete</button>
                     </td>
                   </tr>
                 ))}
@@ -1557,6 +2491,13 @@ function BookingsView() {
               </tbody>
             </table>
           </div>
+          <PaginationControls
+            currentPage={currentPage}
+            totalItems={totalBookings}
+            pageSize={BOOKINGS_PAGE_SIZE}
+            onPageChange={setCurrentPage}
+            label="bookings"
+          />
         </div>
       )}
       <DeleteModal isOpen={!!deleteId} onClose={() => setDeleteId(null)} onConfirm={confirmDelete} title="Delete Booking" message="Are you sure you want to delete this booking request?" />
@@ -1566,26 +2507,48 @@ function BookingsView() {
 
 
 function SchedulesView() {
+  const SLOTS_PAGE_SIZE = 10
   const [slots, setSlots] = useState([])
   const [loading, setLoading] = useState(true)
   const [deleteId, setDeleteId] = useState(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalSlots, setTotalSlots] = useState(0)
 
-  useEffect(() => { loadSlots() }, [])
+  useEffect(() => { loadSlots() }, [currentPage])
 
   async function loadSlots() {
     setLoading(true)
-    const { data: slotData, error } = await supabase.from('available_time_slots').select('*').gte('start_time', new Date().toISOString()).order('start_time', { ascending: true })
-    if (slotData) {
-      const userIds = [...new Set(slotData.map(s => s.landlord_id).filter(Boolean))]
-      const { data: users } = await supabase.from('profiles').select('id, first_name, last_name').in('id', userIds)
-      const userMap = users?.reduce((acc, u) => ({ ...acc, [u.id]: u }), {}) || {}
-      const enriched = slotData.map(s => ({
-        ...s,
-        landlord_name: userMap[s.landlord_id] ? `${userMap[s.landlord_id].first_name} ${userMap[s.landlord_id].last_name}` : 'Unknown',
-        formatted_date: new Date(s.start_time).toLocaleDateString(),
-        formatted_time: `${new Date(s.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${new Date(s.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-      }))
-      setSlots(enriched)
+    try {
+      const from = (currentPage - 1) * SLOTS_PAGE_SIZE
+      const to = from + SLOTS_PAGE_SIZE - 1
+      const { data: slotData, error, count } = await supabase
+        .from('available_time_slots')
+        .select('*', { count: 'exact' })
+        .gte('start_time', new Date().toISOString())
+        .order('start_time', { ascending: true })
+        .range(from, to)
+
+      if (error) throw error
+      setTotalSlots(count || 0)
+
+      if (slotData && slotData.length > 0) {
+        const userIds = [...new Set(slotData.map(s => s.landlord_id).filter(Boolean))]
+        const { data: users } = await supabase.from('profiles').select('id, first_name, last_name').in('id', userIds)
+        const userMap = users?.reduce((acc, u) => ({ ...acc, [u.id]: u }), {}) || {}
+        const enriched = slotData.map(s => ({
+          ...s,
+          landlord_name: userMap[s.landlord_id] ? `${userMap[s.landlord_id].first_name} ${userMap[s.landlord_id].last_name}` : 'Unknown',
+          formatted_date: new Date(s.start_time).toLocaleDateString(),
+          formatted_time: `${new Date(s.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${new Date(s.end_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+        }))
+        setSlots(enriched)
+      } else {
+        setSlots([])
+      }
+    } catch (error) {
+      console.error('Failed to load schedule slots:', error)
+      setSlots([])
+      setTotalSlots(0)
     }
     setLoading(false)
   }
@@ -1616,13 +2579,13 @@ function SchedulesView() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {slots.map(s => (
-                  <tr key={s.id} className="hover:bg-gray-50">
+                  <tr key={s.id}>
                     <td className="p-4 md:p-5 font-bold text-gray-900 text-sm whitespace-nowrap">{s.landlord_name}</td>
                     <td className="p-4 md:p-5 text-sm text-gray-600 whitespace-nowrap">{s.formatted_date}</td>
                     <td className="p-4 md:p-5 text-sm text-gray-600 whitespace-nowrap">{s.formatted_time}</td>
-                    <td className="p-4 md:p-5"><Badge variant={s.is_booked ? 'warning' : 'success'}>{s.is_booked ? 'Booked' : 'Available'}</Badge></td>
+                    <td className="p-4 md:p-5"><Badge variant='default'>{s.is_booked ? 'Booked' : 'Available'}</Badge></td>
                     <td className="p-4 md:p-5 text-right">
-                      <button onClick={() => setDeleteId(s.id)} className="text-red-600 hover:text-red-800 font-bold text-xs cursor-pointer px-3 py-1 bg-red-50 hover:bg-red-100 rounded-lg transition-colors whitespace-nowrap">Delete</button>
+                      <button onClick={() => setDeleteId(s.id)} className="text-gray-700 font-bold text-xs cursor-pointer px-3 py-1 bg-gray-100 rounded-lg transition-colors whitespace-nowrap">Delete</button>
                     </td>
                   </tr>
                 ))}
@@ -1630,6 +2593,13 @@ function SchedulesView() {
               </tbody>
             </table>
           </div>
+          <PaginationControls
+            currentPage={currentPage}
+            totalItems={totalSlots}
+            pageSize={SLOTS_PAGE_SIZE}
+            onPageChange={setCurrentPage}
+            label="schedule slots"
+          />
         </div>
       )}
       <DeleteModal isOpen={!!deleteId} onClose={() => setDeleteId(null)} onConfirm={confirmDelete} title="Delete Schedule" message="Are you sure you want to remove this time slot?" />
@@ -1752,7 +2722,7 @@ function AdminProfileView({ session, profile }) {
         </div>
         <div className="flex justify-end mt-6">
           <button onClick={handleSaveProfile} disabled={saving}
-            className="px-6 py-3 bg-black text-white font-bold rounded-xl hover:bg-gray-800 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+            className="px-6 py-3 bg-black text-white font-bold rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
             {saving ? 'Saving...' : 'Save Changes'}
           </button>
         </div>
@@ -1769,10 +2739,43 @@ function AdminProfileView({ session, profile }) {
         </div>
         <div className="flex justify-end mt-6">
           <button onClick={handleChangePassword} disabled={savingPassword || !newPassword}
-            className="px-6 py-3 bg-black text-white font-bold rounded-xl hover:bg-gray-800 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+            className="px-6 py-3 bg-black text-white font-bold rounded-xl transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
             {savingPassword ? 'Updating...' : 'Update Password'}
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function PaginationControls({ currentPage, totalItems, pageSize, onPageChange, label = 'items' }) {
+  const totalPages = Math.max(1, Math.ceil((totalItems || 0) / pageSize))
+  const start = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1
+  const end = Math.min(currentPage * pageSize, totalItems)
+
+  return (
+    <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-gray-200 bg-gray-50">
+      <p className="text-xs text-gray-600">
+        Showing {start}-{end} of {totalItems} {label}
+      </p>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+          disabled={currentPage <= 1}
+          className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-300 bg-white text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Prev
+        </button>
+        <span className="text-xs font-semibold text-gray-700">Page {currentPage} / {totalPages}</span>
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+          disabled={currentPage >= totalPages}
+          className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-300 bg-white text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Next
+        </button>
       </div>
     </div>
   )
