@@ -76,7 +76,7 @@ export default function Team() {
             badgeColor: "bg-amber-100 text-amber-700",
             facebook: "https://facebook.com/pahingakamunaaaa",
             instagram: "https://www.instagram.com/alfonzpereezz/",
-            portfolio: "https://portfolioal.vercel.app",
+            portfolio: "https://alfonz.dev",
             github: "https://github.com/TacoTues1"
         }
     ];

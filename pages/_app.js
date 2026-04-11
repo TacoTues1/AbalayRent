@@ -20,6 +20,7 @@ function MyApp({ Component, pageProps }) {
   const publicPaths = new Set([
     '/',
     '/about',
+    '/about-abalay',
     '/contact',
     '/team',
     '/terms',
