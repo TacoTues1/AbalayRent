@@ -58,10 +58,27 @@ export default function EditProperty() {
   const [showAllAmenities, setShowAllAmenities] = useState(false)
 
   const availableAmenities = [
-    'Kitchen', 'Pool', 'TV', 'Elevator', 'Air conditioning', 'Heating', 'Basketball court',
-    'Washing machine', 'Dryer', 'Parking', 'Gym', 'Security', 'Balcony', 'Garden', "Kid's Playground",
-    'Pet friendly', 'Furnished', 'Carbon monoxide alarm', 'Smoke alarm', 'Fire extinguisher', 'First aid kit'
-]
+  'Kitchen', 'Pool', 'TV', 'Elevator', 'Air conditioning', 'Heating', 'Basketball court',
+  'Washing machine', 'Dryer', 'Parking', 'Gym', 'Security', 'Balcony', 'Garden', "Kid's Playground",
+  'Pet friendly', 'Furnished', 'Carbon monoxide alarm', 'Smoke alarm', 'Fire extinguisher', 'First aid kit',
+  'WiFi', 'Cable TV', 'Workspace', 'Study desk', 'Wardrobe', 'Closet', 'Hot water',
+  'Refrigerator', 'Microwave', 'Oven', 'Dishwasher', 'Coffee maker',
+  '24/7 Security', 'CCTV', 'Gated community', 'Doorman',
+  'Private entrance', 'Fire exit', 'Emergency lighting',
+  'Beach access', 'Mountain view', 'City view',
+  'BBQ grill', 'Outdoor dining area', 'Patio', 'Terrace',
+  'Game room', 'Billiards', 'Table tennis',
+  'Sauna', 'Spa', 'Jacuzzi',
+  'Power backup', 'Generator', 'Solar panels',
+  'Water heater', 'Water tank', 'Deep well',
+  'Garbage disposal', 'Recycling bins',
+  'Bicycle parking', 'Motorcycle parking',
+  'Shuttle service', 'Transport service',
+  'Cleaning service', 'Laundry service',
+  'Keycard access', 'Smart lock',
+  'Soundproof rooms', 'Non-smoking rooms',
+  'Wheelchair accessible', 'Ramp access'
+  ]
 
   const normalizeAmenities = (amenities = []) => {
     const mapped = (amenities || []).map(a => (a === 'WiFi' ? 'Wifi' : a))
