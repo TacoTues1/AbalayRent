@@ -177,7 +177,7 @@ export default function TenantDashboard({ session, profile }) {
   useEffect(() => {
     if (!searchQuery.trim()) {
       setSearchResults([])
-      setShowSearchDropdown(false)
+      setIsSearching(false)
       return
     }
     const debounceTimer = setTimeout(async () => {
@@ -217,6 +217,8 @@ export default function TenantDashboard({ session, profile }) {
     if (!searchQuery.trim()) return
     router.push(`/properties/allProperties?search=${encodeURIComponent(searchQuery.trim())}`)
   }
+
+  const suggestedSearchProperties = properties.slice(0, 6)
 
   useEffect(() => {
     const allProperties = [...properties, ...guestFavorites, ...nearbyProperties, ...mostFavoriteProperties, ...topRated]
@@ -2599,7 +2601,7 @@ export default function TenantDashboard({ session, profile }) {
                       className="w-full bg-white border border-gray-200 rounded-full focus:ring-2 focus:ring-black/20 focus:border-gray-400 font-medium pl-11 pr-10 py-3 text-sm transition-all duration-300 hover:border-gray-300 hover:shadow-md focus:shadow-md placeholder:text-gray-400 shadow-sm"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      onFocus={() => searchResults.length > 0 && setShowSearchDropdown(true)}
+                      onFocus={() => setShowSearchDropdown(true)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && searchQuery.trim()) handleSearch()
                         if (e.key === 'Escape') setShowSearchDropdown(false)
@@ -2613,8 +2615,40 @@ export default function TenantDashboard({ session, profile }) {
                         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                       </button>
                     )}
+                    {showSearchDropdown && !searchQuery.trim() && suggestedSearchProperties.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden z-50" style={{ animationDuration: '0.2s' }}>
+                        <div className="p-2">
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">Suggested Properties</p>
+                          {suggestedSearchProperties.map((property) => (
+                            <div
+                              key={property.id}
+                              onClick={() => { router.push(`/properties/${property.id}`); setShowSearchDropdown(false) }}
+                              className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer transition-all duration-200 group"
+                            >
+                              <div className="w-10 h-10 rounded-lg overflow-hidden bg-gray-100 flex-shrink-0">
+                                {property.images?.[0] ? (
+                                  <img src={property.images[0]} alt={property.title} className="w-full h-full object-cover" />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-gray-400">
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-bold text-gray-900 truncate">{property.title}</p>
+                                <div className="flex items-center gap-2 text-xs text-gray-500">
+                                  <span>{property.city}</span>
+                                  <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
+                                  <span className="font-bold text-gray-900">₱{Number(property.price).toLocaleString()}/mo</span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {/* Search Dropdown */}
-                    {showSearchDropdown && searchResults.length > 0 && (
+                    {showSearchDropdown && searchQuery.trim() && searchResults.length > 0 && (
                       <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden z-50" style={{ animationDuration: '0.2s' }}>
                         <div className="p-2">
                           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">Search Results</p>

@@ -1076,10 +1076,10 @@ export default function Navbar({ isHomeLoading = false }) {
       <style dangerouslySetInnerHTML={{ __html: "@import url('https://fonts.googleapis.com/css2?family=Pacifico&display=swap');" }} />
       <div ref={navRef} className="absolute top-0 left-0 right-0 z-50 pointer-events-none bg-white border-b border-gray-100">
         <nav className="w-full max-w-[1800px] mx-auto pointer-events-auto transition-all duration-300 py-3 px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-10">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center h-10">
 
             {/* Left Side: Logo */}
-            <div className="flex-1 flex items-center justify-start z-50">
+            <div className="flex items-center justify-start z-50 min-w-0">
               <Link href="/dashboard" className="flex items-center gap-2.5 hover:opacity-80 transition-opacity">
                 <img src="/home.png" alt="Abalay" className="w-10 h-10 object-contain" />
                 <span className="text-[28px] text-black tracking-normal" style={{ fontFamily: '"Pacifico", cursive', marginTop: '-4px' }}>Abalay</span>
@@ -1087,14 +1087,14 @@ export default function Navbar({ isHomeLoading = false }) {
             </div>
 
             {/* Center: Links */}
-            <div className="hidden md:flex relative flex-1 items-center justify-center gap-8">
+            <div className="hidden md:flex relative items-center justify-center gap-4 lg:gap-6 xl:gap-8 px-4">
               <div className="absolute -bottom-4 h-[3px] bg-black rounded-t-full" style={{ left: `${underlineStyle.left}px`, width: `${underlineStyle.width}px`, opacity: underlineStyle.width ? 1 : 0, transition: 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)' }} />
 
-              <Link href="/dashboard" className={`nav-link text-sm font-semibold transition-colors ${isActive('/dashboard') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}>Home</Link>
+              <Link href="/dashboard" className={`nav-link text-sm font-semibold whitespace-nowrap transition-colors ${isActive('/dashboard') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}>Home</Link>
 
               {effectiveRole === 'landlord' && (
                 <>
-                  <Link href="/bookings" className={`nav-link text-sm font-semibold transition-colors relative group ${isActive('/bookings') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
+                  <Link href="/bookings" className={`nav-link text-sm font-semibold whitespace-nowrap transition-colors relative group ${isActive('/bookings') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
                     Tenants Bookings
                     {bookingCount > 0 && (
                       <span className="absolute top-0 right-0 transform translate-x-3 -translate-y-2 bg-[#FF4B60] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center shadow-sm">
@@ -1102,7 +1102,7 @@ export default function Navbar({ isHomeLoading = false }) {
                       </span>
                     )}
                   </Link>
-                  <Link href="/maintenance" className={`nav-link text-sm font-semibold transition-colors relative group ${isActive('/maintenance') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
+                  <Link href="/maintenance" className={`nav-link text-sm font-semibold whitespace-nowrap transition-colors relative group ${isActive('/maintenance') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
                     Tenants Maintenance
                     {maintenanceCount > 0 && (
                       <span className="absolute top-0 right-0 transform translate-x-3 -translate-y-2 bg-[#FF4B60] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center shadow-sm">
@@ -1110,10 +1110,10 @@ export default function Navbar({ isHomeLoading = false }) {
                       </span>
                     )}
                   </Link>
-                  <Link href="/properties/allProperties" className={`nav-link text-sm font-semibold transition-colors ${isActive('/properties/allProperties') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
+                  <Link href="/properties/allProperties" className={`nav-link text-sm font-semibold whitespace-nowrap transition-colors ${isActive('/properties/allProperties') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
                     Properties
                   </Link>
-                  <Link href="/payments" className={`nav-link text-sm font-semibold transition-colors relative group ${isActive('/payments') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
+                  <Link href="/payments" className={`nav-link text-sm font-semibold whitespace-nowrap transition-colors relative group ${isActive('/payments') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
                     Payments
                     {pendingPaymentCount > 0 && (
                       <span className="absolute top-0 right-0 transform translate-x-3 -translate-y-2 bg-[#FF4B60] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center shadow-sm">
@@ -1128,7 +1128,7 @@ export default function Navbar({ isHomeLoading = false }) {
                 <>
                   {effectiveRole === 'tenant' && (
                     <>
-                      <Link href="/bookings" className={`nav-link text-sm font-semibold transition-colors relative group ${isActive('/bookings') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
+                      <Link href="/bookings" className={`nav-link text-sm font-semibold whitespace-nowrap transition-colors relative group ${isActive('/bookings') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
                         My Bookings
                         {bookingCount > 0 && (
                           <span className="absolute top-0 right-0 transform translate-x-3 -translate-y-2 bg-[#FF4B60] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center shadow-sm">
@@ -1136,7 +1136,7 @@ export default function Navbar({ isHomeLoading = false }) {
                           </span>
                         )}
                       </Link>
-                      <Link href="/maintenance" className={`nav-link text-sm font-semibold transition-colors relative group ${isActive('/maintenance') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
+                      <Link href="/maintenance" className={`nav-link text-sm font-semibold whitespace-nowrap transition-colors relative group ${isActive('/maintenance') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
                         Maintenance
                         {maintenanceCount > 0 && (
                           <span className="absolute top-0 right-0 transform translate-x-3 -translate-y-2 bg-[#FF4B60] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center shadow-sm">
@@ -1144,10 +1144,10 @@ export default function Navbar({ isHomeLoading = false }) {
                           </span>
                         )}
                       </Link>
-                      <Link href="/properties/allProperties" className={`nav-link text-sm font-semibold transition-colors ${isActive('/properties/allProperties') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
+                      <Link href="/properties/allProperties" className={`nav-link text-sm font-semibold whitespace-nowrap transition-colors ${isActive('/properties/allProperties') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
                         Properties
                       </Link>
-                      <Link href="/payments" className={`nav-link text-sm font-semibold transition-colors relative group ${isActive('/payments') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
+                      <Link href="/payments" className={`nav-link text-sm font-semibold whitespace-nowrap transition-colors relative group ${isActive('/payments') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
                         Payments
                         {pendingPaymentCount > 0 && (
                           <span className="absolute top-0 right-0 transform translate-x-3 -translate-y-2 bg-[#FF4B60] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center shadow-sm">
@@ -1158,7 +1158,7 @@ export default function Navbar({ isHomeLoading = false }) {
                     </>
                   )}
                   {effectiveRole === 'visitor' && (
-                    <Link href="/properties/allProperties" className={`nav-link text-sm font-semibold transition-colors ${isActive('/properties/allProperties') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
+                    <Link href="/properties/allProperties" className={`nav-link text-sm font-semibold whitespace-nowrap transition-colors ${isActive('/properties/allProperties') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
                       Properties
                     </Link>
                   )}
@@ -1168,7 +1168,7 @@ export default function Navbar({ isHomeLoading = false }) {
 
             {/* Mobile Center Logo (Clickable) - Removed since moved to left plane */}
 
-            <div className="flex-1 flex items-center justify-end gap-3 lg:gap-5 z-50">
+            <div className="flex items-center justify-end gap-3 lg:gap-5 z-50 min-w-0">
               {/* Favorites Icon */}
               <Link href="/favorites" className={`group hidden md:flex p-1.5 rounded-full items-center justify-center transition-colors relative ${isActive('/favorites') ? 'active bg-gray-300 text-gray-900' : 'text-gray-500 hover:text-red-500 hover:bg-gray-50'} ${disabledClass}`}>
                 <svg className="w-[22px] h-[22px]" fill={isActive('/favorites') ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
@@ -1403,10 +1403,18 @@ export default function Navbar({ isHomeLoading = false }) {
                   <Link href="/properties/new" onClick={() => setShowMobileMenu(false)} className={`flex items-center justify-center px-3 py-2 rounded-lg text-xs font-medium transition-all ${isActive('/properties/new') ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-100'} ${disabledClass}`}>Add Property</Link>
                   <Link href="/applications" onClick={() => setShowMobileMenu(false)} className={`flex items-center justify-center px-3 py-2 rounded-lg text-xs font-medium transition-all ${isActive('/applications') ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-100'} ${disabledClass}`}>Tenants Inquiries</Link>
                   <Link href="/bookings" onClick={() => setShowMobileMenu(false)} className={`flex items-center justify-center px-3 py-2 rounded-lg text-xs font-medium transition-all relative ${isActive('/bookings') ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-100'} ${disabledClass}`}>
-                    TenantsBookings
+                    Tenants Bookings
                     {bookingCount > 0 && (
                       <span className={`absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 text-[8px] font-bold px-1 py-0.5 rounded-full min-w-[1rem] text-center border border-white shadow-sm ${isActive('/bookings') ? 'bg-white text-black' : 'bg-red-500 text-white'}`}>
                         {bookingCount > 9 ? '9+' : bookingCount}
+                      </span>
+                    )}
+                  </Link>
+                  <Link href="/maintenance" onClick={() => setShowMobileMenu(false)} className={`flex items-center justify-center px-3 py-2 rounded-lg text-xs font-medium transition-all relative ${isActive('/maintenance') ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-100'} ${disabledClass}`}>
+                    Tenants Maintenance
+                    {maintenanceCount > 0 && (
+                      <span className={`absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 text-[8px] font-bold px-1 py-0.5 rounded-full min-w-[1rem] text-center border border-white shadow-sm ${isActive('/maintenance') ? 'bg-white text-black' : 'bg-red-500 text-white'}`}>
+                        {maintenanceCount > 9 ? '9+' : maintenanceCount}
                       </span>
                     )}
                   </Link>

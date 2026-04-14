@@ -233,9 +233,11 @@ export default function AllProperties() {
   const autoLocationRequestedRef = useRef(false)
   const geocodedCityKeysRef = useRef(new Set())
   const geocodedPropertyIdsRef = useRef(new Set())
+  const lastFilterSignatureRef = useRef('')
   const [properties, setProperties] = useState([])
   const [filteredProperties, setFilteredProperties] = useState([])
   const [loading, setLoading] = useState(true)
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
   const [totalPropertyCount, setTotalPropertyCount] = useState(0)
   const [currentPage, setCurrentPage] = useState(1)
   const [session, setSession] = useState(null)
@@ -245,6 +247,7 @@ export default function AllProperties() {
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedAmenities, setSelectedAmenities] = useState([])
+  const [draftAmenities, setDraftAmenities] = useState([])
   const [priceRange, setPriceRange] = useState({ min: '', max: '' })
   const [sortBy, setSortBy] = useState('newest')
 
@@ -252,7 +255,7 @@ export default function AllProperties() {
   const [minRating, setMinRating] = useState(0)
   const [hoverRating, setHoverRating] = useState(0)
   const [filterMostFavorite, setFilterMostFavorite] = useState(false)
-  const [showAllAmenities, setShowAllAmenities] = useState(false)
+  const [showAmenitiesModal, setShowAmenitiesModal] = useState(false)
 
   // --- Responsive Filters State ---
   const [showMobileFilters, setShowMobileFilters] = useState(false)
@@ -384,9 +387,26 @@ export default function AllProperties() {
   }
 
   const filterAmenities = [
-    'Kitchen', 'Pool', 'TV', 'Elevator', 'Air conditioning', 'Heating', 'Basketball court',
-    'Washing machine', 'Dryer', 'Parking', 'Gym', 'Security', 'Balcony', 'Garden', "Kid's Playground",
-    'Pet friendly', 'Furnished', 'Carbon monoxide alarm', 'Smoke alarm', 'Fire extinguisher', 'First aid kit'
+  'Kitchen', 'Pool', 'TV', 'Elevator', 'Air conditioning', 'Heating', 'Basketball court',
+  'Washing machine', 'Dryer', 'Parking', 'Gym', 'Security', 'Balcony', 'Garden', "Kid's Playground",
+  'Pet friendly', 'Furnished', 'Carbon monoxide alarm', 'Smoke alarm', 'Fire extinguisher', 'First aid kit',
+  'WiFi', 'Cable TV', 'Workspace', 'Study desk', 'Wardrobe', 'Closet', 'Hot water',
+  'Refrigerator', 'Microwave', 'Oven', 'Dishwasher', 'Coffee maker',
+  '24/7 Security', 'CCTV', 'Gated community', 'Doorman',
+  'Private entrance', 'Fire exit', 'Emergency lighting',
+  'Beach access', 'Mountain view', 'City view',
+  'BBQ grill', 'Outdoor dining area', 'Patio', 'Terrace',
+  'Game room', 'Billiards', 'Table tennis',
+  'Sauna', 'Spa', 'Jacuzzi',
+  'Power backup', 'Generator', 'Solar panels',
+  'Water heater', 'Water tank', 'Deep well',
+  'Garbage disposal', 'Recycling bins',
+  'Bicycle parking', 'Motorcycle parking',
+  'Shuttle service', 'Transport service',
+  'Cleaning service', 'Laundry service',
+  'Keycard access', 'Smart lock',
+  'Soundproof rooms', 'Non-smoking rooms',
+  'Wheelchair accessible', 'Ramp access'
 ]
 
   // Auto-slide images for property cards
@@ -445,15 +465,31 @@ export default function AllProperties() {
   useEffect(() => {
     if (!router.isReady || !statsLoaded) return
 
+    const filterSignature = JSON.stringify({
+      searchQuery,
+      selectedAmenities,
+      minPrice: priceRange.min,
+      maxPrice: priceRange.max,
+      minRating,
+      filterMostFavorite,
+      sortBy,
+      userLocation,
+    })
+
+    const filtersChanged = lastFilterSignatureRef.current !== filterSignature
+    if (filtersChanged) {
+      lastFilterSignatureRef.current = filterSignature
+      if (currentPage !== 1) {
+        setCurrentPage(1)
+        return
+      }
+    }
+
     const delayDebounceFn = setTimeout(() => {
       loadProperties()
     }, 300)
     return () => clearTimeout(delayDebounceFn)
   }, [searchQuery, selectedAmenities, priceRange, minRating, filterMostFavorite, sortBy, router.isReady, statsLoaded, userLocation, currentPage])
-
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [searchQuery, selectedAmenities, priceRange, minRating, filterMostFavorite, sortBy, userLocation])
 
   useEffect(() => {
     const maxPage = Math.max(1, Math.ceil(totalPropertyCount / PROPERTIES_PER_PAGE))
@@ -462,9 +498,9 @@ export default function AllProperties() {
     }
   }, [currentPage, totalPropertyCount])
 
-  // Disable body scroll when mobile filters are open
+  // Disable body scroll when overlays are open
   useEffect(() => {
-    if (showMobileFilters) {
+    if (showMobileFilters || showAmenitiesModal) {
       document.body.style.overflow = 'hidden'
     } else {
       document.body.style.overflow = 'unset'
@@ -472,7 +508,7 @@ export default function AllProperties() {
     return () => {
       document.body.style.overflow = 'unset'
     }
-  }, [showMobileFilters])
+  }, [showMobileFilters, showAmenitiesModal])
 
   useEffect(() => {
     if (!router.isReady || autoLocationRequestedRef.current) return
@@ -756,6 +792,7 @@ export default function AllProperties() {
     const to = from + PROPERTIES_PER_PAGE
     setProperties(filteredData.slice(from, to))
     setLoading(false)
+    setHasLoadedOnce(true)
   }
 
   const getPropertyImages = (property) => {
@@ -785,15 +822,37 @@ export default function AllProperties() {
     )
   }
 
+  const toggleDraftAmenityFilter = (amenity) => {
+    setDraftAmenities(prev =>
+      prev.includes(amenity) ? prev.filter(a => a !== amenity) : [...prev, amenity]
+    )
+  }
+
+  const openAmenitiesModal = () => {
+    setDraftAmenities(selectedAmenities)
+    setShowAmenitiesModal(true)
+  }
+
+  const closeAmenitiesModal = () => {
+    setDraftAmenities(selectedAmenities)
+    setShowAmenitiesModal(false)
+  }
+
+  const applyAmenitiesModal = () => {
+    setSelectedAmenities(draftAmenities)
+    setShowAmenitiesModal(false)
+  }
+
   const clearFilters = () => {
     setSearchQuery('')
     setSelectedAmenities([])
+    setDraftAmenities([])
     setPriceRange({ min: '', max: '' })
     setSortBy('newest')
     setMinRating(0)
     setHoverRating(0)
     setFilterMostFavorite(false)
-    setShowAllAmenities(false)
+    setShowAmenitiesModal(false)
     setUserLocation(null)
     setMapZoom(null)
     setNearbyFocusZoom(null)
@@ -816,7 +875,6 @@ export default function AllProperties() {
     }
 
     setLoading(true)
-    setProperties([])
     setCurrentPage(nextPage)
   }
 
@@ -1022,7 +1080,7 @@ export default function AllProperties() {
       <div>
         <p className="text-xs font-bold text-gray-500 uppercase mb-2">Amenities</p>
         <div className="flex flex-col gap-2">
-          {(showAllAmenities ? filterAmenities : filterAmenities.slice(0, AMENITIES_VISIBLE_LIMIT)).map(amenity => (
+          {filterAmenities.slice(0, AMENITIES_VISIBLE_LIMIT).map(amenity => (
             <label key={amenity} className="flex items-center gap-2 cursor-pointer group">
               <div className="relative flex items-center">
                 <input
@@ -1041,10 +1099,10 @@ export default function AllProperties() {
           {filterAmenities.length > AMENITIES_VISIBLE_LIMIT && (
             <button
               type="button"
-              onClick={() => setShowAllAmenities(prev => !prev)}
+              onClick={openAmenitiesModal}
               className="mt-1 text-xs font-semibold text-black hover:underline text-left cursor-pointer"
             >
-              {showAllAmenities ? 'See Less' : `See More (${filterAmenities.length - AMENITIES_VISIBLE_LIMIT})`}
+              {`See More (${filterAmenities.length - AMENITIES_VISIBLE_LIMIT})`}
             </button>
           )}
         </div>
@@ -1359,9 +1417,9 @@ export default function AllProperties() {
           {/* --- RIGHT PANEL: ALL PROPERTIES --- */}
           <main className="flex-1 w-full">
             {/* Render Content Area */}
-            <div className={`relative transition-opacity duration-300 ${loading ? 'opacity-80' : ''}`}>
+            <div className={`relative min-h-[520px] transition-opacity duration-300 ${loading ? 'opacity-80' : ''}`}>
               {/* Overlay Loader for subsequent filter changes */}
-              {loading && properties.length > 0 && (
+              {loading && properties.length > 0 && !showMapView && (
                 <div className="absolute inset-0 z-50 bg-white/35 backdrop-blur-[1px] rounded-3xl pointer-events-none p-3 sm:p-4">
                   <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
                     {skeletonCardIndices.slice(0, 8).map((item) => renderSkeletonCard(`overlay-${item}`))}
@@ -1369,7 +1427,7 @@ export default function AllProperties() {
                 </div>
               )}
 
-              {loading && properties.length === 0 ? (
+              {loading && !hasLoadedOnce && !showMapView ? (
                 /* Initial Full Loading State */
                 <div className="rounded-3xl">
                   <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4 mb-12">
@@ -1378,6 +1436,14 @@ export default function AllProperties() {
                 </div>
               ) : showMapView ? (
                 <div className="w-full h-[70vh] min-h-[500px] rounded-3xl overflow-hidden border border-gray-200 shadow-sm relative z-0">
+                  {loading && (
+                    <div className="absolute inset-0 z-[70] bg-white/35 backdrop-blur-[1px] flex items-center justify-center pointer-events-none">
+                      <div className="bg-white/90 border border-gray-100 rounded-xl px-4 py-2.5 shadow-sm flex items-center gap-2.5">
+                        <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin"></div>
+                        <span className="text-xs font-semibold text-gray-700">Updating map results...</span>
+                      </div>
+                    </div>
+                  )}
                   {/* Empty State Overlay for Map View */}
                   {filteredProperties.length === 0 && !loading && (
                     <div className="absolute inset-0 z-[60] flex items-center justify-center bg-white/60 backdrop-blur-sm pointer-events-none">
@@ -1437,26 +1503,7 @@ export default function AllProperties() {
 
                   {/* Property Markers */}
                   {(() => {
-                    const shouldShowNearbyOnly =
-                      userLocation &&
-                      typeof mapZoom === 'number' &&
-                      typeof nearbyFocusZoom === 'number' &&
-                      mapZoom >= (nearbyFocusZoom - 0.001)
-                    const markerSourceProperties = shouldShowNearbyOnly
-                      ? filteredProperties.filter((property) => {
-                        const coords = extractCoordinates(property.location_link)
-                        if (!coords) return false
-
-                        const dist = getDistanceFromLatLonInKm(
-                          userLocation.latitude,
-                          userLocation.longitude,
-                          parseFloat(coords.lat),
-                          parseFloat(coords.lng)
-                        )
-
-                        return dist <= NEARBY_RADIUS_KM
-                      })
-                      : filteredProperties
+                    const markerSourceProperties = filteredProperties
 
                     // Group properties by rounded coordinates to find exact overlaps
                     const coordGroups = {};
@@ -1600,6 +1647,72 @@ export default function AllProperties() {
                 <span className="hidden sm:inline text-xs text-gray-400 font-normal normal-case">(Select at least 2)</span>
               )}
             </button>
+          </div>
+        )}
+
+        {showAmenitiesModal && (
+          <div className="fixed inset-0 z-[80]">
+            <div
+              className="absolute inset-0 bg-black/40"
+              onClick={closeAmenitiesModal}
+            ></div>
+
+            <div className="absolute inset-x-4 top-1/2 -translate-y-1/2 mx-auto w-full max-w-xl bg-white rounded-2xl border border-gray-100 shadow-2xl flex flex-col max-h-[80vh]">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                <div>
+                  <h3 className="text-lg font-black text-black">All Amenities</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">Select amenities to filter properties</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeAmenitiesModal}
+                  className="p-2 rounded-full bg-gray-100 hover:bg-gray-200 cursor-pointer"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+
+              <div className="px-5 py-4 overflow-y-auto">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+                  {filterAmenities.map((amenity) => (
+                    <label key={amenity} className="flex items-center gap-2 cursor-pointer group">
+                      <div className="relative flex items-center">
+                        <input
+                          type="checkbox"
+                          className="peer h-4 w-4 cursor-pointer appearance-none rounded border border-gray-300 checked:bg-black checked:border-black transition-all"
+                          checked={draftAmenities.includes(amenity)}
+                          onChange={() => toggleDraftAmenityFilter(amenity)}
+                        />
+                        <svg className="absolute w-2.5 h-2.5 pointer-events-none hidden peer-checked:block text-white left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path>
+                        </svg>
+                      </div>
+                      <span className="text-sm text-gray-700 group-hover:text-black transition-colors">{amenity}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="px-5 py-4 border-t border-gray-100 flex items-center justify-between gap-3">
+                <p className="text-xs font-medium text-gray-500">{draftAmenities.length} selected</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDraftAmenities([])}
+                    className="px-4 py-2 text-sm font-semibold text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    onClick={applyAmenitiesModal}
+                    className="px-4 py-2 text-sm font-semibold text-white bg-black rounded-lg hover:bg-gray-800 cursor-pointer"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>

@@ -53,7 +53,32 @@ export default function PropertyDetail() {
   const [locationRouteInfo, setLocationRouteInfo] = useState(null)
   const [locationIsRouting, setLocationIsRouting] = useState(false)
   const [mapLoading, setMapLoading] = useState(true)
+  const [resolvedPropertyCoords, setResolvedPropertyCoords] = useState(null)
+  const [hasResolvedPropertyCoords, setHasResolvedPropertyCoords] = useState(false)
+  const [isResolvingPropertyCoords, setIsResolvingPropertyCoords] = useState(false)
   const locationSearchTimeout = useRef(null)
+  const maplibreRef = useRef(null)
+  const maplibrePromiseRef = useRef(null)
+
+  const loadMaplibre = async () => {
+    if (maplibreRef.current) return maplibreRef.current
+    if (!maplibrePromiseRef.current) {
+      maplibrePromiseRef.current = import('maplibre-gl').then((mlglModule) => {
+        const mlgl = mlglModule.default || mlglModule
+        maplibreRef.current = mlgl
+        return mlgl
+      })
+    }
+    return maplibrePromiseRef.current
+  }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    loadMaplibre().catch((err) => {
+      console.error('Failed to preload Maplibre for property location map', err)
+    })
+  }, [])
+
   useEffect(() => {
     supabase.auth.getSession().then(async result => {
       const existingSession = result.data?.session
@@ -245,22 +270,31 @@ export default function PropertyDetail() {
       return
     }
 
-    if (propertyData) {
-      setProperty(propertyData)
-      await loadLandlordReviewStats(propertyData.landlord)
-      if (propertyData.landlord) {
-        const { data: landlordData, error: landlordError } = await supabase
-          .from('profiles')
-          .select('*, avatar_url')
-          .eq('id', propertyData.landlord)
-          .maybeSingle()
-
-        if (!landlordError && landlordData) {
-          setLandlordProfile(landlordData)
-        }
-      }
+    if (!propertyData) {
+      setLoading(false)
+      return
     }
+
+    setProperty(propertyData)
     setLoading(false)
+
+    if (propertyData.landlord) {
+      loadLandlordReviewStats(propertyData.landlord)
+
+      supabase
+        .from('profiles')
+        .select('*, avatar_url')
+        .eq('id', propertyData.landlord)
+        .maybeSingle()
+        .then(({ data: landlordData, error: landlordError }) => {
+          if (!landlordError && landlordData) {
+            setLandlordProfile(landlordData)
+          }
+        })
+        .catch((err) => {
+          console.error('Error loading landlord profile:', err)
+        })
+    }
   }
 
   async function loadLandlordReviewStats(landlordId) {
@@ -313,10 +347,198 @@ export default function PropertyDetail() {
 
     const match = atMatch || qMatch || placeMatch;
     if (match) {
-      return { lat: match[1], lng: match[2] };
+      const lat = parseFloat(match[1])
+      const lng = parseFloat(match[2])
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        return { lat, lng }
+      }
     }
     return null;
   };
+
+  const buildPropertyGeocodeCandidates = (propertyData) => {
+    const address = String(propertyData?.address || '').trim()
+    const city = String(propertyData?.city || '').trim()
+    const stateProvince = String(propertyData?.state_province || '').trim()
+    const zip = String(propertyData?.zip || '').trim()
+    const country = String(propertyData?.country || 'Philippines').trim() || 'Philippines'
+    const candidates = []
+
+    if (address && city && stateProvince && zip) candidates.push(`${address}, ${city}, ${stateProvince} ${zip}, ${country}`)
+    if (address && city && stateProvince) candidates.push(`${address}, ${city}, ${stateProvince}, ${country}`)
+    if (address && city) candidates.push(`${address}, ${city}, ${country}`)
+    if (address && stateProvince) candidates.push(`${address}, ${stateProvince}, ${country}`)
+    if (address) candidates.push(`${address}, ${country}`)
+    if (city && stateProvince) candidates.push(`${city}, ${stateProvince}, ${country}`)
+    if (city) candidates.push(`${city}, ${country}`)
+
+    return [...new Set(candidates.filter(Boolean))]
+  }
+
+  const normalizeLocationToken = (value) => {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/\b(city|municipality|province)\b/g, ' ')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
+
+  const geocodeResultMatchesPropertyLocation = (result, propertyData) => {
+    const expectedCity = normalizeLocationToken(propertyData?.city)
+    const expectedState = normalizeLocationToken(propertyData?.state_province)
+    const expectedCountry = normalizeLocationToken(propertyData?.country || 'Philippines')
+
+    const address = result?.address || {}
+    const cityCandidates = [
+      address.city,
+      address.town,
+      address.village,
+      address.municipality,
+      address.suburb,
+      address.city_district,
+      result?.display_name,
+    ]
+    const stateCandidates = [
+      address.state,
+      address.state_district,
+      address.region,
+      address.province,
+      address.county,
+      result?.display_name,
+    ]
+    const countryCandidates = [
+      address.country,
+      result?.display_name,
+    ]
+
+    const normalizedCountryCode = String(address.country_code || '').toLowerCase()
+
+    if (expectedCountry.includes('philippines')) {
+      const countryLooksPH = normalizedCountryCode === 'ph'
+        || countryCandidates.some((item) => normalizeLocationToken(item).includes('philippines'))
+      if (!countryLooksPH) return false
+    } else if (expectedCountry) {
+      const countryMatch = countryCandidates.some((item) => normalizeLocationToken(item).includes(expectedCountry))
+      if (!countryMatch) return false
+    }
+
+    if (expectedCity) {
+      const cityMatch = cityCandidates.some((item) => normalizeLocationToken(item).includes(expectedCity))
+      if (!cityMatch) return false
+    }
+
+    if (expectedState) {
+      const stateMatch = stateCandidates.some((item) => normalizeLocationToken(item).includes(expectedState))
+      if (!stateMatch) return false
+    }
+
+    return true
+  }
+
+  const geocodePropertyCoordinates = async (propertyData) => {
+    const candidates = buildPropertyGeocodeCandidates(propertyData)
+    if (candidates.length === 0) return null
+
+    const country = String(propertyData?.country || '').toLowerCase()
+    const restrictToPH = !country || country.includes('philippines')
+
+    for (const candidate of candidates) {
+      try {
+        const params = new URLSearchParams({
+          format: 'json',
+          limit: '5',
+          addressdetails: '1',
+          q: candidate,
+        })
+        if (restrictToPH) {
+          params.set('countrycodes', 'ph')
+        }
+
+        const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
+          headers: { Accept: 'application/json' }
+        })
+
+        if (!response.ok) continue
+        const data = await response.json()
+        if (Array.isArray(data) && data.length > 0) {
+          const matchingResult = data.find((item) => geocodeResultMatchesPropertyLocation(item, propertyData))
+          if (!matchingResult) {
+            continue
+          }
+
+          const lat = parseFloat(matchingResult.lat)
+          const lng = parseFloat(matchingResult.lon)
+          if (Number.isFinite(lat) && Number.isFinite(lng)) {
+            return { lat, lng }
+          }
+        }
+      } catch (error) {
+        console.error('Property geocoding attempt failed:', error)
+      }
+    }
+
+    return null
+  }
+
+  const getDestinationCoords = () => {
+    const coordsFromLink = extractCoordinates(property?.location_link)
+    if (coordsFromLink) return coordsFromLink
+    if (
+      resolvedPropertyCoords &&
+      Number.isFinite(resolvedPropertyCoords.lat) &&
+      Number.isFinite(resolvedPropertyCoords.lng)
+    ) {
+      return resolvedPropertyCoords
+    }
+    return null
+  }
+
+  useEffect(() => {
+    if (!property) return
+
+    const linkCoords = extractCoordinates(property.location_link)
+    if (linkCoords) {
+      setResolvedPropertyCoords(linkCoords)
+      setHasResolvedPropertyCoords(true)
+      setIsResolvingPropertyCoords(false)
+      return
+    }
+
+    let cancelled = false
+    setHasResolvedPropertyCoords(false)
+    setResolvedPropertyCoords(null)
+    setIsResolvingPropertyCoords(true)
+
+    geocodePropertyCoordinates(property)
+      .then((coords) => {
+        if (cancelled) return
+        if (coords) {
+          setResolvedPropertyCoords(coords)
+        }
+      })
+      .catch((error) => {
+        console.error('Failed resolving property coordinates:', error)
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsResolvingPropertyCoords(false)
+          setHasResolvedPropertyCoords(true)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    property?.id,
+    property?.location_link,
+    property?.address,
+    property?.city,
+    property?.state_province,
+    property?.zip,
+    property?.country,
+  ])
 
   const getMapEmbedUrl = () => {
     const coords = extractCoordinates(property?.location_link)
@@ -331,18 +553,24 @@ export default function PropertyDetail() {
   // Initialize Maplibre GL map for property location
   useEffect(() => {
     if (typeof window === 'undefined' || !property || locationMapInstance.current) return
+    const hasDirectMapCoords = Boolean(extractCoordinates(property?.location_link))
+    if (!hasDirectMapCoords && !hasResolvedPropertyCoords) return
 
-    const initMap = () => {
+    const destinationCoords = getDestinationCoords()
+
+    setMapLoading(true)
+    let cancelled = false
+
+    const initMap = async () => {
       if (!locationMapRef.current || locationMapInstance.current) return
 
-      import('maplibre-gl').then((mlglModule) => {
-        const mlgl = mlglModule.default || mlglModule;
+      try {
+        const mlgl = await loadMaplibre()
 
-        if (!locationMapRef.current || locationMapInstance.current) return
+        if (cancelled || !locationMapRef.current || locationMapInstance.current) return
 
-        const coords = extractCoordinates(property?.location_link)
-        const lat = coords ? parseFloat(coords.lat) : 10.3157
-        const lng = coords ? parseFloat(coords.lng) : 123.8854
+        const lat = destinationCoords ? destinationCoords.lat : 10.3157
+        const lng = destinationCoords ? destinationCoords.lng : 123.8854
 
         const map = new mlgl.Map({
           container: locationMapRef.current,
@@ -358,6 +586,10 @@ export default function PropertyDetail() {
         locationMapInstance.current = map
 
         map.addControl(new mlgl.NavigationControl({ showCompass: false }), 'top-right')
+
+        map.on('error', () => {
+          if (!cancelled) setMapLoading(false)
+        })
 
         const el = document.createElement('div')
         el.innerHTML = `
@@ -379,23 +611,25 @@ export default function PropertyDetail() {
           .addTo(map)
           .togglePopup()
 
-        locationMapInstance.current = map
         setMapLoading(false)
 
-        setTimeout(() => map.resize(), 300)
-      }).catch(err => console.error('Failed to load Maplibre for location map', err))
+        requestAnimationFrame(() => map.resize())
+      } catch (err) {
+        console.error('Failed to initialize Maplibre for location map', err)
+        if (!cancelled) setMapLoading(false)
+      }
     }
 
-    // Small delay to ensure DOM is ready
-    const timer = setTimeout(initMap, 200)
+    initMap()
+
     return () => {
-      clearTimeout(timer)
+      cancelled = true
       if (locationMapInstance.current) {
         locationMapInstance.current.remove()
         locationMapInstance.current = null
       }
     }
-  }, [property])
+  }, [property, resolvedPropertyCoords, hasResolvedPropertyCoords])
 
   // Location routing functions
   const handleLocationAddressChange = (e) => {
@@ -452,9 +686,9 @@ export default function PropertyDetail() {
     if (!locationMapInstance.current || !property) return
     setLocationIsRouting(true)
 
-    const coords = extractCoordinates(property?.location_link)
-    const destLat = coords ? parseFloat(coords.lat) : 10.3157
-    const destLng = coords ? parseFloat(coords.lng) : 123.8854
+    const destination = getDestinationCoords()
+    const destLat = destination ? destination.lat : 10.3157
+    const destLng = destination ? destination.lng : 123.8854
 
     try {
       const response = await fetch(
@@ -538,16 +772,16 @@ export default function PropertyDetail() {
 
     // Re-center map on property
     if (locationMapInstance.current && property) {
-      const coords = extractCoordinates(property?.location_link)
-      const lat = coords ? parseFloat(coords.lat) : 10.3157
-      const lng = coords ? parseFloat(coords.lng) : 123.8854
+      const destination = getDestinationCoords()
+      const lat = destination ? destination.lat : 10.3157
+      const lng = destination ? destination.lng : 123.8854
       locationMapInstance.current.flyTo({ center: [lng, lat], zoom: 15 })
     }
   }
 
   const handleInternalDirections = (e) => {
     e.preventDefault();
-    const coords = extractCoordinates(property?.location_link);
+    const coords = getDestinationCoords();
     const country = property?.country || 'Philippines'
     const fullAddr = `${property.address}, ${property.city}, ${property?.state_province || ''}, ${country}`;
 
