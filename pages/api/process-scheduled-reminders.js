@@ -7,6 +7,11 @@ const supabaseAdmin = createClient(
     process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000000'
+const REMINDER_TIME_ZONE = 'Asia/Manila'
+const TENANT_PREFERRED_PREFIXES = [
+    'TENANTS PREFEREED SCHEDULE:',
+    'TENANTS PREFERRED SCHEDULE:'
+]
 
 // Helper: Format Phone Number
 function formatPhoneNumber(phone) {
@@ -16,6 +21,130 @@ function formatPhoneNumber(phone) {
     if (clean.startsWith('09')) return '+63' + clean.substring(1);
     if (clean.startsWith('63')) return '+' + clean;
     return '+' + clean;
+}
+
+function toValidDate(value) {
+    if (!value) return null
+    const parsed = new Date(value)
+    return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function getTimeZoneDateParts(date, timeZone = REMINDER_TIME_ZONE) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    }).formatToParts(date)
+
+    const lookup = {}
+    for (const part of parts) {
+        if (part.type !== 'literal') lookup[part.type] = part.value
+    }
+
+    return {
+        year: Number(lookup.year),
+        month: Number(lookup.month),
+        day: Number(lookup.day)
+    }
+}
+
+function getDayOffsetFromToday(date, timeZone = REMINDER_TIME_ZONE) {
+    const todayParts = getTimeZoneDateParts(new Date(), timeZone)
+    const targetParts = getTimeZoneDateParts(date, timeZone)
+
+    const todaySerial = Math.floor(Date.UTC(todayParts.year, todayParts.month - 1, todayParts.day) / 86400000)
+    const targetSerial = Math.floor(Date.UTC(targetParts.year, targetParts.month - 1, targetParts.day) / 86400000)
+
+    return targetSerial - todaySerial
+}
+
+function extractTenantPreferredScheduleText(notesValue) {
+    if (!notesValue) return ''
+
+    const lines = String(notesValue).split('\n')
+    for (const line of lines) {
+        const trimmed = line.trim()
+        const upper = trimmed.toUpperCase()
+
+        for (const prefix of TENANT_PREFERRED_PREFIXES) {
+            if (upper.startsWith(prefix)) {
+                return trimmed.slice(prefix.length).trim()
+            }
+        }
+    }
+
+    return ''
+}
+
+function parsePreferredScheduleText(preferredScheduleText) {
+    if (!preferredScheduleText) return null
+
+    const trimmedText = String(preferredScheduleText).trim()
+    const rangeSeparatorIndex = trimmedText.lastIndexOf(' - ')
+    if (rangeSeparatorIndex < 0) return null
+
+    const startText = trimmedText.slice(0, rangeSeparatorIndex).trim()
+    const endTimeText = trimmedText.slice(rangeSeparatorIndex + 3).trim()
+    const startDate = new Date(startText)
+
+    if (Number.isNaN(startDate.getTime())) return null
+
+    const endDate = new Date(`${startDate.toDateString()} ${endTimeText}`)
+
+    return {
+        startDate,
+        endDate: Number.isNaN(endDate.getTime()) ? null : endDate
+    }
+}
+
+function getBookingScheduleDisplay(booking) {
+    const preferredScheduleText = extractTenantPreferredScheduleText(booking?.notes)
+    const parsedPreferredSchedule = parsePreferredScheduleText(preferredScheduleText)
+
+    const startDate = parsedPreferredSchedule?.startDate
+        || toValidDate(booking?.start_time)
+        || toValidDate(booking?.booking_date)
+    const endDate = parsedPreferredSchedule?.endDate || toValidDate(booking?.end_time)
+
+    if (!startDate) return null
+
+    const fullDateFormatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: REMINDER_TIME_ZONE,
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+    })
+
+    const shortDateFormatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: REMINDER_TIME_ZONE,
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+    })
+
+    const timeFormatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: REMINDER_TIME_ZONE,
+        hour: 'numeric',
+        minute: '2-digit'
+    })
+
+    const startTimeText = timeFormatter.format(startDate)
+    const endTimeText = endDate ? timeFormatter.format(endDate) : ''
+    const dayOffset = getDayOffsetFromToday(startDate)
+
+    let relativeDayText = `in ${dayOffset} day(s)`
+    if (dayOffset === 0) relativeDayText = 'today'
+    if (dayOffset === 1) relativeDayText = 'tomorrow'
+
+    return {
+        fullDateText: fullDateFormatter.format(startDate),
+        shortDateText: shortDateFormatter.format(startDate),
+        timeRangeText: endTimeText ? `${startTimeText} - ${endTimeText}` : startTimeText,
+        subjectDateText: shortDateFormatter.format(startDate),
+        relativeDayText,
+    }
 }
 
 // Auto-transition due scheduled maintenance requests to in_progress.
@@ -281,24 +410,29 @@ async function processBookingReminder(reminder) {
     const tenant = booking.tenant_profile
     const phone = formatPhoneNumber(tenant?.phone)
     const propertyTitle = booking.property?.title || 'Property'
+    const scheduleDisplay = getBookingScheduleDisplay(booking)
+
+    if (!scheduleDisplay) {
+        console.warn(`Skipping booking reminder ${booking.id}: Missing valid start/end schedule`) 
+        return
+    }
 
     let sentAny = false
 
     // Send Email
     if (tenantEmail) {
         try {
-            const bookingDate = new Date(booking.booking_date)
-            const subject = `📅 Reminder: Viewing tomorrow for ${propertyTitle}`
+                        const subject = `📅 Reminder: Viewing on ${scheduleDisplay.subjectDateText} for ${propertyTitle}`
             const htmlContent = `
         <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333; max-width: 600px; margin: 0 auto;">
           <div style="background-color: #eff6ff; border-radius: 12px; padding: 24px; border: 1px solid #bfdbfe;">
             <h2 style="color: #1e40af; margin-top: 0;">📅 Viewing Reminder</h2>
             <p>Hi <strong>${tenant?.first_name || 'there'}</strong>,</p>
-            <p>This is a reminder about your upcoming viewing:</p>
+                        <p>This is a reminder about your upcoming viewing (${scheduleDisplay.relativeDayText}):</p>
             <div style="background: white; padding: 16px; border-radius: 8px; margin: 16px 0;">
               <p style="margin: 4px 0;"><strong>Property:</strong> ${propertyTitle}</p>
-              <p style="margin: 4px 0;"><strong>Date:</strong> ${bookingDate.toLocaleDateString()}</p>
-              <p style="margin: 4px 0;"><strong>Time:</strong> ${bookingDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                            <p style="margin: 4px 0;"><strong>Date:</strong> ${scheduleDisplay.fullDateText}</p>
+                            <p style="margin: 4px 0;"><strong>Time (PH):</strong> ${scheduleDisplay.timeRangeText}</p>
             </div>
             <p>Please be on time. See you there!</p>
             <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'https://easerent.vercel.app'}/bookings" 
@@ -321,8 +455,8 @@ async function processBookingReminder(reminder) {
         try {
             await sendBookingReminder(phone, {
                 propertyName: propertyTitle,
-                date: new Date(booking.booking_date).toLocaleDateString(),
-                time: new Date(booking.booking_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                date: scheduleDisplay.shortDateText,
+                time: scheduleDisplay.timeRangeText
             })
             sentAny = true
             console.log(`✅ SMS sent to ${phone} for booking reminder`)

@@ -9,7 +9,7 @@ import { showToast } from 'nextjs-toast-notify'
 import Footer from '@/components/Footer'
 
 const ACTIVE_BOOKING_STATUSES = ['pending', 'pending_approval', 'approved', 'accepted']
-const SLOT_LOCKING_BOOKING_STATUSES = ['pending', 'pending_approval', 'approved', 'accepted']
+const SLOT_LOCKING_BOOKING_STATUSES = ['pending', 'pending_approval', 'approved', 'accepted', 'rejected']
 const TENANT_PREFERRED_SCHEDULE_LABEL = 'TENANTS PREFEREED SCHEDULE'
 
 function getTodayDateInputValue() {
@@ -101,6 +101,8 @@ export default function PropertyDetail() {
   const [preferredScheduleTime, setPreferredScheduleTime] = useState('')
   const [preferredScheduleEndTime, setPreferredScheduleEndTime] = useState('')
   const [showPreferredSchedulePicker, setShowPreferredSchedulePicker] = useState(false)
+  const [showScheduleWarningModal, setShowScheduleWarningModal] = useState(false)
+  const [pendingScheduleWarning, setPendingScheduleWarning] = useState(null)
   const [showTermsModal, setShowTermsModal] = useState(false)
   const [showGalleryModal, setShowGalleryModal] = useState(false)
   const [showAllReviewsModal, setShowAllReviewsModal] = useState(false)
@@ -1019,19 +1021,42 @@ export default function PropertyDetail() {
     setTermsAccepted(false)
     setBookingStep(1)
     setSelectedBookingDate(null)
+    setShowScheduleWarningModal(false)
+    setPendingScheduleWarning(null)
+  }
+
+  function isWithinOneHourBeforeSchedule(scheduleStartValue) {
+    if (!scheduleStartValue) return false
+    const scheduleDate = new Date(scheduleStartValue)
+    if (Number.isNaN(scheduleDate.getTime())) return false
+
+    const diffInMinutes = (scheduleDate - new Date()) / (1000 * 60)
+    return diffInMinutes >= 0 && diffInMinutes <= 60
+  }
+
+  function closeScheduleWarningModal() {
+    setShowScheduleWarningModal(false)
+    setPendingScheduleWarning(null)
+  }
+
+  function confirmScheduleWarningModal() {
+    closeScheduleWarningModal()
+    void handleConfirmBooking(null, true)
   }
 
   // Triggered when confirming the booking
-  async function handleConfirmBooking(e) {
-    e.preventDefault()
+  async function handleConfirmBooking(e, forceProceedWithinHour = false) {
+    e?.preventDefault?.()
 
-    if (!selectedSlotId) {
+    const hasCompletePreferredSchedule = Boolean(preferredScheduleDate && preferredScheduleTime && preferredScheduleEndTime)
+
+    if (!selectedSlotId && !hasCompletePreferredSchedule) {
       showToast.error("Please select a viewing time.", { duration: 4000, transition: "bounceIn" })
       return
     }
 
-    const selectedSlot = timeSlots.find(s => s.id === selectedSlotId)
-    if (!selectedSlot) {
+    const selectedSlot = selectedSlotId ? timeSlots.find(s => s.id === selectedSlotId) : null
+    if (!selectedSlot && !hasCompletePreferredSchedule) {
       showToast.error('Selected time slot is invalid.', { duration: 4000, transition: "bounceIn" })
       return
     }
@@ -1042,8 +1067,10 @@ export default function PropertyDetail() {
       return
     }
 
+    let parsedPreferredSchedule = null
+
     if (preferredScheduleDate && preferredScheduleTime && preferredScheduleEndTime) {
-      const parsedPreferredSchedule = parseTenantPreferredScheduleRange(preferredScheduleDate, preferredScheduleTime, preferredScheduleEndTime)
+      parsedPreferredSchedule = parseTenantPreferredScheduleRange(preferredScheduleDate, preferredScheduleTime, preferredScheduleEndTime)
       if (!parsedPreferredSchedule) {
         showToast.error('Preferred schedule is invalid. End time must be later than start time.', { duration: 4000, transition: 'bounceIn' })
         return
@@ -1053,6 +1080,25 @@ export default function PropertyDetail() {
         showToast.error('Preferred schedule cannot be in the past.', { duration: 4000, transition: 'bounceIn' })
         return
       }
+    }
+
+    const isUsingPreferredSchedule = Boolean(parsedPreferredSchedule)
+    const bookingStartIso = isUsingPreferredSchedule
+      ? parsedPreferredSchedule.startDate.toISOString()
+      : selectedSlot.start_time
+    const bookingEndIso = isUsingPreferredSchedule
+      ? parsedPreferredSchedule.endDate.toISOString()
+      : selectedSlot.end_time
+    const bookingTimeSlotId = isUsingPreferredSchedule ? null : selectedSlot.id
+
+    if (!forceProceedWithinHour && isWithinOneHourBeforeSchedule(bookingStartIso)) {
+      setPendingScheduleWarning({
+        startIso: bookingStartIso,
+        endIso: bookingEndIso,
+        isPreferredSchedule: isUsingPreferredSchedule,
+      })
+      setShowScheduleWarningModal(true)
+      return
     }
 
     setSubmitting(true)
@@ -1103,26 +1149,30 @@ export default function PropertyDetail() {
     // 3. Get Selected Slot Data
     const slot = selectedSlot
 
-    if (slot.is_available === false) {
+    if (!isUsingPreferredSchedule && slot.is_available === false) {
       showToast.error('This schedule is already booked. Please choose another time.', { duration: 4000, transition: "bounceIn" })
       setSubmitting(false)
       return
     }
 
     // 4. Re-check slot conflict right before insert (best-effort UX guard).
-    const { data: existingSlotBooking, error: slotCheckError } = await supabase
-      .from('bookings')
-      .select('id, time_slot_id')
-      .eq('time_slot_id', slot.id)
-      .in('status', SLOT_LOCKING_BOOKING_STATUSES)
-      .limit(1)
-      .maybeSingle()
+    const slotConflictQuery = !isUsingPreferredSchedule
+      ? supabase
+        .from('bookings')
+        .select('id, time_slot_id')
+        .eq('time_slot_id', slot.id)
+        .in('status', SLOT_LOCKING_BOOKING_STATUSES)
+      : null
+
+    const { data: existingSlotBooking, error: slotCheckError } = slotConflictQuery
+      ? await slotConflictQuery.limit(1).maybeSingle()
+      : { data: null, error: null }
 
     const { data: existingScheduleBooking, error: scheduleCheckError } = await supabase
       .from('bookings')
       .select('id, time_slot_id')
       .eq('property_id', id)
-      .eq('booking_date', slot.start_time)
+      .eq('booking_date', bookingStartIso)
       .in('status', SLOT_LOCKING_BOOKING_STATUSES)
       .limit(1)
       .maybeSingle()
@@ -1140,7 +1190,10 @@ export default function PropertyDetail() {
         existingSlotBooking?.time_slot_id,
         existingScheduleBooking?.time_slot_id
       ]
-      await markConflictingSlotsBooked(slot, conflictSlotIds)
+
+      if (!isUsingPreferredSchedule) {
+        await markConflictingSlotsBooked(slot, conflictSlotIds)
+      }
       await loadTimeSlots(property.landlord)
       setSelectedSlotId('')
       setSelectedBookingDate(null)
@@ -1157,10 +1210,10 @@ export default function PropertyDetail() {
       property_id: id,
       tenant: session.user.id,
       landlord: property.landlord,
-      start_time: slot.start_time,
-      end_time: slot.end_time,
-      booking_date: slot.start_time,
-      time_slot_id: slot.id,
+      start_time: bookingStartIso,
+      end_time: bookingEndIso,
+      booking_date: bookingStartIso,
+      time_slot_id: bookingTimeSlotId,
       status: 'pending',
       notes: buildBookingNotesWithPreferredSchedule(bookingNote || 'No message provided', preferredScheduleDate, preferredScheduleTime, preferredScheduleEndTime)
     }).select().single()
@@ -1170,7 +1223,9 @@ export default function PropertyDetail() {
         || error.message?.includes('bookings_unique_active_slot_idx')
         || error.message?.includes('bookings_unique_active_property_datetime_idx')
       if (slotAlreadyTaken) {
-        await markConflictingSlotsBooked(slot)
+        if (!isUsingPreferredSchedule) {
+          await markConflictingSlotsBooked(slot)
+        }
         await loadTimeSlots(property.landlord)
         setSelectedSlotId('')
         setSelectedBookingDate(null)
@@ -1183,7 +1238,9 @@ export default function PropertyDetail() {
       }
     } else {
       // 6. Update Slot to Booked
-      await markConflictingSlotsBooked(slot)
+      if (!isUsingPreferredSchedule) {
+        await markConflictingSlotsBooked(slot)
+      }
 
       // 7. Notify Landlord
       if (property.landlord) {
@@ -2282,8 +2339,8 @@ export default function PropertyDetail() {
                             {/* Confirm Button */}
                             <button
                               onClick={handleConfirmBooking}
-                              disabled={submitting || !termsAccepted || !selectedSlotId}
-                              className={`w-full py-3 px-4 rounded-xl text-sm font-bold shadow-sm transition-all ${termsAccepted && selectedSlotId ? 'bg-black text-white cursor-pointer hover:bg-gray-900 hover:shadow-md' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                              disabled={submitting || !termsAccepted || (!selectedSlotId && !(preferredScheduleDate && preferredScheduleTime && preferredScheduleEndTime))}
+                              className={`w-full py-3 px-4 rounded-xl text-sm font-bold shadow-sm transition-all ${termsAccepted && (selectedSlotId || (preferredScheduleDate && preferredScheduleTime && preferredScheduleEndTime)) ? 'bg-black text-white cursor-pointer hover:bg-gray-900 hover:shadow-md' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
                             >
                               {submitting ? 'Confirming...' : 'Confirm Booking'}
                             </button>
@@ -2334,6 +2391,50 @@ export default function PropertyDetail() {
             </div>
           </div>
         </div >
+
+        {showScheduleWarningModal && pendingScheduleWarning && (
+          <div className="fixed inset-0 z-[65] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={closeScheduleWarningModal}>
+            <div className="bg-white border border-gray-100 shadow-2xl rounded-2xl max-w-sm w-full p-6 text-center" onClick={(e) => e.stopPropagation()}>
+              <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-600">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" /></svg>
+              </div>
+
+              <h3 className="text-lg font-bold text-gray-900 mb-2">Schedule Is Within 1 Hour</h3>
+              <p className="text-gray-500 text-sm mb-3">
+                The schedule you selected is less than 1 hour from now.
+              </p>
+
+              <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 mb-5 text-left">
+                <p className="text-xs uppercase tracking-wider font-bold text-amber-700 mb-1">Selected Schedule</p>
+                <p className="text-sm font-semibold text-gray-900">
+                  {new Date(pendingScheduleWarning.startIso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                </p>
+                <p className="text-xs text-gray-600 mt-0.5">
+                  {new Date(pendingScheduleWarning.startIso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                  {pendingScheduleWarning.endIso ? ` - ${new Date(pendingScheduleWarning.endIso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}
+                </p>
+                <p className="text-[10px] text-amber-700 mt-2 font-semibold">
+                  {pendingScheduleWarning.isPreferredSchedule ? 'Preferred schedule will be used for this request.' : 'Selected slot schedule will be used for this request.'}
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={closeScheduleWarningModal}
+                  className="flex-1 py-2.5 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 transition-colors cursor-pointer"
+                >
+                  Go Back
+                </button>
+                <button
+                  onClick={confirmScheduleWarningModal}
+                  className="flex-1 py-2.5 bg-amber-600 text-white font-bold rounded-xl hover:bg-amber-700 transition-colors shadow-sm cursor-pointer"
+                >
+                  Proceed
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {showTermsModal && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowTermsModal(false)}>

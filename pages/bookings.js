@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabaseClient'
 
 const BOOKINGS_PER_PAGE = 5
 const ACTIVE_BOOKING_STATUSES = ['pending', 'pending_approval', 'approved', 'accepted', 'viewing_done', 'assigned']
-const SLOT_LOCKING_BOOKING_STATUSES = ['pending', 'pending_approval', 'approved', 'accepted']
+const SLOT_LOCKING_BOOKING_STATUSES = ['pending', 'pending_approval', 'approved', 'accepted', 'rejected']
 const PENDING_BOOKING_STATUSES = ['pending', 'pending_approval']
 const ASSIGNMENT_RELATED_BOOKING_STATUSES = ['pending', 'pending_approval', 'approved', 'accepted', 'viewing_done', 'assigned']
 const TENANT_PREFERRED_SCHEDULE_LABEL = 'TENANTS PREFEREED SCHEDULE'
@@ -203,6 +203,10 @@ export default function BookingsPage() {
   const [showRejectModal, setShowRejectModal] = useState(false)
   const [bookingToReject, setBookingToReject] = useState(null)
   const [rejectionReason, setRejectionReason] = useState('')
+  const [showTenantModifyWarningModal, setShowTenantModifyWarningModal] = useState(false)
+  const [pendingTenantModifyAction, setPendingTenantModifyAction] = useState(null)
+  const [showSubmitScheduleWarningModal, setShowSubmitScheduleWarningModal] = useState(false)
+  const [pendingSubmitScheduleWarning, setPendingSubmitScheduleWarning] = useState(null)
   const [showViewingSuccessWarningModal, setShowViewingSuccessWarningModal] = useState(false)
   const [bookingToMarkSuccess, setBookingToMarkSuccess] = useState(null)
   const [sameDateConflictBookings, setSameDateConflictBookings] = useState([])
@@ -273,7 +277,7 @@ export default function BookingsPage() {
       // Debounce bursts of updates from status transitions.
       realtimeRefreshTimeoutRef.current = setTimeout(() => {
         loadBookings(currentPage, filter)
-      }, 250)
+      }, 150)
     }
 
     const channelName = `bookings-realtime-${userId}-${roleLower}-${currentPage}-${filter}`
@@ -293,6 +297,13 @@ export default function BookingsPage() {
         table: 'tenant_occupancies',
         filter: `landlord_id=eq.${userId}`,
       }, scheduleRealtimeRefresh)
+
+      channel.on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'properties',
+        filter: `landlord=eq.${userId}`,
+      }, scheduleRealtimeRefresh)
     } else {
       channel.on('postgres_changes', {
         event: '*',
@@ -309,13 +320,33 @@ export default function BookingsPage() {
       }, scheduleRealtimeRefresh)
     }
 
-    channel.subscribe()
+    const focusRefresh = () => scheduleRealtimeRefresh()
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', focusRefresh)
+    }
+
+    const fallbackIntervalId = setInterval(() => {
+      scheduleRealtimeRefresh()
+    }, 10000)
+
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        scheduleRealtimeRefresh()
+      }
+    })
 
     return () => {
       if (realtimeRefreshTimeoutRef.current) {
         clearTimeout(realtimeRefreshTimeoutRef.current)
         realtimeRefreshTimeoutRef.current = null
       }
+
+      clearInterval(fallbackIntervalId)
+
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', focusRefresh)
+      }
+
       supabase.removeChannel(channel)
     }
   }, [session?.user?.id, profile?.role, currentPage, filter])
@@ -427,7 +458,7 @@ export default function BookingsPage() {
     let bookingsData = []
     let hasActiveOccupancyNow = false
     let nextStatusSummary = { ...EMPTY_STATUS_SUMMARY }
-    let useClientSidePagination = false
+    let useClientSidePagination = true
     const from = (page - 1) * BOOKINGS_PER_PAGE
     const to = from + BOOKINGS_PER_PAGE - 1
     let dbCount = 0
@@ -471,14 +502,6 @@ export default function BookingsPage() {
         .order('booking_date', { ascending: false })
       query = applyFilterToBookingQuery(query, activeFilter)
 
-      // Landlord "All" needs status-priority sorting BEFORE pagination.
-      // Fetch all, sort in-memory, then slice per page.
-      if (activeFilter === 'all') {
-        useClientSidePagination = true
-      } else {
-        query = query.range(from, to)
-      }
-
       const { data, error, count } = await query
       if (error) {
         console.error('Error loading bookings:', error)
@@ -520,13 +543,6 @@ export default function BookingsPage() {
         .eq('tenant', session.user.id)
         .order('booking_date', { ascending: false })
       query = applyFilterToBookingQuery(query, activeFilter)
-
-      // Tenant "All" also needs status-priority sorting BEFORE pagination.
-      if (activeFilter === 'all') {
-        useClientSidePagination = true
-      } else {
-        query = query.range(from, to)
-      }
 
       const { data: existingBookings, error, count } = await query
       if (error) console.error('Error loading bookings:', error)
@@ -614,74 +630,31 @@ export default function BookingsPage() {
 
     let finalBookings = enrichedBookings;
 
-    const hasActiveBooking = bookingsData.some(b =>
-      ACTIVE_BOOKING_STATUSES.includes(b.status)
-    );
-    const hasBookingLimit = hasActiveBooking || hasActiveOccupancyNow
-
-    const getSortWeight = (booking) => {
-      const s = (booking.status || '').toLowerCase();
-
-      // 0. Approved requests first for tenant list.
-      if (['approved', 'accepted'].includes(s)) return 0;
-
-      // 1. Viewing success still stays near the top.
-      if (s === 'viewing_done') return 1;
-
-      // 2. Pending requests.
-      if (PENDING_BOOKING_STATUSES.includes(s)) return 2;
-
-      // 3/4. Ready to book or blocked by booking limit.
-      if (s === 'ready_to_book') {
-        // If user is tenant and has an active booking elsewhere, this is "Limit Reached"
-        if (userRole !== 'landlord' && hasBookingLimit) return 4; // Limit Reached
-        return 3; // Ready to Book
+    const getBookingUpdatedTimestamp = (booking) => {
+      const fallbackValues = [booking?.updated_at, booking?.created_at, booking?.booking_date, booking?.start_time, booking?.end_time]
+      for (const value of fallbackValues) {
+        if (!value) continue
+        const parsedValue = new Date(value)
+        if (!Number.isNaN(parsedValue.getTime())) {
+          return parsedValue.getTime()
+        }
       }
 
-      if (['assigned', 'completed'].includes(s)) return 5;
-
-      // 6. Rejected/Cancelled (Last)
-      if (['rejected', 'cancelled'].includes(s)) return 6;
-
-      return 7; // Default/Unknown
-    };
-
-    const getLandlordAllSortWeight = (booking) => {
-      const s = (booking.status || '').toLowerCase()
-
-      if (['approved', 'accepted'].includes(s)) return 0
-      if (PENDING_BOOKING_STATUSES.includes(s)) return 1
-      if (s === 'viewing_done') return 2
-      if (['rejected', 'cancelled'].includes(s)) return 3
-      if (s === 'completed') return 4
-
-      return 5
+      return Number.NEGATIVE_INFINITY
     }
 
-    if (userRole === 'landlord' && activeFilter === 'all') {
-      finalBookings.sort((a, b) => {
-        const weightA = getLandlordAllSortWeight(a)
-        const weightB = getLandlordAllSortWeight(b)
+    finalBookings.sort((a, b) => {
+      const timeA = getBookingUpdatedTimestamp(a)
+      const timeB = getBookingUpdatedTimestamp(b)
 
-        if (weightA !== weightB) {
-          return weightA - weightB
-        }
+      if (timeA !== timeB) {
+        return timeB - timeA
+      }
 
-        return new Date(b.booking_date || 0) - new Date(a.booking_date || 0)
-      })
-    } else if (userRole !== 'landlord') {
-      finalBookings.sort((a, b) => {
-        const weightA = getSortWeight(a);
-        const weightB = getSortWeight(b);
-
-        if (weightA !== weightB) {
-          return weightA - weightB;
-        }
-
-        // Secondary sort: Date (Newest first) within the same status group
-        return new Date(b.booking_date || 0) - new Date(a.booking_date || 0);
-      });
-    }
+      const createdA = new Date(a?.created_at || 0).getTime()
+      const createdB = new Date(b?.created_at || 0).getTime()
+      return createdB - createdA
+    })
 
     // Keep booking status synced when assignments are completed from mobile clients.
     const syncCandidates = finalBookings.filter((booking) => {
@@ -1346,12 +1319,62 @@ export default function BookingsPage() {
     await rejectBooking(bookingToReject, rejectionReason)
   }
 
-  function canModifyBooking(bookingDate) {
-    if (!bookingDate) return true;
-    const now = new Date();
-    const booking = new Date(bookingDate);
-    const diffInHours = (booking - now) / (1000 * 60 * 60);
-    return diffInHours >= 12;
+  function isWithinOneHourBeforeSchedule(bookingDate) {
+    if (!bookingDate) return false
+
+    const now = new Date()
+    const booking = new Date(bookingDate)
+    if (Number.isNaN(booking.getTime())) return false
+
+    const diffInMinutes = (booking - now) / (1000 * 60)
+    return diffInMinutes >= 0 && diffInMinutes <= 60
+  }
+
+  async function executeTenantModifyAction(actionType, booking) {
+    if (!booking) return
+
+    if (actionType === 'cancel') {
+      promptCancelBooking(booking)
+      return
+    }
+
+    await openBookingModal(booking)
+  }
+
+  function closeTenantModifyWarningModal() {
+    setShowTenantModifyWarningModal(false)
+    setPendingTenantModifyAction(null)
+  }
+
+  function requestTenantModifyAction(booking, actionType, scheduleDateValue) {
+    if (isWithinOneHourBeforeSchedule(scheduleDateValue)) {
+      setPendingTenantModifyAction({ booking, actionType, scheduleDateValue })
+      setShowTenantModifyWarningModal(true)
+      return
+    }
+
+    void executeTenantModifyAction(actionType, booking)
+  }
+
+  function confirmTenantModifyWarning() {
+    if (!pendingTenantModifyAction?.booking || !pendingTenantModifyAction?.actionType) {
+      closeTenantModifyWarningModal()
+      return
+    }
+
+    const { booking, actionType } = pendingTenantModifyAction
+    closeTenantModifyWarningModal()
+    void executeTenantModifyAction(actionType, booking)
+  }
+
+  function closeSubmitScheduleWarningModal() {
+    setShowSubmitScheduleWarningModal(false)
+    setPendingSubmitScheduleWarning(null)
+  }
+
+  function confirmSubmitScheduleWarningModal() {
+    closeSubmitScheduleWarningModal()
+    void submitBooking(null, true)
   }
 
   function promptCancelBooking(booking) {
@@ -1491,11 +1514,19 @@ export default function BookingsPage() {
     setPreferredScheduleEndTime('')
     setShowPreferredSchedulePicker(false)
     setBookingCalendarMonth(new Date())
+    setShowSubmitScheduleWarningModal(false)
+    setPendingSubmitScheduleWarning(null)
   }
 
-  async function submitBooking(e) {
-    e.preventDefault()
-    if (!selectedTimeSlot || !selectedApplication) return
+  async function submitBooking(e, forceProceedWithinHour = false) {
+    e?.preventDefault?.()
+    if (!selectedApplication) return
+
+    const hasCompletePreferredSchedule = Boolean(preferredScheduleDate && preferredScheduleTime && preferredScheduleEndTime)
+    if (!selectedTimeSlot && !hasCompletePreferredSchedule) {
+      showToast.error('Please select a viewing slot or set a complete preferred schedule.', { duration: 4000, transition: "bounceIn" })
+      return
+    }
 
     const hasAnyPreferredScheduleInput = Boolean(preferredScheduleDate || preferredScheduleTime || preferredScheduleEndTime)
     if (hasAnyPreferredScheduleInput && (!preferredScheduleDate || !preferredScheduleTime || !preferredScheduleEndTime)) {
@@ -1503,8 +1534,10 @@ export default function BookingsPage() {
       return
     }
 
+    let parsedPreferredSchedule = null
+
     if (preferredScheduleDate && preferredScheduleTime && preferredScheduleEndTime) {
-      const parsedPreferredSchedule = parseTenantPreferredScheduleRange(preferredScheduleDate, preferredScheduleTime, preferredScheduleEndTime)
+      parsedPreferredSchedule = parseTenantPreferredScheduleRange(preferredScheduleDate, preferredScheduleTime, preferredScheduleEndTime)
       if (!parsedPreferredSchedule) {
         showToast.error('Preferred schedule is invalid. End time must be later than start time.', { duration: 4000, transition: 'bounceIn' })
         return
@@ -1515,6 +1548,8 @@ export default function BookingsPage() {
         return
       }
     }
+
+    const isUsingPreferredSchedule = Boolean(parsedPreferredSchedule)
 
     setSubmittingBooking(true)
 
@@ -1587,16 +1622,30 @@ export default function BookingsPage() {
       setAvailableTimeSlots(data || [])
     }
 
-    const slot = availableTimeSlots.find(s => s.id === selectedTimeSlot)
+    const slot = selectedTimeSlot ? availableTimeSlots.find(s => s.id === selectedTimeSlot) : null
+    const bookingStartIso = isUsingPreferredSchedule ? parsedPreferredSchedule.startDate.toISOString() : slot?.start_time
+    const bookingEndIso = isUsingPreferredSchedule ? parsedPreferredSchedule.endDate.toISOString() : slot?.end_time
+    const bookingTimeSlotId = isUsingPreferredSchedule ? null : slot?.id
 
-    if (!slot) {
+    if (!forceProceedWithinHour && isWithinOneHourBeforeSchedule(bookingStartIso)) {
+      setPendingSubmitScheduleWarning({
+        startIso: bookingStartIso,
+        endIso: bookingEndIso,
+        isPreferredSchedule: isUsingPreferredSchedule,
+      })
+      setShowSubmitScheduleWarningModal(true)
+      setSubmittingBooking(false)
+      return
+    }
+
+    if (!isUsingPreferredSchedule && !slot) {
       await refreshAvailableSlots()
       showToast.error('Selected time slot is no longer available. Please pick another schedule.', { duration: 4000, transition: "bounceIn" })
       setSubmittingBooking(false)
       return
     }
 
-    if (slot.is_available === false) {
+    if (!isUsingPreferredSchedule && slot.is_available === false) {
       await refreshAvailableSlots()
       setSelectedTimeSlot('')
       showToast.error('This schedule is already booked. Please choose another time slot.', { duration: 4000, transition: "bounceIn" })
@@ -1605,25 +1654,31 @@ export default function BookingsPage() {
     }
 
     // Best-effort check before insert. Final protection is DB-level unique index.
-    let slotConflictQuery = supabase
-      .from('bookings')
-      .select('id')
-      .eq('time_slot_id', slot.id)
-      .in('status', SLOT_LOCKING_BOOKING_STATUSES)
+    let slotConflictQuery = bookingTimeSlotId
+      ? supabase
+        .from('bookings')
+        .select('id')
+        .eq('time_slot_id', bookingTimeSlotId)
+        .in('status', SLOT_LOCKING_BOOKING_STATUSES)
+      : null
 
     let scheduleConflictQuery = supabase
       .from('bookings')
       .select('id')
       .eq('property_id', selectedApplication.property_id)
-      .eq('booking_date', slot.start_time)
+      .eq('booking_date', bookingStartIso)
       .in('status', SLOT_LOCKING_BOOKING_STATUSES)
 
     if (!selectedApplication.is_application) {
-      slotConflictQuery = slotConflictQuery.neq('id', selectedApplication.id)
+      if (slotConflictQuery) {
+        slotConflictQuery = slotConflictQuery.neq('id', selectedApplication.id)
+      }
       scheduleConflictQuery = scheduleConflictQuery.neq('id', selectedApplication.id)
     }
 
-    const { data: existingSlotBooking, error: slotCheckError } = await slotConflictQuery.limit(1).maybeSingle()
+    const { data: existingSlotBooking, error: slotCheckError } = slotConflictQuery
+      ? await slotConflictQuery.limit(1).maybeSingle()
+      : { data: null, error: null }
     const { data: existingScheduleBooking, error: scheduleCheckError } = await scheduleConflictQuery.limit(1).maybeSingle()
 
     if (slotCheckError || scheduleCheckError) {
@@ -1636,7 +1691,9 @@ export default function BookingsPage() {
 
     if (existingSlotBooking || existingScheduleBooking) {
       await refreshAvailableSlots()
-      setSelectedTimeSlot('')
+      if (!isUsingPreferredSchedule) {
+        setSelectedTimeSlot('')
+      }
       showToast.error('This schedule has just been booked by another user. Please choose a different time slot.', { duration: 4000, transition: "bounceIn" })
       setSubmittingBooking(false)
       return
@@ -1647,10 +1704,10 @@ export default function BookingsPage() {
       property_id: selectedApplication.property_id,
       tenant: session.user.id,
       landlord: selectedApplication.property.landlord,
-      start_time: slot.start_time,
-      end_time: slot.end_time,
-      booking_date: slot.start_time,
-      time_slot_id: slot.id,
+      start_time: bookingStartIso,
+      end_time: bookingEndIso,
+      booking_date: bookingStartIso,
+      time_slot_id: bookingTimeSlotId,
       status: 'pending',
       notes: buildBookingNotesWithPreferredSchedule(bookingNotes || `Booking for ${selectedApplication.property?.title}`, preferredScheduleDate, preferredScheduleTime, preferredScheduleEndTime)
     }).select().single()
@@ -1662,7 +1719,9 @@ export default function BookingsPage() {
         || error.message?.includes('bookings_unique_active_property_datetime_idx')
       if (slotAlreadyTaken) {
         await refreshAvailableSlots()
-        setSelectedTimeSlot('')
+        if (!isUsingPreferredSchedule) {
+          setSelectedTimeSlot('')
+        }
         showToast.error('This schedule has just been booked by another user. Please choose a different time slot.', {
           duration: 4000,
           transition: "bounceIn"
@@ -1674,7 +1733,7 @@ export default function BookingsPage() {
       return
     }
 
-    const affectedSlotIds = [slot.id]
+    const affectedSlotIds = bookingTimeSlotId ? [bookingTimeSlotId] : []
 
     // 3. Handle Status Updates
     if (!selectedApplication.is_application) {
@@ -2148,32 +2207,26 @@ export default function BookingsPage() {
                             })()
                           )}
 
-                          {/* Case 3: Pending/Approved - "Reschedule" (with 12h rule) */}
+                          {/* Case 3: Pending/Approved - "Reschedule" */}
                           {['pending', 'pending_approval', 'approved', 'accepted', ''].includes(statusLower) && (
-                            canModifyBooking(scheduleReferenceDate || bookingDate) ? (
-                              <>
-                                {['pending', 'pending_approval'].includes(statusLower) && (
-                                  <button
-                                    onClick={() => openBookingModal(booking)}
-                                    className="flex-1 md:flex-none px-4 py-2.5 bg-blue-600 text-white text-xs font-bold rounded-lg cursor-pointer hover:bg-blue-700 transition-colors shadow-sm"
-                                  >
-                                    Reschedule
-                                  </button>
-                                )}
-                                {['pending', 'pending_approval'].includes(statusLower) && (
-                                  <button
-                                    onClick={() => promptCancelBooking(booking)}
-                                    className="flex-1 md:flex-none px-4 py-2.5 bg-white border border-red-200 text-red-600 text-xs font-bold rounded-lg cursor-pointer hover:bg-red-50 transition-colors shadow-sm"
-                                  >
-                                    Cancel
-                                  </button>
-                                )}
-                              </>
-                            ) : (
-                              <span className="text-[10px] text-red-500 font-medium bg-red-50 px-2 py-1 rounded border border-red-100">
-                                Cannot modify (within 12h)
-                              </span>
-                            )
+                            <>
+                              {['pending', 'pending_approval'].includes(statusLower) && (
+                                <button
+                                  onClick={() => requestTenantModifyAction(booking, 'reschedule', scheduleReferenceDate || bookingDate)}
+                                  className="flex-1 md:flex-none px-4 py-2.5 bg-blue-600 text-white text-xs font-bold rounded-lg cursor-pointer hover:bg-blue-700 transition-colors shadow-sm"
+                                >
+                                  Reschedule
+                                </button>
+                              )}
+                              {['pending', 'pending_approval'].includes(statusLower) && (
+                                <button
+                                  onClick={() => requestTenantModifyAction(booking, 'cancel', scheduleReferenceDate || bookingDate)}
+                                  className="flex-1 md:flex-none px-4 py-2.5 bg-white border border-red-200 text-red-600 text-xs font-bold rounded-lg cursor-pointer hover:bg-red-50 transition-colors shadow-sm"
+                                >
+                                  Cancel
+                                </button>
+                              )}
+                            </>
                           )}
                         </div>
                       )}
@@ -2261,6 +2314,98 @@ export default function BookingsPage() {
                 className="flex-1 py-2.5 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 transition-colors shadow-sm cursor-pointer"
               >
                 Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- TENANT MODIFY WARNING MODAL (WITHIN 1 HOUR) --- */}
+      {showTenantModifyWarningModal && pendingTenantModifyAction?.booking && (
+        <div className="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+          <div className="bg-white border border-gray-100 shadow-2xl rounded-2xl max-w-sm w-full p-6 text-center">
+            <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-600">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" /></svg>
+            </div>
+
+            <h3 className="text-lg font-bold text-gray-900 mb-2">Schedule Is Within 1 Hour</h3>
+            <p className="text-gray-500 text-sm mb-3">
+              This viewing schedule is less than 1 hour away.
+            </p>
+            <p className="text-gray-600 text-sm mb-2">
+              Do you still want to {pendingTenantModifyAction.actionType === 'cancel' ? 'cancel' : 'reschedule'} this booking?
+            </p>
+
+            {pendingTenantModifyAction.scheduleDateValue && (
+              <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 mb-5 text-left">
+                <p className="text-xs uppercase tracking-wider font-bold text-amber-700 mb-1">Current Schedule</p>
+                <p className="text-sm font-semibold text-gray-900">
+                  {new Date(pendingTenantModifyAction.scheduleDateValue).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                </p>
+                <p className="text-xs text-gray-600 mt-0.5">
+                  {new Date(pendingTenantModifyAction.scheduleDateValue).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                  {pendingTenantModifyAction.booking?.end_time ? ` - ${new Date(pendingTenantModifyAction.booking.end_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}
+                </p>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={closeTenantModifyWarningModal}
+                className="flex-1 py-2.5 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 transition-colors cursor-pointer"
+              >
+                Go Back
+              </button>
+              <button
+                onClick={confirmTenantModifyWarning}
+                className="flex-1 py-2.5 bg-amber-600 text-white font-bold rounded-xl hover:bg-amber-700 transition-colors shadow-sm cursor-pointer"
+              >
+                Proceed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- SUBMIT SCHEDULE WARNING MODAL (WITHIN 1 HOUR) --- */}
+      {showSubmitScheduleWarningModal && pendingSubmitScheduleWarning && (
+        <div className="fixed inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+          <div className="bg-white border border-gray-100 shadow-2xl rounded-2xl max-w-sm w-full p-6 text-center">
+            <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-600">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" /></svg>
+            </div>
+
+            <h3 className="text-lg font-bold text-gray-900 mb-2">Schedule Is Within 1 Hour</h3>
+            <p className="text-gray-500 text-sm mb-3">
+              The schedule you selected is less than 1 hour from now.
+            </p>
+
+            <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 mb-5 text-left">
+              <p className="text-xs uppercase tracking-wider font-bold text-amber-700 mb-1">Selected Schedule</p>
+              <p className="text-sm font-semibold text-gray-900">
+                {new Date(pendingSubmitScheduleWarning.startIso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+              </p>
+              <p className="text-xs text-gray-600 mt-0.5">
+                {new Date(pendingSubmitScheduleWarning.startIso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                {pendingSubmitScheduleWarning.endIso ? ` - ${new Date(pendingSubmitScheduleWarning.endIso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}
+              </p>
+              <p className="text-[10px] text-amber-700 mt-2 font-semibold">
+                {pendingSubmitScheduleWarning.isPreferredSchedule ? 'Preferred schedule will be used for this request.' : 'Selected slot schedule will be used for this request.'}
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={closeSubmitScheduleWarningModal}
+                className="flex-1 py-2.5 bg-white border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-50 transition-colors cursor-pointer"
+              >
+                Go Back
+              </button>
+              <button
+                onClick={confirmSubmitScheduleWarningModal}
+                className="flex-1 py-2.5 bg-amber-600 text-white font-bold rounded-xl hover:bg-amber-700 transition-colors shadow-sm cursor-pointer"
+              >
+                Proceed
               </button>
             </div>
           </div>
@@ -2700,7 +2845,7 @@ export default function BookingsPage() {
               <div className="pt-2">
                 <button
                   type="submit"
-                  disabled={submittingBooking || availableTimeSlots.length === 0 || !selectedTimeSlot}
+                  disabled={submittingBooking || (!selectedTimeSlot && !(preferredScheduleDate && preferredScheduleTime && preferredScheduleEndTime))}
                   className="w-full py-3.5 bg-black text-white font-bold rounded-xl cursor-pointer hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-gray-200"
                 >
                   {submittingBooking ? 'Sending Request...' : 'Request Viewing'}

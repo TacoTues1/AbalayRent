@@ -183,7 +183,7 @@ export default async function handler(req, res) {
 
             let dbQuery = supabaseAdmin
                 .from('profiles')
-                .select('id, first_name, middle_name, last_name, email, phone, avatar_url, role')
+                .select('id, first_name, middle_name, last_name, email, phone, avatar_url, role, created_at')
                 .eq('role', 'tenant')
                 .eq('is_deleted', false)
                 .or(orFilters.join(','))
@@ -194,17 +194,30 @@ export default async function handler(req, res) {
 
             // Filter in-memory to ensure all typed terms match either the full name or email
             const excludeSet = new Set(exclude_ids || [])
+            const lowerTerms = safeTerms.map(t => t.toLowerCase())
+            const seenKeys = new Set()
             const results = (data || [])
+                .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
                 .filter(u => {
                     if (excludeSet.has(u.id)) return false
+
+                    // Keep only one result per email to avoid duplicate accounts after re-registration.
+                    const normalizedEmail = (u.email || '').trim().toLowerCase()
+                    const dedupeKey = normalizedEmail || `id:${u.id}`
+                    if (seenKeys.has(dedupeKey)) return false
+
                     const fullName = `${u.first_name || ''} ${u.middle_name || ''} ${u.last_name || ''}`.toLowerCase()
-                    const email = (u.email || '').toLowerCase()
+                    const email = normalizedEmail
 
                     // All search terms must be found in either fullName or email
-                    const lowerTerms = terms.map(t => t.toLowerCase())
-                    return lowerTerms.every(term => fullName.includes(term) || email.includes(term))
+                    const matches = lowerTerms.every(term => fullName.includes(term) || email.includes(term))
+                    if (!matches) return false
+
+                    seenKeys.add(dedupeKey)
+                    return true
                 })
                 .slice(0, 10) // Only return top 10
+                .map(({ created_at, ...user }) => user)
 
             return res.status(200).json({ results })
         }

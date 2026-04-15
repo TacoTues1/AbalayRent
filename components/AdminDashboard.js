@@ -1240,6 +1240,7 @@ function UsersView() {
 
 function PropertiesView() {
   const PROPERTIES_PAGE_SIZE = 10
+  const router = useRouter()
   const [properties, setProperties] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -1386,6 +1387,12 @@ function PropertiesView() {
           <p className="text-gray-500 mt-1 text-sm md:text-base">Manage listings and view associated landlords.</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
+          <button
+            onClick={() => router.push('/properties/new')}
+            className="px-4 py-2 bg-black text-white rounded-lg text-sm font-bold cursor-pointer whitespace-nowrap"
+          >
+            + Add Property
+          </button>
           <Input placeholder="Search properties..." value={search} onChange={e => setSearch(e.target.value)} className="w-full md:w-64" />
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="border rounded px-3 py-2 bg-gray-50 focus:ring-2 focus:ring-black outline-none cursor-pointer font-medium w-full sm:w-auto">
             <option value="all">All Status</option>

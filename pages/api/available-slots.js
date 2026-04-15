@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '../../lib/supabaseAdmin'
 
-const SLOT_LOCKING_BOOKING_STATUSES = ['pending', 'pending_approval', 'approved', 'accepted']
-const EXCLUDABLE_BOOKING_STATUSES = ['pending', 'pending_approval', 'approved', 'accepted']
+const SLOT_LOCKING_BOOKING_STATUSES = ['pending', 'pending_approval', 'approved', 'accepted', 'rejected']
+const EXCLUDABLE_BOOKING_STATUSES = ['pending', 'pending_approval', 'approved', 'accepted', 'rejected']
 
 function parseTimestamp(value) {
   if (!value) return null

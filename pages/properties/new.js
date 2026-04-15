@@ -160,8 +160,8 @@ export default function NewProperty() {
 
     if (profileData) {
       setProfile(profileData)
-      if (profileData.role !== 'landlord') {
-        notifyError('Access denied. Only landlords can add properties.')
+      if (profileData.role !== 'landlord' && profileData.role !== 'admin') {
+        notifyError('Access denied. Only landlords and admins can add properties.')
         setTimeout(() => router.push('/dashboard'), 2000)
       }
     }
@@ -375,13 +375,34 @@ export default function NewProperty() {
       advance_amount: formData.has_advance ? (formData.advance_same_as_rent ? sanitizeNumber(formData.price) : sanitizeNumber(formData.advance_amount)) : 0
     }
 
-    const { error } = await supabase.from('properties').insert(payload)
+    if (profile.role === 'admin') {
+      const response = await fetch('/api/admin/create-property', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          accessToken: session.access_token,
+          payload
+        })
+      })
 
-    if (error) {
-      notifyError('Error creating property: ' + error.message)
+      const result = await response.json()
+      if (!response.ok) {
+        notifyError('Error creating property: ' + (result.error || 'Unknown error'))
+      } else {
+        notifySuccess('Property created successfully!')
+        setTimeout(() => router.push('/dashboard'), 1500)
+      }
     } else {
-      notifySuccess('Property created successfully!')
-      setTimeout(() => router.push('/dashboard'), 1500)
+      const { error } = await supabase.from('properties').insert(payload)
+
+      if (error) {
+        notifyError('Error creating property: ' + error.message)
+      } else {
+        notifySuccess('Property created successfully!')
+        setTimeout(() => router.push('/dashboard'), 1500)
+      }
     }
     setLoading(false)
   }
@@ -427,12 +448,12 @@ export default function NewProperty() {
 
   if (!session || !profile) return <div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-500">Loading...</div>
 
-  if (profile.role !== 'landlord') {
+  if (profile.role !== 'landlord' && profile.role !== 'admin') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="p-8 bg-white text-black border border-gray-200 shadow-md rounded-xl max-w-md text-center">
           <h2 className="text-2xl font-bold mb-3 text-gray-900">Access Denied</h2>
-          <p className="text-gray-600">Only landlords can add properties.</p>
+          <p className="text-gray-600">Only landlords and admins can add properties.</p>
           <p className="mt-6 text-sm text-gray-400">Redirecting to dashboard...</p>
         </div>
       </div>
