@@ -18,6 +18,11 @@ export default function SchedulePage() {
   const [selectedTimesForAdd, setSelectedTimesForAdd] = useState([]) // ['am1', 'pm2']
   const [customStartTime, setCustomStartTime] = useState('')
   const [customEndTime, setCustomEndTime] = useState('')
+  const [deleteModal, setDeleteModal] = useState({
+    isOpen: false,
+    slot: null,
+    deleting: false
+  })
 
   // Define time slots
   const TIME_SLOTS = {
@@ -390,8 +395,28 @@ export default function SchedulePage() {
     setSubmitting(false)
   }
 
-  async function deleteTimeSlot(slotId) {
-    if (!confirm('Are you sure you want to delete this slot?')) return
+  function openDeleteModal(slot) {
+    setDeleteModal({
+      isOpen: true,
+      slot,
+      deleting: false
+    })
+  }
+
+  function closeDeleteModal() {
+    if (deleteModal.deleting) return
+    setDeleteModal({
+      isOpen: false,
+      slot: null,
+      deleting: false
+    })
+  }
+
+  async function confirmDeleteTimeSlot() {
+    const slotId = deleteModal.slot?.id
+    if (!slotId || deleteModal.deleting) return
+
+    setDeleteModal((prev) => ({ ...prev, deleting: true }))
 
     const { error } = await supabase
       .from('available_time_slots')
@@ -400,8 +425,10 @@ export default function SchedulePage() {
 
     if (error) {
       showToast.error("Failed to delete", { duration: 3000 })
+      setDeleteModal((prev) => ({ ...prev, deleting: false }))
     } else {
       showToast.success("Slot deleted", { duration: 3000 })
+      closeDeleteModal()
       loadTimeSlots()
     }
   }
@@ -425,6 +452,7 @@ export default function SchedulePage() {
 
   if (loading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>
   if (!profile || profile.role !== 'landlord') return null
+  const hasNoAvailabilitySchedule = timeSlots.length === 0
 
   // Render Helpers
   const renderCalendar = () => {
@@ -597,6 +625,19 @@ export default function SchedulePage() {
           <p className="text-gray-500">Manage your viewing slots</p>
         </div>
 
+        {hasNoAvailabilitySchedule && (
+          <div className="mb-6 rounded-2xl border border-yellow-200 bg-yellow-50 px-4 py-3 text-yellow-900">
+            <div className="flex items-start gap-2">
+              <svg className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <p className="text-sm font-medium">
+                Warning: You have not set any viewing availability schedule yet. Select a date on the calendar and add time slots so tenants can book viewings.
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
 
           {/* Left Panel: Calendar OR Time Selection */}
@@ -644,7 +685,7 @@ export default function SchedulePage() {
 
                         {!slot.is_booked && (
                           <button
-                            onClick={() => deleteTimeSlot(slot.id)}
+                            onClick={() => openDeleteModal(slot)}
                             className="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors cursor-pointer"
                             title="Delete Slot"
                           >
@@ -660,6 +701,47 @@ export default function SchedulePage() {
           </div>
         </div>
       </div>
+
+      {deleteModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100 bg-red-50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900">Delete this slot?</h3>
+                  <p className="text-xs text-gray-500">This action cannot be undone.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-5 py-4">
+              <p className="text-sm text-gray-600">
+                Are you sure you want to delete this availability slot?
+              </p>
+            </div>
+
+            <div className="px-5 py-4 border-t border-gray-100 bg-gray-50 flex justify-end gap-2">
+              <button
+                onClick={closeDeleteModal}
+                disabled={deleteModal.deleting}
+                className="px-4 py-2 rounded-xl border border-gray-300 text-gray-700 font-bold hover:bg-white transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteTimeSlot}
+                disabled={deleteModal.deleting}
+                className="px-4 py-2 rounded-xl bg-red-600 text-white font-bold hover:bg-red-700 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {deleteModal.deleting ? 'Deleting...' : 'Delete Slot'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

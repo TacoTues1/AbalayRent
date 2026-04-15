@@ -109,6 +109,7 @@ export default function LandlordDashboard({ session, profile }) {
   const [pendingRenewalRequests, setPendingRenewalRequests] = useState([])
   const [dashboardTasks, setDashboardTasks] = useState({ maintenance: [], payments: [] })
   const [scheduledTodayBookings, setScheduledTodayBookings] = useState([])
+  const [availabilityScheduleCount, setAvailabilityScheduleCount] = useState(0)
 
   // Advance Bill Confirmation Modal State
   const [advanceBillModal, setAdvanceBillModal] = useState({
@@ -163,6 +164,7 @@ export default function LandlordDashboard({ session, profile }) {
         loadPendingEndRequests(),
         loadDashboardTasks(),
         loadScheduledTodayBookings(),
+        loadAvailabilityScheduleCount(),
         loadMonthlyIncome(),
         loadTotalIncome()
       ]).then(() => {
@@ -1250,6 +1252,27 @@ export default function LandlordDashboard({ session, profile }) {
     setScheduledTodayBookings(enrichedBookings)
   }
 
+  async function loadAvailabilityScheduleCount() {
+    if (!session?.user?.id) {
+      setAvailabilityScheduleCount(0)
+      return
+    }
+
+    const { count, error } = await supabase
+      .from('available_time_slots')
+      .select('id', { count: 'exact', head: true })
+      .eq('landlord_id', session.user.id)
+      .gte('start_time', new Date().toISOString())
+
+    if (error) {
+      console.error('Error loading availability schedule count:', error)
+      setAvailabilityScheduleCount(0)
+      return
+    }
+
+    setAvailabilityScheduleCount(count || 0)
+  }
+
   // Load all tenants under landlord's properties for email notifications
   async function loadAllTenants() {
     const { data } = await supabase
@@ -2075,6 +2098,7 @@ export default function LandlordDashboard({ session, profile }) {
   const propertiesToolCount = activeOccupancies.length
   const actionsToolCount = pendingEndRequests.length + pendingRenewalRequests.length + dashboardTasks.payments.length + dashboardTasks.maintenance.length
   const scheduledToolCount = scheduledTodayBookings.length
+  const hasNoAvailabilitySchedule = availabilityScheduleCount === 0
 
   if (loading && !statsLoaded) {
     return (
@@ -2221,6 +2245,27 @@ export default function LandlordDashboard({ session, profile }) {
 
           {/* RIGHT PANEL: Dynamic Content */}
           <div key={activePanel} className="flex-1 min-w-0 w-full animate-in fade-in slide-in-from-right-8 duration-500">
+
+            {hasNoAvailabilitySchedule && (
+              <div className="mb-4 rounded-xl border border-yellow-200 bg-yellow-50 px-4 py-3 text-yellow-900">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div className="flex items-start gap-2">
+                    <svg className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <p className="text-xs sm:text-sm font-medium">
+                      Warning: You have not set any viewing availability schedule yet. Add schedule slots so tenants can book viewings.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => router.push('/schedule')}
+                    className="self-start sm:self-auto px-3 py-1.5 text-xs font-bold rounded-lg border border-yellow-300 bg-white text-yellow-800 hover:bg-yellow-100 transition-all cursor-pointer"
+                  >
+                    Open Schedule
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* MANAGE YOUR APARTMENT / METRICS */}
             {activePanel === 'metrics' && (
