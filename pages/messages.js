@@ -2633,8 +2633,9 @@ export default function Messages() {
                         const senderName = isOwn
                           ? null
                           : `${msg.sender?.first_name || ''} ${msg.sender?.last_name || ''}`.trim() || 'Unknown'
-                        const senderFamilyPrimaryLabel = msg.sender?.family_primary_first_name
-                          ? `under ${msg.sender.family_primary_first_name}`
+                        const senderPrimaryTenantFirstName = msg.sender?.primary_tenant_first_name || msg.sender?.family_primary_first_name
+                        const senderFamilyPrimaryLabel = senderPrimaryTenantFirstName
+                          ? `under ${senderPrimaryTenantFirstName}`
                           : null
 
                         return (
@@ -2983,7 +2984,8 @@ export default function Messages() {
                       const isAdmin = member.role === 'admin'
                       const isSelf = member.user_id === session?.user?.id
                       const isCreator = selectedGroupConversation.created_by === session?.user?.id
-                      const familyPrimaryLabel = !isSelf && user.family_primary_first_name ? `under ${user.family_primary_first_name}` : null
+                      const userPrimaryTenantFirstName = user.primary_tenant_first_name || user.family_primary_first_name
+                      const familyPrimaryLabel = !isSelf && userPrimaryTenantFirstName ? `under ${userPrimaryTenantFirstName}` : null
 
                       return (
                         <div key={member.user_id} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-gray-50 transition-colors group">
@@ -3233,6 +3235,10 @@ export default function Messages() {
                 <div className="space-y-1.5">
                   {filteredAddableMembers.map(member => {
                     const isChecked = selectedMemberIds.includes(member.id)
+                    const primaryTenantFirstName = member.primary_tenant_first_name || member.family_primary_first_name
+                    const familyPrimaryLabel = primaryTenantFirstName
+                      ? `under ${primaryTenantFirstName}`
+                      : null
 
                     return (
                       <button
@@ -3264,6 +3270,11 @@ export default function Messages() {
                           {member.property_title && (
                             <p className={`text-[10px] truncate mt-0.5 ${isChecked ? 'text-gray-300' : 'text-gray-400'}`}>
                               {member.property_title}
+                            </p>
+                          )}
+                          {familyPrimaryLabel && (
+                            <p className={`text-[10px] truncate mt-0.5 ${isChecked ? 'text-blue-200' : 'text-blue-500'}`}>
+                              ({familyPrimaryLabel})
                             </p>
                           )}
                         </div>

@@ -51,10 +51,31 @@ export default async function handler(req, res) {
 
         if (occupancyError) return profiles
 
+        const missingPrimaryNameTenantIds = Array.from(
+            new Set(
+                (occupancies || [])
+                    .filter(occupancy => occupancy?.tenant_id && !occupancy?.tenant?.first_name)
+                    .map(occupancy => occupancy.tenant_id)
+            )
+        )
+
+        let fallbackPrimaryNameMap = {}
+        if (missingPrimaryNameTenantIds.length > 0) {
+            const { data: fallbackPrimaryProfiles } = await supabaseAdmin
+                .from('profiles')
+                .select('id, first_name')
+                .in('id', missingPrimaryNameTenantIds)
+
+            fallbackPrimaryNameMap = (fallbackPrimaryProfiles || []).reduce((acc, row) => {
+                acc[row.id] = row.first_name || null
+                return acc
+            }, {})
+        }
+
         const occupancyMap = (occupancies || []).reduce((acc, occupancy) => {
             acc[occupancy.id] = {
                 primaryTenantId: occupancy?.tenant_id || null,
-                primaryTenantName: occupancy?.tenant?.first_name || null
+                primaryTenantName: occupancy?.tenant?.first_name || fallbackPrimaryNameMap[occupancy?.tenant_id] || null
             }
             return acc
         }, {})
@@ -71,10 +92,15 @@ export default async function handler(req, res) {
             return acc
         }, {})
 
-        return profiles.map(profileRow => ({
-            ...profileRow,
-            family_primary_first_name: primaryByMember[profileRow.id] || null
-        }))
+        return profiles.map(profileRow => {
+            const primaryTenantFirstName = primaryByMember[profileRow.id] || null
+
+            return {
+                ...profileRow,
+                primary_tenant_first_name: primaryTenantFirstName,
+                family_primary_first_name: primaryTenantFirstName
+            }
+        })
     }
 
     // ─── GET: List group conversations or get eligible members ───
@@ -193,8 +219,10 @@ export default async function handler(req, res) {
 
                 if (profileError) throw profileError
 
+                const tenantProfilesWithFamilyPrimary = await enrichProfilesWithFamilyPrimary(tenantProfiles || [])
+
                 // Enrich with property info
-                const enrichedProfiles = (tenantProfiles || []).map(tp => {
+                const enrichedProfiles = (tenantProfilesWithFamilyPrimary || []).map(tp => {
                     const occupancy = (occupancies || []).find(occ =>
                         occ.tenant_id === tp.id
                     )
