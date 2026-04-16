@@ -1,5 +1,124 @@
 import { supabaseAdmin } from '../../lib/supabaseAdmin'
 
+const ACTIVE_GROUP_MEMBER_OCCUPANCY_STATUSES = ['active', 'pending_end']
+
+function buildProfileDisplayName(profileRow, fallback = 'A member') {
+    const fullName = `${profileRow?.first_name || ''} ${profileRow?.last_name || ''}`.trim()
+    return fullName || fallback
+}
+
+async function getAllowedGroupMemberIdsForLandlord(landlordId) {
+    const allowedMemberIds = new Set()
+
+    const { data: occupancies, error: occupanciesError } = await supabaseAdmin
+        .from('tenant_occupancies')
+        .select('id, tenant_id')
+        .eq('landlord_id', landlordId)
+        .in('status', ACTIVE_GROUP_MEMBER_OCCUPANCY_STATUSES)
+
+    if (occupanciesError) throw occupanciesError
+
+    const occupancyIds = []
+    ;(occupancies || []).forEach(occupancy => {
+        if (occupancy?.tenant_id) allowedMemberIds.add(occupancy.tenant_id)
+        if (occupancy?.id) occupancyIds.push(occupancy.id)
+    })
+
+    if (occupancyIds.length > 0) {
+        const { data: familyMembers, error: familyError } = await supabaseAdmin
+            .from('family_members')
+            .select('member_id')
+            .in('parent_occupancy_id', occupancyIds)
+
+        if (familyError) throw familyError
+
+        ;(familyMembers || []).forEach(member => {
+            if (member?.member_id) allowedMemberIds.add(member.member_id)
+        })
+    }
+
+    return allowedMemberIds
+}
+
+async function syncGroupMembershipForGroup(groupId, allowedMembersCache = new Map()) {
+    const { data: group, error: groupError } = await supabaseAdmin
+        .from('group_conversations')
+        .select('id, created_by')
+        .eq('id', groupId)
+        .maybeSingle()
+
+    if (groupError) throw groupError
+    if (!group?.id || !group?.created_by) return
+
+    let allowedMemberIds = allowedMembersCache.get(group.created_by)
+    if (!allowedMemberIds) {
+        allowedMemberIds = await getAllowedGroupMemberIdsForLandlord(group.created_by)
+        allowedMembersCache.set(group.created_by, allowedMemberIds)
+    }
+
+    const { data: members, error: membersError } = await supabaseAdmin
+        .from('group_conversation_members')
+        .select('user_id, role')
+        .eq('group_conversation_id', group.id)
+
+    if (membersError) throw membersError
+
+    const removableIds = (members || [])
+        .filter(member => member?.user_id && member.role !== 'admin' && !allowedMemberIds.has(member.user_id))
+        .map(member => member.user_id)
+
+    if (removableIds.length === 0) return
+
+    const { error: deleteError } = await supabaseAdmin
+        .from('group_conversation_members')
+        .delete()
+        .eq('group_conversation_id', group.id)
+        .in('user_id', removableIds)
+
+    if (deleteError) throw deleteError
+
+    const { data: removedProfiles, error: profileError } = await supabaseAdmin
+        .from('profiles')
+        .select('id, first_name, last_name')
+        .in('id', removableIds)
+
+    if (profileError) throw profileError
+
+    const removedProfileMap = (removedProfiles || []).reduce((acc, row) => {
+        acc[row.id] = row
+        return acc
+    }, {})
+
+    const systemKickMessages = removableIds.map(removedUserId => ({
+        group_conversation_id: group.id,
+        sender_id: group.created_by,
+        message: `System kick ${buildProfileDisplayName(removedProfileMap[removedUserId])} to the group.`
+    }))
+
+    if (systemKickMessages.length > 0) {
+        const { error: messageError } = await supabaseAdmin
+            .from('group_messages')
+            .insert(systemKickMessages)
+
+        if (messageError) throw messageError
+    }
+
+    await supabaseAdmin
+        .from('group_conversations')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', group.id)
+}
+
+async function syncGroupMembershipForGroups(groupIds = []) {
+    const uniqueGroupIds = Array.from(new Set((groupIds || []).filter(Boolean)))
+    if (uniqueGroupIds.length === 0) return
+
+    const allowedMembersCache = new Map()
+    for (const groupId of uniqueGroupIds) {
+        await syncGroupMembershipForGroup(groupId, allowedMembersCache)
+    }
+}
+
 export default async function handler(req, res) {
     // Auth check - extract user from authorization header
     const authHeader = req.headers.authorization
@@ -32,24 +151,50 @@ export default async function handler(req, res) {
 
         const profileIds = validProfiles.map(p => p.id)
 
+        const primaryTenantIdSet = new Set()
+        const { data: primaryOccupancies, error: primaryOccupanciesError } = await supabaseAdmin
+            .from('tenant_occupancies')
+            .select('tenant_id')
+            .in('tenant_id', profileIds)
+            .in('status', ACTIVE_GROUP_MEMBER_OCCUPANCY_STATUSES)
+
+        if (!primaryOccupanciesError) {
+            ;(primaryOccupancies || []).forEach(occupancy => {
+                if (occupancy?.tenant_id) primaryTenantIdSet.add(occupancy.tenant_id)
+            })
+        }
+
         const { data: familyLinks, error: familyError } = await supabaseAdmin
             .from('family_members')
             .select('member_id, parent_occupancy_id')
             .in('member_id', profileIds)
 
         if (familyError || !familyLinks || familyLinks.length === 0) {
-            return profiles
+            return profiles.map(profileRow => ({
+                ...profileRow,
+                is_primary_tenant: primaryTenantIdSet.has(profileRow.id)
+            }))
         }
 
         const occupancyIds = Array.from(new Set(familyLinks.map(link => link.parent_occupancy_id).filter(Boolean)))
-        if (occupancyIds.length === 0) return profiles
+        if (occupancyIds.length === 0) {
+            return profiles.map(profileRow => ({
+                ...profileRow,
+                is_primary_tenant: primaryTenantIdSet.has(profileRow.id)
+            }))
+        }
 
         const { data: occupancies, error: occupancyError } = await supabaseAdmin
             .from('tenant_occupancies')
             .select('id, tenant_id, tenant:profiles!tenant_occupancies_tenant_id_fkey(first_name)')
             .in('id', occupancyIds)
 
-        if (occupancyError) return profiles
+        if (occupancyError) {
+            return profiles.map(profileRow => ({
+                ...profileRow,
+                is_primary_tenant: primaryTenantIdSet.has(profileRow.id)
+            }))
+        }
 
         const missingPrimaryNameTenantIds = Array.from(
             new Set(
@@ -83,6 +228,7 @@ export default async function handler(req, res) {
         const primaryByMember = (familyLinks || []).reduce((acc, link) => {
             const occupancy = occupancyMap[link.parent_occupancy_id]
             if (!occupancy) return acc
+            if (primaryTenantIdSet.has(link.member_id)) return acc
             // Never tag the primary tenant as being under themselves.
             if (occupancy.primaryTenantId && link.member_id === occupancy.primaryTenantId) return acc
 
@@ -94,11 +240,13 @@ export default async function handler(req, res) {
 
         return profiles.map(profileRow => {
             const primaryTenantFirstName = primaryByMember[profileRow.id] || null
+            const isPrimaryTenant = primaryTenantIdSet.has(profileRow.id)
 
             return {
                 ...profileRow,
                 primary_tenant_first_name: primaryTenantFirstName,
-                family_primary_first_name: primaryTenantFirstName
+                family_primary_first_name: primaryTenantFirstName,
+                is_primary_tenant: isPrimaryTenant
             }
         })
     }
@@ -115,6 +263,8 @@ export default async function handler(req, res) {
             }
 
             try {
+                await syncGroupMembershipForGroups([group_id])
+
                 const { data: membership, error: memberError } = await supabaseAdmin
                     .from('group_conversation_members')
                     .select('id')
@@ -250,7 +400,17 @@ export default async function handler(req, res) {
 
             if (error) throw error
 
-            const groupIds = (memberships || []).map(m => m.group_conversation_id)
+            const initialGroupIds = (memberships || []).map(m => m.group_conversation_id)
+            await syncGroupMembershipForGroups(initialGroupIds)
+
+            const { data: refreshedMemberships, error: refreshedError } = await supabaseAdmin
+                .from('group_conversation_members')
+                .select('group_conversation_id')
+                .eq('user_id', userId)
+
+            if (refreshedError) throw refreshedError
+
+            const groupIds = (refreshedMemberships || []).map(m => m.group_conversation_id)
             if (groupIds.length === 0) {
                 return res.status(200).json({ groups: [] })
             }
@@ -494,6 +654,37 @@ export default async function handler(req, res) {
 
                 if (error) throw error
 
+                const { data: addedProfiles, error: addedProfilesError } = await supabaseAdmin
+                    .from('profiles')
+                    .select('id, first_name, last_name')
+                    .in('id', newMembers)
+
+                if (addedProfilesError) throw addedProfilesError
+
+                const addedProfileMap = (addedProfiles || []).reduce((acc, row) => {
+                    acc[row.id] = row
+                    return acc
+                }, {})
+
+                const addEventMessages = newMembers.map(memberId => ({
+                    group_conversation_id: group_id,
+                    sender_id: userId,
+                    message: `Landlord added ${buildProfileDisplayName(addedProfileMap[memberId])} to the group.`
+                }))
+
+                if (addEventMessages.length > 0) {
+                    const { error: addEventError } = await supabaseAdmin
+                        .from('group_messages')
+                        .insert(addEventMessages)
+
+                    if (addEventError) throw addEventError
+                }
+
+                await supabaseAdmin
+                    .from('group_conversations')
+                    .update({ updated_at: new Date().toISOString() })
+                    .eq('id', group_id)
+
                 return res.status(200).json({ success: true, added: newMembers.length })
             } catch (err) {
                 console.error('Error adding members:', err)
@@ -526,6 +717,26 @@ export default async function handler(req, res) {
                     return res.status(400).json({ error: 'Cannot remove the group creator' })
                 }
 
+                const { data: targetMember, error: targetMemberError } = await supabaseAdmin
+                    .from('group_conversation_members')
+                    .select('user_id')
+                    .eq('group_conversation_id', group_id)
+                    .eq('user_id', member_id)
+                    .maybeSingle()
+
+                if (targetMemberError) throw targetMemberError
+                if (!targetMember) {
+                    return res.status(404).json({ error: 'Member not found in this group' })
+                }
+
+                const { data: removedProfile, error: removedProfileError } = await supabaseAdmin
+                    .from('profiles')
+                    .select('first_name, last_name')
+                    .eq('id', member_id)
+                    .maybeSingle()
+
+                if (removedProfileError) throw removedProfileError
+
                 const { error } = await supabaseAdmin
                     .from('group_conversation_members')
                     .delete()
@@ -533,6 +744,26 @@ export default async function handler(req, res) {
                     .eq('user_id', member_id)
 
                 if (error) throw error
+
+                const isSelfLeave = member_id === userId
+                const displayName = buildProfileDisplayName(removedProfile)
+
+                const { error: systemMessageError } = await supabaseAdmin
+                    .from('group_messages')
+                    .insert({
+                        group_conversation_id: group_id,
+                        sender_id: isSelfLeave ? member_id : group.created_by,
+                        message: isSelfLeave
+                            ? `${displayName} left the group.`
+                            : `Landlord kick ${displayName} to the group.`
+                    })
+
+                if (systemMessageError) throw systemMessageError
+
+                await supabaseAdmin
+                    .from('group_conversations')
+                    .update({ updated_at: new Date().toISOString() })
+                    .eq('id', group_id)
 
                 return res.status(200).json({ success: true })
             } catch (err) {
@@ -577,6 +808,8 @@ export default async function handler(req, res) {
             }
 
             try {
+                await syncGroupMembershipForGroups([group_id])
+
                 // Ensure sender is still a member of the target group.
                 const { data: membership, error: membershipError } = await supabaseAdmin
                     .from('group_conversation_members')
@@ -647,6 +880,20 @@ export default async function handler(req, res) {
             const { group_id } = req.body
 
             try {
+                await syncGroupMembershipForGroups([group_id])
+
+                const { data: membership, error: membershipError } = await supabaseAdmin
+                    .from('group_conversation_members')
+                    .select('id')
+                    .eq('group_conversation_id', group_id)
+                    .eq('user_id', userId)
+                    .maybeSingle()
+
+                if (membershipError) throw membershipError
+                if (!membership) {
+                    return res.status(403).json({ error: 'You are no longer a member of this group' })
+                }
+
                 // Get all unread messages in this group (not sent by current user)
                 const { data: unreadMessages } = await supabaseAdmin
                     .from('group_messages')

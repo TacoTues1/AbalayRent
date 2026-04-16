@@ -1,6 +1,7 @@
 import { useRouter } from 'next/router'
 import { showToast } from 'nextjs-toast-notify'
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { createNotification } from '../lib/notifications'
 import { supabase } from '../lib/supabaseClient'
 import Footer from './Footer'
@@ -2837,8 +2838,8 @@ export default function LandlordDashboard({ session, profile }) {
 
         {/* Confirmation Modal */}
         {
-          confirmationModal.isOpen && (
-            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          typeof window !== 'undefined' && confirmationModal.isOpen && createPortal(
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[120] p-4 animate-in fade-in duration-200">
               <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 border border-gray-200">
                 <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-4 ${confirmationModal.type === 'approve' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
                   {confirmationModal.type === 'approve' ? (
@@ -2879,7 +2880,8 @@ export default function LandlordDashboard({ session, profile }) {
                   </button>
                 </div>
               </div>
-            </div>
+            </div>,
+            document.body
           )
         }
 

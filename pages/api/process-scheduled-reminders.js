@@ -8,6 +8,8 @@ const supabaseAdmin = createClient(
 )
 const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000000'
 const REMINDER_TIME_ZONE = 'Asia/Manila'
+const HAS_EXPLICIT_TZ_REGEX = /(?:[zZ]|[+\-]\d{2}:?\d{2})$/
+const LOCAL_DATETIME_REGEX = /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/
 const TENANT_PREFERRED_PREFIXES = [
     'TENANTS PREFEREED SCHEDULE:',
     'TENANTS PREFERRED SCHEDULE:'
@@ -25,7 +27,27 @@ function formatPhoneNumber(phone) {
 
 function toValidDate(value) {
     if (!value) return null
-    const parsed = new Date(value)
+    const raw = String(value).trim()
+    if (!raw) return null
+
+    const normalized = raw.replace(' ', 'T')
+    if (!HAS_EXPLICIT_TZ_REGEX.test(normalized)) {
+        const match = normalized.match(LOCAL_DATETIME_REGEX)
+        if (match) {
+            const year = Number(match[1])
+            const month = Number(match[2])
+            const day = Number(match[3])
+            const hour = Number(match[4])
+            const minute = Number(match[5])
+            const second = Number(match[6] || '0')
+            const millisecond = Number((match[7] || '0').padEnd(3, '0'))
+            const utcMillis = Date.UTC(year, month - 1, day, hour - 8, minute, second, millisecond)
+            const parsedLocal = new Date(utcMillis)
+            return Number.isNaN(parsedLocal.getTime()) ? null : parsedLocal
+        }
+    }
+
+    const parsed = new Date(raw)
     return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
@@ -86,15 +108,29 @@ function parsePreferredScheduleText(preferredScheduleText) {
 
     const startText = trimmedText.slice(0, rangeSeparatorIndex).trim()
     const endTimeText = trimmedText.slice(rangeSeparatorIndex + 3).trim()
-    const startDate = new Date(startText)
+    const startDate = toValidDate(startText)
 
-    if (Number.isNaN(startDate.getTime())) return null
+    if (!startDate) return null
 
-    const endDate = new Date(`${startDate.toDateString()} ${endTimeText}`)
+    const startDateParts = getTimeZoneDateParts(startDate)
+    const isoDate = `${startDateParts.year.toString().padStart(4, '0')}-${String(startDateParts.month).padStart(2, '0')}-${String(startDateParts.day).padStart(2, '0')}`
+
+    let endDate = null
+    const twelveHourMatch = endTimeText.match(/^(\d{1,2})(?::(\d{2}))?\s*([AP]M)$/i)
+    if (twelveHourMatch) {
+        let hour = Number(twelveHourMatch[1]) % 12
+        if (String(twelveHourMatch[3]).toUpperCase() === 'PM') hour += 12
+        const minute = Number(twelveHourMatch[2] || '0')
+        const hh = String(hour).padStart(2, '0')
+        const mm = String(minute).padStart(2, '0')
+        endDate = toValidDate(`${isoDate}T${hh}:${mm}:00`)
+    } else {
+        endDate = toValidDate(`${isoDate} ${endTimeText}`)
+    }
 
     return {
         startDate,
-        endDate: Number.isNaN(endDate.getTime()) ? null : endDate
+        endDate: endDate || null
     }
 }
 

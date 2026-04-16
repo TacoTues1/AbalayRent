@@ -1929,6 +1929,62 @@ export default function Messages() {
     }, null)
     : null
   const directStatusText = directTypingUserId ? 'typing...' : formatLastSeen(directLastSeenAt)
+  const getGroupSystemEventText = (msg) => {
+    const rawMessage = (msg?.message || '').trim()
+    if (!rawMessage || msg?.file_url || msg?.file_name) return null
+
+    const normalizeSubject = (subject) => {
+      const cleaned = (subject || '').trim()
+      return cleaned || 'A member'
+    }
+
+    const normalizedKickMatch = rawMessage.match(/^System kick\s+(.+?)\s+from the group\.?$/i)
+    if (normalizedKickMatch) {
+      return `System kick ${normalizeSubject(normalizedKickMatch[1])} to the group.`
+    }
+
+    const landlordKickMatch = rawMessage.match(/^Landlord kick\s+(.+?)\s+to the group\.?$/i)
+    if (landlordKickMatch) {
+      return `Landlord kick ${normalizeSubject(landlordKickMatch[1])} to the group.`
+    }
+
+    const kickedMatch = rawMessage.match(/^System kicked\s+(.+?)\s+from the chat\.?$/i)
+    if (kickedMatch) {
+      return `System kick ${normalizeSubject(kickedMatch[1])} to the group.`
+    }
+
+    const kickedGroupMatch = rawMessage.match(/^System kicked\s+(.+?)\s+from the group\.?$/i)
+    if (kickedGroupMatch) {
+      return `System kick ${normalizeSubject(kickedGroupMatch[1])} to the group.`
+    }
+
+    const systemKickToGroupMatch = rawMessage.match(/^System kick\s+(.+?)\s+to the group\.?$/i)
+    if (systemKickToGroupMatch) {
+      return `System kick ${normalizeSubject(systemKickToGroupMatch[1])} to the group.`
+    }
+
+    const landlordAddedMatch = rawMessage.match(/^Landlord added\s+(.+?)\s+to the group\.?$/i)
+    if (landlordAddedMatch) {
+      return `Landlord added ${normalizeSubject(landlordAddedMatch[1])} to the group.`
+    }
+
+    const systemAddedMatch = rawMessage.match(/^System added\s+(.+?)\s+to the group\.?$/i)
+    if (systemAddedMatch) {
+      return `Landlord added ${normalizeSubject(systemAddedMatch[1])} to the group.`
+    }
+
+    const leftChatMatch = rawMessage.match(/^(.+?)\s+left the chat\.?$/i)
+    if (leftChatMatch) {
+      return `${normalizeSubject(leftChatMatch[1])} left the group.`
+    }
+
+    const leftGroupMatch = rawMessage.match(/^(.+?)\s+left the group\.?$/i)
+    if (leftGroupMatch) {
+      return `${normalizeSubject(leftGroupMatch[1])} left the group.`
+    }
+
+    return null
+  }
   const inboxItems = [
     ...conversations.map(conv => ({
       type: 'direct',
@@ -2624,6 +2680,18 @@ export default function Messages() {
                     <div>
                       {groupMessages.map((msg) => {
                         const isOwn = msg.sender_id === session.user.id
+                        const systemEventText = getGroupSystemEventText(msg)
+
+                        if (systemEventText) {
+                          return (
+                            <div key={msg.id} className="flex items-center justify-center my-3 animate-in fade-in duration-200">
+                              <p className="text-xs text-gray-500 text-center font-medium">
+                                {systemEventText}
+                              </p>
+                            </div>
+                          )
+                        }
+
                         const hasFile = msg.file_url && msg.file_name
                         const isImage = msg.file_type?.startsWith('image/')
                         const senderAvatar = isOwn ? profile?.avatar_url : msg.sender?.avatar_url
@@ -2634,7 +2702,8 @@ export default function Messages() {
                           ? null
                           : `${msg.sender?.first_name || ''} ${msg.sender?.last_name || ''}`.trim() || 'Unknown'
                         const senderPrimaryTenantFirstName = msg.sender?.primary_tenant_first_name || msg.sender?.family_primary_first_name
-                        const senderFamilyPrimaryLabel = senderPrimaryTenantFirstName
+                        const senderIsPrimaryTenant = Boolean(msg.sender?.is_primary_tenant)
+                        const senderFamilyPrimaryLabel = !senderIsPrimaryTenant && senderPrimaryTenantFirstName
                           ? `under ${senderPrimaryTenantFirstName}`
                           : null
 
@@ -2985,7 +3054,8 @@ export default function Messages() {
                       const isSelf = member.user_id === session?.user?.id
                       const isCreator = selectedGroupConversation.created_by === session?.user?.id
                       const userPrimaryTenantFirstName = user.primary_tenant_first_name || user.family_primary_first_name
-                      const familyPrimaryLabel = !isSelf && userPrimaryTenantFirstName ? `under ${userPrimaryTenantFirstName}` : null
+                      const userIsPrimaryTenant = Boolean(user.is_primary_tenant)
+                      const familyPrimaryLabel = !isSelf && !userIsPrimaryTenant && userPrimaryTenantFirstName ? `under ${userPrimaryTenantFirstName}` : null
 
                       return (
                         <div key={member.user_id} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-gray-50 transition-colors group">
@@ -3236,7 +3306,8 @@ export default function Messages() {
                   {filteredAddableMembers.map(member => {
                     const isChecked = selectedMemberIds.includes(member.id)
                     const primaryTenantFirstName = member.primary_tenant_first_name || member.family_primary_first_name
-                    const familyPrimaryLabel = primaryTenantFirstName
+                    const isPrimaryTenant = Boolean(member.is_primary_tenant)
+                    const familyPrimaryLabel = !isPrimaryTenant && primaryTenantFirstName
                       ? `under ${primaryTenantFirstName}`
                       : null
 

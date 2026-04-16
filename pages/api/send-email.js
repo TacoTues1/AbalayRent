@@ -1,5 +1,53 @@
 import { supabaseAdmin } from '../../lib/supabaseAdmin'
 
+const PHILIPPINE_TIME_ZONE = 'Asia/Manila'
+const HAS_EXPLICIT_TZ_REGEX = /(?:[zZ]|[+\-]\d{2}:?\d{2})$/
+const LOCAL_DATETIME_REGEX = /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/
+
+function parseDateInPhilippineTime(value) {
+  if (value === null || value === undefined || value === '') return null
+
+  const raw = String(value).trim()
+  if (!raw) return null
+
+  const normalized = raw.replace(' ', 'T')
+  if (!HAS_EXPLICIT_TZ_REGEX.test(normalized)) {
+    const match = normalized.match(LOCAL_DATETIME_REGEX)
+    if (match) {
+      const year = Number(match[1])
+      const month = Number(match[2])
+      const day = Number(match[3])
+      const hour = Number(match[4])
+      const minute = Number(match[5])
+      const second = Number(match[6] || '0')
+      const millisecond = Number((match[7] || '0').padEnd(3, '0'))
+      const utcMillis = Date.UTC(year, month - 1, day, hour - 8, minute, second, millisecond)
+      return new Date(utcMillis)
+    }
+  }
+
+  const parsed = new Date(raw)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function formatPhilippineTime(dateLike) {
+  const parsed = parseDateInPhilippineTime(dateLike)
+  if (!parsed) return ''
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: PHILIPPINE_TIME_ZONE,
+    hour: 'numeric',
+    minute: '2-digit'
+  }).format(parsed)
+}
+
+function buildViewingTimeSlotLabel(startValue, endValue) {
+  const startLabel = formatPhilippineTime(startValue)
+  if (!startLabel) return 'Not specified'
+
+  const endLabel = formatPhilippineTime(endValue)
+  return endLabel ? `${startLabel} - ${endLabel}` : startLabel
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST')
@@ -93,7 +141,7 @@ export default async function handler(req, res) {
     if (bookingId) {
       const { data: booking, error: bookingError } = await supabaseAdmin
         .from('bookings')
-        .select('id, tenant, landlord, property_id, booking_date')
+        .select('id, tenant, landlord, property_id, booking_date, start_time, end_time')
         .eq('id', bookingId)
         .maybeSingle()
 
@@ -140,20 +188,15 @@ export default async function handler(req, res) {
       }
 
       // TYPE: VIEWING APPROVAL (Default)
-      const timeSlotLabel = (() => {
-        const date = new Date(booking.booking_date)
-        const hour = date.getHours()
-        if (hour === 8) return 'Morning (8:00 AM - 11:00 AM)'
-        if (hour === 13) return 'Afternoon (1:00 PM - 5:30 PM)'
-        return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-      })()
+      const scheduleStart = booking.start_time || booking.booking_date
+      const timeSlotLabel = buildViewingTimeSlotLabel(scheduleStart, booking.end_time)
       const { sendViewingApprovalEmail } = await import('../../lib/email')
       const result = await sendViewingApprovalEmail({
         to: tenantEmail,
         tenantName,
         propertyTitle,
         propertyAddress,
-        viewingDate: booking.booking_date,
+        viewingDate: scheduleStart,
         timeSlot: timeSlotLabel,
         landlordName,
         landlordPhone

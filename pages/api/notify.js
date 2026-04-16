@@ -9,6 +9,9 @@ const supabaseAdmin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
     process.env.SUPABASE_SERVICE_ROLE_KEY
 )
+const PHILIPPINE_TIME_ZONE = 'Asia/Manila'
+const HAS_EXPLICIT_TZ_REGEX = /(?:[zZ]|[+\-]\d{2}:?\d{2})$/
+const LOCAL_DATETIME_REGEX = /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/
 
 // Helper: Format Phone Number
 function formatPhoneNumber(phone) {
@@ -18,6 +21,50 @@ function formatPhoneNumber(phone) {
     if (clean.startsWith('09')) return '+63' + clean.substring(1);
     if (clean.startsWith('63')) return '+' + clean;
     return '+' + clean;
+}
+
+function parseDateInPhilippineTime(value) {
+    if (value === null || value === undefined || value === '') return null
+
+    const raw = String(value).trim()
+    if (!raw) return null
+
+    const normalized = raw.replace(' ', 'T')
+    if (!HAS_EXPLICIT_TZ_REGEX.test(normalized)) {
+        const match = normalized.match(LOCAL_DATETIME_REGEX)
+        if (match) {
+            const year = Number(match[1])
+            const month = Number(match[2])
+            const day = Number(match[3])
+            const hour = Number(match[4])
+            const minute = Number(match[5])
+            const second = Number(match[6] || '0')
+            const millisecond = Number((match[7] || '0').padEnd(3, '0'))
+            const utcMillis = Date.UTC(year, month - 1, day, hour - 8, minute, second, millisecond)
+            return new Date(utcMillis)
+        }
+    }
+
+    const parsed = new Date(raw)
+    return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function formatPhilippineDateTime(dateLike, options) {
+    const parsed = parseDateInPhilippineTime(dateLike)
+    if (!parsed) return ''
+
+    return new Intl.DateTimeFormat('en-US', {
+        timeZone: PHILIPPINE_TIME_ZONE,
+        ...options
+    }).format(parsed)
+}
+
+function buildTimeRangeLabel(startValue, endValue) {
+    const startLabel = formatPhilippineDateTime(startValue, { hour: 'numeric', minute: '2-digit' })
+    if (!startLabel) return ''
+
+    const endLabel = formatPhilippineDateTime(endValue, { hour: 'numeric', minute: '2-digit' })
+    return endLabel ? `${startLabel} - ${endLabel}` : startLabel
 }
 
 function escapeHtml(value) {
@@ -345,15 +392,13 @@ export default async function handler(req, res) {
             const landlordName = `${landlordProfile?.first_name || ''} ${landlordProfile?.last_name || ''}`.trim() || 'Landlord'
             const tenantName = `${booking.tenant_profile?.first_name || ''} ${booking.tenant_profile?.last_name || ''}`.trim() || 'Tenant'
             const propertyTitle = booking.property?.title || 'Property'
-
-            // Determine time slot label
-            let timeSlot = ''
-            if (booking.booking_date) {
-                const hour = new Date(booking.booking_date).getHours()
-                if (hour === 8) timeSlot = 'Morning (8:00 AM - 11:00 AM)'
-                else if (hour === 13) timeSlot = 'Afternoon (1:00 PM - 5:30 PM)'
-                else timeSlot = new Date(booking.booking_date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
-            }
+            const scheduleStart = booking.start_time || booking.booking_date
+            const timeSlot = buildTimeRangeLabel(scheduleStart, booking.end_time)
+            const scheduleDate = formatPhilippineDateTime(scheduleStart, {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric'
+            }) || 'Not specified'
 
             const results = { sms: false, email: false }
 
@@ -363,7 +408,7 @@ export default async function handler(req, res) {
                     await sendNewBookingNotification(landlordPhone, {
                         tenantName,
                         propertyName: propertyTitle,
-                        date: booking.booking_date ? new Date(booking.booking_date).toLocaleDateString() : 'Not specified',
+                        date: scheduleDate,
                         time: timeSlot
                     })
                     results.sms = true
@@ -382,7 +427,7 @@ export default async function handler(req, res) {
                         tenantName,
                         tenantPhone: booking.tenant_profile?.phone,
                         propertyTitle,
-                        bookingDate: booking.booking_date,
+                        bookingDate: scheduleStart,
                         timeSlot
                     })
                     results.email = true
