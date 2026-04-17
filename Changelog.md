@@ -61,3 +61,8 @@ All notable updates are listed below.
 ### Optimized
 - Messaging contact loading now uses relationship-based filtering (occupancies + family-member fallback) instead of broad role-only listing.
 - Conversation list is filtered to show only allowed contacts based on role and relationship constraints.
+
+## 2026-04-17
+
+### Changed
+- Updated changelog with the latest project update entry.
