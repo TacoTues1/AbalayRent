@@ -80,7 +80,7 @@ export default function Home({ setHomeNavbarLoading }) {
   const filterRef = useRef(null)
   const priceRef = useRef(null)
   const [comparisonList, setComparisonList] = useState([])
-  const maxDisplayItems = 8
+  const maxDisplayItems = 7
   const [guestFavorites, setGuestFavorites] = useState([])
   const [nearbyProperties, setNearbyProperties] = useState([])
   const [mostFavoriteProperties, setMostFavoriteProperties] = useState([])
@@ -488,7 +488,6 @@ export default function Home({ setHomeNavbarLoading }) {
             const propertyCity = (p.city || '').toLowerCase()
             return propertyCity.includes(normalizedCity) || normalizedCity.includes(propertyCity)
           })
-          .slice(0, maxDisplayItems)
 
         setGuestFavorites(favorites)
       } else {
@@ -517,7 +516,6 @@ export default function Home({ setHomeNavbarLoading }) {
           })
           .filter(Boolean)
           .sort((a, b) => a.distanceKm - b.distanceKm)
-          .slice(0, maxDisplayItems)
           .map(({ property }) => property)
 
         setNearbyProperties(nearby)
@@ -539,7 +537,6 @@ export default function Home({ setHomeNavbarLoading }) {
 
           return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
         })
-        .slice(0, maxDisplayItems)
       setMostFavoriteProperties(mostFavorited)
 
       // 4. Top Rated (Highest Average Rating with at least 1 review)
@@ -557,7 +554,6 @@ export default function Home({ setHomeNavbarLoading }) {
 
           return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
         })
-        .slice(0, maxDisplayItems)
 
       setTopRated(rated)
     }
@@ -638,7 +634,7 @@ export default function Home({ setHomeNavbarLoading }) {
   const mostFavoriteId = Object.entries(propertyStats).filter(([_, s]) => (s.favorite_count || 0) > 0).sort((a, b) => b[1].favorite_count - a[1].favorite_count)?.[0]?.[0];
   const topRatedId = Object.entries(propertyStats).filter(([_, s]) => (s.review_count || 0) > 0).sort((a, b) => b[1].avg_rating - a[1].avg_rating || b[1].review_count - a[1].review_count)?.[0]?.[0];
 
-  const renderSeeAllCard = (items) => {
+  const renderSeeAllCard = (items, targetUrl = '/properties/allProperties') => {
     const defaultImg = 'https://images.unsplash.com/photo-1560518884-ce5882228f44?w=500&q=80';
     let img1, img2, img3;
 
@@ -659,7 +655,7 @@ export default function Home({ setHomeNavbarLoading }) {
       <CarouselItem key="see-all" className={carouselItemClass}>
         <div className="p-1 h-full">
           <div
-            onClick={() => router.push('/properties/allProperties')}
+            onClick={() => router.push(targetUrl)}
             className={`group bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center cursor-pointer hover:shadow-md hover:border-gray-300 transition-all h-full min-h-[220px] aspect-[4/3] sm:aspect-auto ${mounted ? 'animate-slideInCard delay-200' : 'opacity-0'}`}
           >
             <div className="relative w-20 h-20 sm:w-24 sm:h-24 mb-6 mt-4 flex items-center justify-center">
@@ -853,7 +849,7 @@ export default function Home({ setHomeNavbarLoading }) {
                     </CarouselItem>
                   )
                 })}
-                {renderSeeAllCard(properties)}
+                {properties.length > maxDisplayItems && renderSeeAllCard(properties)}
               </CarouselContent>
               <CarouselPrevious />
               <CarouselNext />
@@ -979,7 +975,7 @@ export default function Home({ setHomeNavbarLoading }) {
                     </CarouselItem>
                   )
                 })}
-                {renderSeeAllCard(guestFavorites)}
+                {guestFavorites.length > maxDisplayItems && renderSeeAllCard(guestFavorites)}
               </CarouselContent>
               <CarouselPrevious />
               <CarouselNext />
@@ -1098,7 +1094,7 @@ export default function Home({ setHomeNavbarLoading }) {
                     </CarouselItem>
                   )
                 })}
-                {renderSeeAllCard(mostFavoriteProperties)}
+                {mostFavoriteProperties.length > maxDisplayItems && renderSeeAllCard(mostFavoriteProperties, '/properties/allProperties?filterMostFavorite=true')}
               </CarouselContent>
               <CarouselPrevious />
               <CarouselNext />
@@ -1224,7 +1220,7 @@ export default function Home({ setHomeNavbarLoading }) {
                     </CarouselItem>
                   )
                 })}
-                {renderSeeAllCard(nearbyProperties)}
+                {nearbyProperties.length > maxDisplayItems && renderSeeAllCard(nearbyProperties)}
               </CarouselContent>
               <CarouselPrevious />
               <CarouselNext />
@@ -1343,7 +1339,7 @@ export default function Home({ setHomeNavbarLoading }) {
                     </CarouselItem>
                   )
                 })}
-                {renderSeeAllCard(topRated)}
+                {topRated.length > maxDisplayItems && renderSeeAllCard(topRated, '/properties/allProperties?minRating=5')}
               </CarouselContent>
               <CarouselPrevious />
               <CarouselNext />

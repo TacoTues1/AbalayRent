@@ -123,7 +123,7 @@ export default function TenantDashboard({ session, profile }) {
   const [confirmRemoveMember, setConfirmRemoveMember] = useState(null)
   const [loadingFamily, setLoadingFamily] = useState(false)
   const [isFamilyMember, setIsFamilyMember] = useState(false)
-  const maxDisplayItems = 8
+  const maxDisplayItems = 7
   const router = useRouter()
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState([])
@@ -1501,7 +1501,6 @@ export default function TenantDashboard({ session, profile }) {
             const propertyCity = (p.city || '').toLowerCase()
             return propertyCity.includes(effectiveLocationCity) || effectiveLocationCity.includes(propertyCity)
           })
-          .slice(0, maxDisplayItems)
         setGuestFavorites(favs)
       } else {
         setGuestFavorites([])
@@ -1530,7 +1529,6 @@ export default function TenantDashboard({ session, profile }) {
           })
           .filter(Boolean)
           .sort((a, b) => a.distanceKm - b.distanceKm)
-          .slice(0, maxDisplayItems)
           .map(({ property }) => property)
 
         setNearbyProperties(nearby)
@@ -1552,7 +1550,6 @@ export default function TenantDashboard({ session, profile }) {
 
           return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
         })
-        .slice(0, maxDisplayItems)
       setMostFavoriteProperties(mostFavorited)
 
       const rated = allProps
@@ -1569,7 +1566,6 @@ export default function TenantDashboard({ session, profile }) {
 
           return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()
         })
-        .slice(0, maxDisplayItems)
       setTopRated(rated)
     }
   }
@@ -1970,7 +1966,7 @@ export default function TenantDashboard({ session, profile }) {
   const nextWaterDueDate = isWaterFree ? 'Free' : getUpcomingDueDateByDay(tenantOccupancy?.water_due_day)
   const nextElectricityDueDate = isElectricityFree ? 'Free' : getUpcomingDueDateByDay(tenantOccupancy?.electricity_due_day)
 
-  const renderSeeAllCard = (items) => {
+  const renderSeeAllCard = (items, targetUrl = '/properties/allProperties') => {
     const defaultImg = 'https://images.unsplash.com/photo-1560518884-ce5882228f44?w=500&q=80';
     let img1, img2, img3;
 
@@ -1991,7 +1987,7 @@ export default function TenantDashboard({ session, profile }) {
       <CarouselItem key="see-all" className={carouselItemClass}>
         <div className="p-1 h-full">
           <div
-            onClick={() => router.push('/properties/allProperties')}
+            onClick={() => router.push(targetUrl)}
             className={`group bg-white rounded-2xl shadow-sm border border-gray-100 flex flex-col items-center justify-center cursor-pointer hover:shadow-md hover:border-gray-300 transition-all h-full min-h-[220px] aspect-[4/3] sm:aspect-auto ${mounted ? 'animate-slideInCard delay-200' : 'opacity-0'}`}
           >
             <div className="relative w-20 h-20 sm:w-24 sm:h-24 mb-6 mt-4 flex items-center justify-center">
@@ -2756,7 +2752,7 @@ export default function TenantDashboard({ session, profile }) {
                         </div>
                       </CarouselItem>
                     ))}
-                    {renderSeeAllCard(properties)}
+                    {properties.length > maxDisplayItems && renderSeeAllCard(properties)}
                   </CarouselContent>
                   <CarouselPrevious /><CarouselNext />
                 </Carousel>
@@ -2797,7 +2793,7 @@ export default function TenantDashboard({ session, profile }) {
                         </CarouselItem>
                       )
                     })}
-                    {renderSeeAllCard(guestFavorites)}
+                    {guestFavorites.length > maxDisplayItems && renderSeeAllCard(guestFavorites)}
                   </CarouselContent>
                   <CarouselPrevious />
                   <CarouselNext />
@@ -2839,7 +2835,7 @@ export default function TenantDashboard({ session, profile }) {
                         </CarouselItem>
                       )
                     })}
-                    {renderSeeAllCard(mostFavoriteProperties)}
+                    {mostFavoriteProperties.length > maxDisplayItems && renderSeeAllCard(mostFavoriteProperties, '/properties/allProperties?filterMostFavorite=true')}
                   </CarouselContent>
                   <CarouselPrevious />
                   <CarouselNext />
@@ -2882,7 +2878,7 @@ export default function TenantDashboard({ session, profile }) {
                         </CarouselItem>
                       )
                     })}
-                    {renderSeeAllCard(nearbyProperties)}
+                    {nearbyProperties.length > maxDisplayItems && renderSeeAllCard(nearbyProperties)}
                   </CarouselContent>
                   <CarouselPrevious />
                   <CarouselNext />
@@ -2924,7 +2920,7 @@ export default function TenantDashboard({ session, profile }) {
                         </CarouselItem>
                       )
                     })}
-                    {renderSeeAllCard(topRated)}
+                    {topRated.length > maxDisplayItems && renderSeeAllCard(topRated, '/properties/allProperties?minRating=5')}
                   </CarouselContent>
                   <CarouselPrevious />
                   <CarouselNext />

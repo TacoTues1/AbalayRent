@@ -449,7 +449,7 @@ export default function AllProperties() {
   useEffect(() => {
     if (router.isReady && !urlParamsParsed.current) {
       urlParamsParsed.current = true
-      const { search, minPrice, maxPrice, amenities, sort } = router.query
+      const { search, minPrice, maxPrice, amenities, sort, filterMostFavorite: urlMostFav, minRating: urlMinRating } = router.query
       if (search) setSearchQuery(search)
       if (minPrice || maxPrice) {
         setPriceRange({ min: minPrice || '', max: maxPrice || '' })
@@ -458,6 +458,8 @@ export default function AllProperties() {
         setSelectedAmenities(amenities.split(','))
       }
       if (sort) setSortBy(sort)
+      if (urlMostFav === 'true') setFilterMostFavorite(true)
+      if (urlMinRating) setMinRating(parseInt(urlMinRating, 10))
     }
   }, [router.isReady, router.query])
 
