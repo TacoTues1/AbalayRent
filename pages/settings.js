@@ -915,7 +915,7 @@ export default function Settings() {
 
   const tabs = [
     {
-      id: 'profile', label: 'General', icon: (
+      id: 'profile', label: 'Profile', icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
       )
     },
@@ -1058,7 +1058,7 @@ export default function Settings() {
             {activeTab === 'profile' && (
               <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-xl font-bold">General Profile</h2>
+                  <h2 className="text-xl font-bold">Profile</h2>
                   <span className={`px-3 py-1 text-xs font-bold rounded-full uppercase tracking-wider ${profile?.role === 'landlord' ? 'bg-black text-white' : 'bg-gray-100 text-gray-600'}`}>
                     {profile?.role === 'landlord' ? 'Landlord' : profile?.role === 'tenant' ? 'Tenant' : 'Admin'}
                   </span>
