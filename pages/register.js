@@ -912,7 +912,7 @@ export default function Register() {
                   <label htmlFor="terms" className="ml-2 text-xs font-medium text-gray-700 cursor-pointer">
                     I agree to the{' '}
                     <Link href="/terms" target="_blank" className="font-bold text-gray-900 hover:underline transition-all">
-                      Terms & Conditions
+                      Terms of service
                     </Link>
                   </label>
                 </div>
