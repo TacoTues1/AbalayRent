@@ -55,6 +55,7 @@ export default function Home({ setHomeNavbarLoading }) {
   const [showAuthModal, setShowAuthModal] = useState(false)
   const [authMode, setAuthMode] = useState('signin')
   const [currentImageIndex, setCurrentImageIndex] = useState({})
+  const [hoveredPropertyId, setHoveredPropertyId] = useState(null)
   const [selectedProperty, setSelectedProperty] = useState(null)
   const [showPropertyModal, setShowPropertyModal] = useState(false)
   const [modalImageIndex, setModalImageIndex] = useState(0)
@@ -111,26 +112,23 @@ export default function Home({ setHomeNavbarLoading }) {
     }
   }, [])
 
-  // Auto-slide images for property cards
+  // Hover-triggered image sliding for property cards
   useEffect(() => {
+    if (!hoveredPropertyId) return
+
     const allProperties = [...properties, ...guestFavorites, ...nearbyProperties, ...mostFavoriteProperties, ...topRated]
-    if (allProperties.length === 0) return
+    const hoveredProperty = allProperties.find(p => p.id === hoveredPropertyId)
+    if (!hoveredProperty || !hoveredProperty.images || !Array.isArray(hoveredProperty.images) || hoveredProperty.images.length <= 1) return
 
     const interval = setInterval(() => {
       setCurrentImageIndex(prev => {
-        const newIndex = { ...prev }
-        allProperties.forEach(property => {
-          if (property.images && Array.isArray(property.images) && property.images.length > 1) {
-            const currentIdx = prev[property.id] || 0
-            newIndex[property.id] = (currentIdx + 1) % property.images.length
-          }
-        })
-        return newIndex
+        const currentIdx = prev[hoveredPropertyId] || 0
+        return { ...prev, [hoveredPropertyId]: (currentIdx + 1) % hoveredProperty.images.length }
       })
-    }, 2500)
+    }, 1250)
 
     return () => clearInterval(interval)
-  }, [properties, guestFavorites, nearbyProperties, mostFavoriteProperties, topRated])
+  }, [hoveredPropertyId, properties, guestFavorites, nearbyProperties, mostFavoriteProperties, topRated])
 
   useEffect(() => {
     const initializeHome = async () => {
@@ -761,6 +759,8 @@ export default function Home({ setHomeNavbarLoading }) {
                           className={`group bg-white rounded-2xl shadow-sm border overflow-hidden flex flex-col cursor-pointer h-full card-hover ${isSelectedForCompare ? 'ring-2 ring-gray-900 border-gray-900' : 'border-gray-100 hover:border-gray-300'} ${mounted ? 'animate-slideInCard' : 'opacity-0'}`}
                           style={{ animationDelay: `${idx * 0.1}s` }}
                           onClick={() => router.push(`/properties/${property.id}`)}
+                          onMouseEnter={() => setHoveredPropertyId(property.id)}
+                          onMouseLeave={() => setHoveredPropertyId(null)}
                         >
                           <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-2xl">
                             <img src={images[currentIndex]} alt={property.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
@@ -777,15 +777,6 @@ export default function Home({ setHomeNavbarLoading }) {
                                 </div>
                               </label>
                             </div>
-
-                            {/* Image Indicators */}
-                            {images.length > 1 && (
-                              <div className="absolute bottom-1.5 sm:bottom-2 md:bottom-3 left-1/2 -translate-x-1/2 flex gap-0.5 sm:gap-1 z-10">
-                                {images.map((_, idx) => (
-                                  <div key={idx} className={`h-0.5 sm:h-1 rounded-full transition-all duration-300 shadow-sm ${idx === currentIndex ? 'w-3 sm:w-4 bg-white' : 'w-0.5 sm:w-1 bg-white/60'}`} />
-                                ))}
-                              </div>
-                            )}
 
                             {/* Gradient & Labels */}
                             <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-60"></div>
@@ -882,6 +873,8 @@ export default function Home({ setHomeNavbarLoading }) {
                         <div
                           className={`group bg-white rounded-2xl shadow-sm border overflow-hidden flex flex-col cursor-pointer h-full card-hover ${isSelectedForCompare ? 'ring-2 ring-gray-900 border-gray-900' : 'border-gray-100 hover:border-gray-300'}`}
                           onClick={() => router.push(`/properties/${item.id}`)}
+                          onMouseEnter={() => setHoveredPropertyId(item.id)}
+                          onMouseLeave={() => setHoveredPropertyId(null)}
                         >
                           <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-2xl">
                             <img src={images[currentIndex]} alt={item.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
@@ -898,15 +891,6 @@ export default function Home({ setHomeNavbarLoading }) {
                                 </div>
                               </label>
                             </div>
-
-                            {/* Image Indicators */}
-                            {images.length > 1 && (
-                              <div className="absolute bottom-1.5 sm:bottom-2 md:bottom-3 left-1/2 -translate-x-1/2 flex gap-0.5 sm:gap-1 z-10">
-                                {images.map((_, idx) => (
-                                  <div key={idx} className={`h-0.5 sm:h-1 rounded-full transition-all duration-300 shadow-sm ${idx === currentIndex ? 'w-3 sm:w-4 bg-white' : 'w-0.5 sm:w-1 bg-white/60'}`} />
-                                ))}
-                              </div>
-                            )}
 
                             {/* Gradient & Labels */}
                             <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-60"></div>
@@ -1008,6 +992,8 @@ export default function Home({ setHomeNavbarLoading }) {
                         <div
                           className={`group bg-white rounded-2xl shadow-sm border overflow-hidden flex flex-col cursor-pointer h-full card-hover ${isSelectedForCompare ? 'ring-2 ring-gray-900 border-gray-900' : 'border-gray-100 hover:border-gray-300'}`}
                           onClick={() => router.push(`/properties/${item.id}`)}
+                          onMouseEnter={() => setHoveredPropertyId(item.id)}
+                          onMouseLeave={() => setHoveredPropertyId(null)}
                         >
                           <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-2xl">
                             <img src={images[currentIndex]} alt={item.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
@@ -1024,15 +1010,6 @@ export default function Home({ setHomeNavbarLoading }) {
                                 </div>
                               </label>
                             </div>
-
-                            {/* Image Indicators */}
-                            {images.length > 1 && (
-                              <div className="absolute bottom-1.5 sm:bottom-2 md:bottom-3 left-1/2 -translate-x-1/2 flex gap-0.5 sm:gap-1 z-10">
-                                {images.map((_, idx) => (
-                                  <div key={idx} className={`h-0.5 sm:h-1 rounded-full transition-all duration-300 shadow-sm ${idx === currentIndex ? 'w-3 sm:w-4 bg-white' : 'w-0.5 sm:w-1 bg-white/60'}`} />
-                                ))}
-                              </div>
-                            )}
 
                             {/* Gradient & Labels */}
                             <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-60"></div>
@@ -1127,6 +1104,8 @@ export default function Home({ setHomeNavbarLoading }) {
                         <div
                           className={`group bg-white rounded-2xl shadow-sm border overflow-hidden flex flex-col cursor-pointer h-full card-hover ${isSelectedForCompare ? 'ring-2 ring-gray-900 border-gray-900' : 'border-gray-100 hover:border-gray-300'}`}
                           onClick={() => router.push(`/properties/${item.id}`)}
+                          onMouseEnter={() => setHoveredPropertyId(item.id)}
+                          onMouseLeave={() => setHoveredPropertyId(null)}
                         >
                           <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-2xl">
                             <img src={images[currentIndex]} alt={item.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
@@ -1143,15 +1122,6 @@ export default function Home({ setHomeNavbarLoading }) {
                                 </div>
                               </label>
                             </div>
-
-                            {/* Image Indicators */}
-                            {images.length > 1 && (
-                              <div className="absolute bottom-1.5 sm:bottom-2 md:bottom-3 left-1/2 -translate-x-1/2 flex gap-0.5 sm:gap-1 z-10">
-                                {images.map((_, idx) => (
-                                  <div key={idx} className={`h-0.5 sm:h-1 rounded-full transition-all duration-300 shadow-sm ${idx === currentIndex ? 'w-3 sm:w-4 bg-white' : 'w-0.5 sm:w-1 bg-white/60'}`} />
-                                ))}
-                              </div>
-                            )}
 
                             {/* Gradient & Labels */}
                             <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-60"></div>
@@ -1253,6 +1223,8 @@ export default function Home({ setHomeNavbarLoading }) {
                         <div
                           className={`group bg-white rounded-2xl shadow-sm border overflow-hidden flex flex-col cursor-pointer h-full card-hover ${isSelectedForCompare ? 'ring-2 ring-gray-900 border-gray-900' : 'border-gray-100 hover:border-gray-300'}`}
                           onClick={() => router.push(`/properties/${item.id}`)}
+                          onMouseEnter={() => setHoveredPropertyId(item.id)}
+                          onMouseLeave={() => setHoveredPropertyId(null)}
                         >
                           <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-2xl">
                             <img src={images[currentIndex]} alt={item.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
@@ -1269,15 +1241,6 @@ export default function Home({ setHomeNavbarLoading }) {
                                 </div>
                               </label>
                             </div>
-
-                            {/* Image Indicators */}
-                            {images.length > 1 && (
-                              <div className="absolute bottom-1.5 sm:bottom-2 md:bottom-3 left-1/2 -translate-x-1/2 flex gap-0.5 sm:gap-1 z-10">
-                                {images.map((_, idx) => (
-                                  <div key={idx} className={`h-0.5 sm:h-1 rounded-full transition-all duration-300 shadow-sm ${idx === currentIndex ? 'w-3 sm:w-4 bg-white' : 'w-0.5 sm:w-1 bg-white/60'}`} />
-                                ))}
-                              </div>
-                            )}
 
                             {/* Gradient & Labels */}
                             <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-60"></div>
@@ -1475,20 +1438,6 @@ export default function Home({ setHomeNavbarLoading }) {
                                 </svg>
                               </button>
                             </>
-                          )}
-
-                          {/* Image indicators */}
-                          {images.length > 1 && (
-                            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 p-2 bg-black/50 rounded-full backdrop-blur-sm">
-                              {images.map((_, idx) => (
-                                <button
-                                  key={idx}
-                                  onClick={() => setModalImageIndex(idx)}
-                                  className={`h-2 rounded-full transition-all cursor-pointer ${idx === modalImageIndex ? 'w-6 bg-white' : 'w-2 bg-white/50 hover:bg-white/80'
-                                    }`}
-                                />
-                              ))}
-                            </div>
                           )}
                         </>
                       )

@@ -739,7 +739,7 @@ export default function PropertyDetail() {
           container: locationMapRef.current,
           style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
           center: [lng, lat],
-          zoom: 15,
+          zoom: 13,
           dragPan: true,
           scrollZoom: true,
           attributionControl: false
@@ -938,7 +938,7 @@ export default function PropertyDetail() {
       const destination = getDestinationCoords()
       const lat = destination ? destination.lat : 10.3157
       const lng = destination ? destination.lng : 123.8854
-      locationMapInstance.current.flyTo({ center: [lng, lat], zoom: 15 })
+      locationMapInstance.current.flyTo({ center: [lng, lat], zoom: 13 })
     }
   }
 
@@ -1387,6 +1387,11 @@ export default function PropertyDetail() {
   const propertyAmenities = Array.isArray(property.amenities) ? property.amenities : []
   const hasFreeWater = propertyAmenities.some(a => String(a).toLowerCase() === 'free water')
   const hasFreeElectricity = propertyAmenities.some(a => String(a).toLowerCase() === 'free electricity')
+  const apartmentTypeLabel = String(property.property_type || 'Apartment').trim() || 'Apartment'
+  const parsedMaxOccupancy = Number(property.max_occupancy)
+  const maxOccupancy = Number.isFinite(parsedMaxOccupancy) && parsedMaxOccupancy > 0
+    ? Math.floor(parsedMaxOccupancy)
+    : null
 
   const rawAdvanceAmount = Number(property.advance_amount || 0)
   const rawSecurityDepositAmount = Number(property.security_deposit_amount || 0)
@@ -1434,10 +1439,6 @@ export default function PropertyDetail() {
 
 
               </div>
-              <div className="flex items-center gap-2 mb-2">
-                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                <span className="text-gray-600 text-sm font-medium">{fullAddress}</span>
-              </div>
             </div>
 
             <div className="flex flex-col items-start md:items-end">
@@ -1448,10 +1449,10 @@ export default function PropertyDetail() {
             </div>
           </div>
 
-          {/* Full-Width Gallery */}
-          <div className="mb-5">
+          {/* Gallery + Location */}
+          <div className="mb-5 grid grid-cols-1 lg:grid-cols-3 gap-5 items-stretch">
             {/* Gallery Collage */}
-            <div className="rounded-xl overflow-hidden shadow-sm border border-gray-100 relative">
+            <div className="rounded-xl overflow-hidden shadow-sm border border-gray-100 relative lg:col-span-2 flex flex-col">
               {propertyImages.length === 1 ? (
                 /* Single image layout */
                 <div className="h-[350px] md:h-[420px] cursor-pointer group overflow-hidden" onClick={() => setShowGalleryModal(true)}>
@@ -1546,6 +1547,78 @@ export default function PropertyDetail() {
                 </button>
               )}
             </div>
+
+            <div className="rounded-xl border border-gray-200 bg-white p-3 md:p-4 lg:col-span-1 flex flex-col">
+              {/* <h3 className="text-xl md:text-2xl font-black text-gray-900 uppercase tracking-wider mb-3">Property Location</h3> */}
+              <div className="w-full flex-1 min-h-[350px] bg-gray-50 rounded-xl overflow-hidden relative" ref={locationMapRef} id="property-location-map">
+                {/* Map Loading Overlay */}
+                {mapLoading && (
+                  <div className="absolute inset-0 z-[2000] flex flex-col items-center justify-center bg-gray-50 text-gray-400">
+                    <div className="animate-spin rounded-full h-8 w-8 border-2 border-gray-300 border-t-blue-600 mb-2"></div>
+                    <p className="text-sm font-medium">Loading Map...</p>
+                  </div>
+                )}
+
+                {/* Floating Input Panel - Inside Map */}
+                <div className="absolute bottom-3 left-3 right-3 z-[1000] flex flex-col gap-2">
+                  {/* Route Info Bar */}
+                  {locationIsRouting && (
+                    <div className="flex items-center justify-center gap-2 bg-white/95 backdrop-blur-sm rounded-xl px-4 py-3 shadow-lg">
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-gray-200 border-t-blue-600"></div>
+                      <p className="text-sm font-medium text-gray-600">Calculating route...</p>
+                    </div>
+                  )}
+                  {locationRouteInfo && !locationIsRouting && (
+                    <div className="flex items-center gap-4 bg-white/95 backdrop-blur-sm rounded-xl px-4 py-3 shadow-lg">
+                      <div className="flex items-center gap-2">
+                        <svg className="w-5 h-5 text-gray-600" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z" /></svg>
+                        <span className="text-sm font-bold text-gray-900">{locationRouteInfo.duration}</span>
+                      </div>
+                      <span className="text-gray-300">•</span>
+                      <span className="text-sm text-gray-500">{locationRouteInfo.distance} km</span>
+                      <button
+                        onClick={handleInternalDirections}
+                        className="ml-auto px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 cursor-pointer flex items-center gap-1.5 shadow-sm transition-colors"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+                        Navigate
+                      </button>
+                    </div>
+                  )}
+
+                  {/* From Address Input */}
+                  <div className="flex items-center bg-white/95 backdrop-blur-sm rounded-xl px-3 py-2.5 shadow-lg relative">
+                    <div className="w-3 h-3 bg-blue-500 rounded-full mr-3 shadow-sm"></div>
+                    <input
+                      className="flex-1 bg-transparent text-sm font-medium outline-none placeholder-gray-400"
+                      placeholder="Enter your location"
+                      value={locationFromAddress}
+                      onChange={handleLocationAddressChange}
+                      onFocus={() => { if (locationSuggestions.length > 0) setShowLocationSuggestions(true) }}
+                    />
+                    <button onClick={handleLocationMyLocation} className="p-2 bg-blue-500 rounded-lg text-white hover:bg-blue-600 transition-colors cursor-pointer shadow-sm ml-1" title="Locate Me">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                    </button>
+                    {locationFromAddress && (
+                      <button onClick={clearLocationRoute} className="p-1.5 hover:bg-gray-200 rounded-full transition-colors cursor-pointer ml-1" title="Clear">
+                        <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
+                    )}
+                    {/* Suggestions Dropdown - opens upward since input is at bottom */}
+                    {showLocationSuggestions && locationSuggestions.length > 0 && (
+                      <div className="absolute bottom-full left-0 right-0 mb-1 bg-white rounded-xl shadow-2xl border border-gray-100 z-[1100] overflow-hidden max-h-48 overflow-y-auto">
+                        {locationSuggestions.map((item, index) => (
+                          <div key={index} onClick={() => selectLocationSuggestion(item)} className="px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-0 flex items-start gap-3">
+                            <svg className="w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                            <span className="text-sm text-gray-700 leading-snug">{item.display_name}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -1555,56 +1628,9 @@ export default function PropertyDetail() {
               {/* Specs & Description */}
               <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm relative overflow-hidden">
 
-                <div className="mb-8">
+                <div>
                   <h3 className="text-3xl font-bold text-gray-900 mb-3 uppercase tracking-wider">About this property</h3>
                   <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-line">{property.description || 'No description provided.'}</p>
-                </div>
-
-                <div className="pt-6 border-t border-gray-100">
-                  <h4 className="text-sm font-black text-gray-900 uppercase tracking-wider mb-4">Inclusions & Move-in Terms</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
-                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Water</p>
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-bold text-gray-900">Water Billing</p>
-                        <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${hasFreeWater ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-700'}`}>
-                          {hasFreeWater ? 'Free' : 'Not Free'}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
-                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Electricity</p>
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-bold text-gray-900">Electric Billing</p>
-                        <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${hasFreeElectricity ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-700'}`}>
-                          {hasFreeElectricity ? 'Free' : 'Not Free'}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
-                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Advance Payment</p>
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="text-sm font-bold text-gray-900">Status</p>
-                        <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${isAdvanceIncluded ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-700'}`}>
-                          {isAdvanceIncluded ? 'Included' : 'Excluded'}
-                        </span>
-                      </div>
-                      <p className="text-xs text-gray-600 font-semibold">Amount: ₱{Number(advanceDisplayAmount).toLocaleString()}</p>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
-                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Security Deposit</p>
-                      <div className="flex items-center justify-between mb-1">
-                        <p className="text-sm font-bold text-gray-900">Status</p>
-                        <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${isSecurityDepositIncluded ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-700'}`}>
-                          {isSecurityDepositIncluded ? 'Included' : 'Excluded'}
-                        </span>
-                      </div>
-                      <p className="text-xs text-gray-600 font-semibold">Amount: ₱{Number(securityDepositDisplayAmount).toLocaleString()}</p>
-                    </div>
-                  </div>
                 </div>
               </div>
 
@@ -1720,7 +1746,7 @@ export default function PropertyDetail() {
               <div className="h-px bg-gray-200"></div>
 
               {/* Posted By + Contact Details */}
-              <div className="py-0">
+              <div className="pt-0 pb-8">
                 <h3 className="font-bold text-gray-900 mb-3">Contact Details of Landlord</h3>
                 {/* Posted By */}
                 <div className="flex items-center gap-3 mb-3">
@@ -1765,82 +1791,6 @@ export default function PropertyDetail() {
                 </div>
               </div>
 
-              {/* Separator */}
-              <div className="h-px bg-gray-200"></div>
-
-              {/* Location / Get Directions - Separate Section */}
-              <div className="py-2">
-                <h3 className="text-3xl font-bold text-gray-900 mb-3 uppercase tracking-wider">Property Location</h3>
-                <div className="w-full h-[500px] bg-gray-50 rounded-xl overflow-hidden relative" ref={locationMapRef} id="property-location-map">
-                  {/* Map Loading Overlay */}
-                  {mapLoading && (
-                    <div className="absolute inset-0 z-[2000] flex flex-col items-center justify-center bg-gray-50 text-gray-400">
-                      <div className="animate-spin rounded-full h-8 w-8 border-2 border-gray-300 border-t-blue-600 mb-2"></div>
-                      <p className="text-sm font-medium">Loading Map...</p>
-                    </div>
-                  )}
-
-                  {/* Floating Input Panel - Inside Map */}
-                  <div className="absolute bottom-3 left-3 right-3 z-[1000] flex flex-col gap-2">
-                    {/* Route Info Bar */}
-                    {locationIsRouting && (
-                      <div className="flex items-center justify-center gap-2 bg-white/95 backdrop-blur-sm rounded-xl px-4 py-3 shadow-lg">
-                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-gray-200 border-t-blue-600"></div>
-                        <p className="text-sm font-medium text-gray-600">Calculating route...</p>
-                      </div>
-                    )}
-                    {locationRouteInfo && !locationIsRouting && (
-                      <div className="flex items-center gap-4 bg-white/95 backdrop-blur-sm rounded-xl px-4 py-3 shadow-lg">
-                        <div className="flex items-center gap-2">
-                          <svg className="w-5 h-5 text-gray-600" fill="currentColor" viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z" /></svg>
-                          <span className="text-sm font-bold text-gray-900">{locationRouteInfo.duration}</span>
-                        </div>
-                        <span className="text-gray-300">•</span>
-                        <span className="text-sm text-gray-500">{locationRouteInfo.distance} km</span>
-                        <button
-                          onClick={handleInternalDirections}
-                          className="ml-auto px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg hover:bg-blue-700 cursor-pointer flex items-center gap-1.5 shadow-sm transition-colors"
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
-                          Navigate
-                        </button>
-                      </div>
-                    )}
-
-                    {/* From Address Input */}
-                    <div className="flex items-center bg-white/95 backdrop-blur-sm rounded-xl px-3 py-2.5 shadow-lg relative">
-                      <div className="w-3 h-3 bg-blue-500 rounded-full mr-3 shadow-sm"></div>
-                      <input
-                        className="flex-1 bg-transparent text-sm font-medium outline-none placeholder-gray-400"
-                        placeholder="Enter your location"
-                        value={locationFromAddress}
-                        onChange={handleLocationAddressChange}
-                        onFocus={() => { if (locationSuggestions.length > 0) setShowLocationSuggestions(true) }}
-                      />
-                      <button onClick={handleLocationMyLocation} className="p-2 bg-blue-500 rounded-lg text-white hover:bg-blue-600 transition-colors cursor-pointer shadow-sm ml-1" title="Locate Me">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                      </button>
-                      {locationFromAddress && (
-                        <button onClick={clearLocationRoute} className="p-1.5 hover:bg-gray-200 rounded-full transition-colors cursor-pointer ml-1" title="Clear">
-                          <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                        </button>
-                      )}
-                      {/* Suggestions Dropdown - opens upward since input is at bottom */}
-                      {showLocationSuggestions && locationSuggestions.length > 0 && (
-                        <div className="absolute bottom-full left-0 right-0 mb-1 bg-white rounded-xl shadow-2xl border border-gray-100 z-[1100] overflow-hidden max-h-48 overflow-y-auto">
-                          {locationSuggestions.map((item, index) => (
-                            <div key={index} onClick={() => selectLocationSuggestion(item)} className="px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-0 flex items-start gap-3">
-                              <svg className="w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                              <span className="text-sm text-gray-700 leading-snug">{item.display_name}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                </div>
-              </div>
             </div>
 
             {/* Right Column - Sidebar */}
@@ -1849,7 +1799,52 @@ export default function PropertyDetail() {
 
 
               {/* Booking + Amenities White Container */}
-              <div className="bg-white border border-white rounded-xl shadow-sm p-5">
+              <div className="bg-white border border-white rounded-xl shadow-sm p-4 mb-8">
+                <div className="mb-3 rounded-lg border border-gray-200 p-3">
+                  <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-wider mb-2">Apartment Details</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-3">
+                    <div>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">Type</p>
+                      <p className="mt-1 text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7a2 2 0 012-2h14a2 2 0 012 2v3H3V7z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 10h14v7a2 2 0 01-2 2H7a2 2 0 01-2-2v-7z" /></svg>
+                        {apartmentTypeLabel}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">Capacity</p>
+                      <p className="mt-1 text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                        {maxOccupancy ? `Good for ${maxOccupancy} ${maxOccupancy === 1 ? 'person' : 'people'}` : 'Not specified'}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">Bedrooms</p>
+                      <p className="mt-1 text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5 text-gray-400" fill="currentColor" viewBox="0 0 24 24"><path d="M7 13c1.66 0 3-1.34 3-3S8.66 7 7 7s-3 1.34-3 3 1.34 3 3 3zm12-6h-8v7H3V5H1v15h2v-3h18v3h2v-9c0-2.21-1.79-4-4-4z" /></svg>
+                        {property.bedrooms}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">Bathrooms</p>
+                      <p className="mt-1 text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5 text-gray-400" viewBox="0 0 24 24" fill="currentColor"><path d="M21 10H7V7c0-1.103.897-2 2-2s2 .897 2 2h2c0-2.206-1.794-4-4-4S5 4.794 5 7v3H3a1 1 0 0 0-1 1v2c0 2.606 1.674 4.823 4 5.65V22h2v-3h8v3h2v-3.35c2.326-.827 4-3.044 4-5.65v-2a1 1 0 0 0-1-1z" /></svg>
+                        {property.bathrooms}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">Area</p>
+                      <p className="mt-1 text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                        {property.area_sqft || 0} Sq Ft
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 {isOwner ? (
                   <div className="flex flex-col gap-3">
                     <div className="p-3 bg-blue-50 text-blue-800 text-xs rounded-lg">You own this property.</div>
@@ -1869,23 +1864,6 @@ export default function PropertyDetail() {
                       <div className="p-3 bg-gray-50 text-gray-500 text-xs font-medium rounded-lg text-center">Not available for booking.</div>
                     ) : (
                       <div className="flex flex-col gap-4">
-                        <div className="flex flex-wrap items-center gap-3 text-xs text-gray-700 border border-gray-100 bg-gray-50 rounded-lg px-3 py-2.5">
-                          <span className="inline-flex items-center gap-1.5 font-medium whitespace-nowrap">
-                            <svg className="w-3.5 h-3.5 text-gray-400" fill="currentColor" viewBox="0 0 24 24"><path d="M7 13c1.66 0 3-1.34 3-3S8.66 7 7 7s-3 1.34-3 3 1.34 3 3 3zm12-6h-8v7H3V5H1v15h2v-3h18v3h2v-9c0-2.21-1.79-4-4-4z" /></svg>
-                            {property.bedrooms} Bedrooms
-                          </span>
-                          <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
-                          <span className="inline-flex items-center gap-1.5 font-medium whitespace-nowrap">
-                            <svg className="w-3.5 h-3.5 text-gray-400" viewBox="0 0 24 24" fill="currentColor"><path d="M21 10H7V7c0-1.103.897-2 2-2s2 .897 2 2h2c0-2.206-1.794-4-4-4S5 4.794 5 7v3H3a1 1 0 0 0-1 1v2c0 2.606 1.674 4.823 4 5.65V22h2v-3h8v3h2v-3.35c2.326-.827 4-3.044 4-5.65v-2a1 1 0 0 0-1-1z" /></svg>
-                            {property.bathrooms} Bathrooms
-                          </span>
-                          <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
-                          <span className="inline-flex items-center gap-1.5 font-medium whitespace-nowrap">
-                            <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
-                            {property.area_sqft || 0} Sq Ft
-                          </span>
-                        </div>
-
                         {/* Default Date Display + Book Now Button (Shown only when options are hidden) */}
                         {!showBookingOptions && (
                           <>
@@ -1914,7 +1892,7 @@ export default function PropertyDetail() {
                               className="w-full py-3.5 bg-black text-white text-sm font-bold rounded-xl shadow-lg shadow-gray-200 hover:bg-gray-900 hover:shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2"
                             >
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                              Book Now
+                              Book Viewing
                             </button>
                           </>
                         )}
@@ -2342,7 +2320,7 @@ export default function PropertyDetail() {
                               disabled={submitting || !termsAccepted || (!selectedSlotId && !(preferredScheduleDate && preferredScheduleTime && preferredScheduleEndTime))}
                               className={`w-full py-3 px-4 rounded-xl text-sm font-bold shadow-sm transition-all ${termsAccepted && (selectedSlotId || (preferredScheduleDate && preferredScheduleTime && preferredScheduleEndTime)) ? 'bg-black text-white cursor-pointer hover:bg-gray-900 hover:shadow-md' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
                             >
-                              {submitting ? 'Confirming...' : 'Confirm Booking'}
+                              {submitting ? 'Confirming...' : 'Confirm Viewing Schedule'}
                             </button>
                           </div>
                         )}
@@ -2361,29 +2339,80 @@ export default function PropertyDetail() {
 
 
                 {/* Amenities Section */}
-                {property.amenities && property.amenities.length > 0 && (
-                  <div className="p-5 rounded-xl">
-                    <h3 className="text-sm font-bold text-gray-900 mb-3 uppercase tracking-wider">What this apartment offers</h3>
-                    <div className="flex flex-wrap gap-2">
-                      {(showAllAmenities ? property.amenities : property.amenities.slice(0, 6)).map((amenity, index) => (
-                        <span
-                          key={index}
-                          className="px-3 py-1.5 bg-gray-100 text-gray-700 text-xs font-medium rounded-full"
+                <div className="p-5 rounded-xl">
+                  <h3 className="text-sm font-bold text-gray-900 mb-3 uppercase tracking-wider">What this apartment offers</h3>
+                  {property.amenities && property.amenities.length > 0 ? (
+                    <>
+                      <div className="flex flex-wrap gap-2">
+                        {(showAllAmenities ? property.amenities : property.amenities.slice(0, 6)).map((amenity, index) => (
+                          <span
+                            key={index}
+                            className="px-3 py-1.5 bg-gray-100 text-gray-700 text-xs font-medium rounded-full"
+                          >
+                            {amenity}
+                          </span>
+                        ))}
+                      </div>
+                      {property.amenities.length > 6 && (
+                        <button
+                          onClick={() => setShowAllAmenities(!showAllAmenities)}
+                          className="mt-3 text-xs font-bold text-black underline cursor-pointer hover:text-gray-600 transition-colors"
                         >
-                          {amenity}
+                          {showAllAmenities ? 'Show less' : `+${property.amenities.length - 6} more`}
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-xs text-gray-500">No amenities listed yet.</p>
+                  )}
+                </div>
+
+                <div className="px-5 pb-5 pt-1 border-t border-gray-100">
+                  <h4 className="text-sm font-black text-gray-900 uppercase tracking-wider mb-3">Inclusions & Move-in Terms</h4>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Water</p>
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-bold text-gray-900">Water Billing</p>
+                        <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${hasFreeWater ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-700'}`}>
+                          {hasFreeWater ? 'Free' : 'Not Free'}
                         </span>
-                      ))}
+                      </div>
                     </div>
-                    {property.amenities.length > 6 && (
-                      <button
-                        onClick={() => setShowAllAmenities(!showAllAmenities)}
-                        className="mt-3 text-xs font-bold text-black underline cursor-pointer hover:text-gray-600 transition-colors"
-                      >
-                        {showAllAmenities ? 'Show less' : `+${property.amenities.length - 6} more`}
-                      </button>
-                    )}
+
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Electricity</p>
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-bold text-gray-900">Electric Billing</p>
+                        <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${hasFreeElectricity ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-700'}`}>
+                          {hasFreeElectricity ? 'Free' : 'Not Free'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Advance Payment</p>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-sm font-bold text-gray-900">Status</p>
+                        <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${isAdvanceIncluded ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-700'}`}>
+                          {isAdvanceIncluded ? 'Included' : 'Excluded'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-600 font-semibold">Amount: ₱{Number(advanceDisplayAmount).toLocaleString()}</p>
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                      <p className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Security Deposit</p>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-sm font-bold text-gray-900">Status</p>
+                        <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${isSecurityDepositIncluded ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-700'}`}>
+                          {isSecurityDepositIncluded ? 'Included' : 'Excluded'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-600 font-semibold">Amount: ₱{Number(securityDepositDisplayAmount).toLocaleString()}</p>
+                    </div>
                   </div>
-                )}
+                </div>
 
                 {/* Close white container */}
               </div>
@@ -2393,7 +2422,7 @@ export default function PropertyDetail() {
         </div >
 
         {showScheduleWarningModal && pendingScheduleWarning && (
-          <div className="fixed inset-0 z-[65] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={closeScheduleWarningModal}>
+          <div className="fixed inset-0 z-[5010] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={closeScheduleWarningModal}>
             <div className="bg-white border border-gray-100 shadow-2xl rounded-2xl max-w-sm w-full p-6 text-center" onClick={(e) => e.stopPropagation()}>
               <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-600">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4c-.77-1.33-2.69-1.33-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" /></svg>
@@ -2437,7 +2466,7 @@ export default function PropertyDetail() {
         )}
 
         {showTermsModal && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowTermsModal(false)}>
+          <div className="fixed inset-0 z-[5020] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowTermsModal(false)}>
             <div className="bg-white rounded-2xl w-full max-w-4xl h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
               {/* Modal Header */}
               <div className="flex items-center justify-between border-b bg-white">
@@ -2462,7 +2491,7 @@ export default function PropertyDetail() {
         }
         {/* Gallery Modal */}
         {showGalleryModal && (
-          <div className="fixed inset-0 z-[70] bg-black/95 flex items-center justify-center" onClick={() => setShowGalleryModal(false)}>
+          <div className="fixed inset-0 z-[5030] bg-black/95 flex items-center justify-center" onClick={() => setShowGalleryModal(false)}>
             {/* Close button */}
             <button
               onClick={() => setShowGalleryModal(false)}
@@ -2533,7 +2562,7 @@ export default function PropertyDetail() {
         )}
         {/* Reviews Modal */}
         {showAllReviewsModal && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowAllReviewsModal(false)}>
+          <div className="fixed inset-0 z-[5040] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setShowAllReviewsModal(false)}>
             <div className="bg-white rounded-2xl w-full max-w-5xl h-[85vh] flex flex-col shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
               {/* Modal Header */}
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
@@ -2546,10 +2575,10 @@ export default function PropertyDetail() {
                 </button>
               </div>
 
-              {/* Modal Body - Split Layout */}
-              <div className="flex-1 flex overflow-hidden">
+              {/* Modal Body - Responsive Split Layout */}
+              <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
                 {/* Left Panel - Ratings Summary & Filters */}
-                <div className="w-80 border-r border-gray-100 p-6 overflow-y-auto flex-shrink-0 bg-gray-50/50">
+                <div className="w-full md:w-80 border-b md:border-b-0 md:border-r border-gray-100 p-4 md:p-6 overflow-y-auto flex-shrink-0 bg-gray-50/50">
                   {/* Overall Rating */}
                   <div className="text-center mb-6 pb-6 border-b border-gray-200">
                     <div className="flex items-center justify-center gap-2 mb-1">
@@ -2566,7 +2595,6 @@ export default function PropertyDetail() {
                       { label: 'Cleanliness', key: 'cleanliness_rating', color: 'bg-blue-500', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg> },
                       { label: 'Communication', key: 'communication_rating', color: 'bg-green-500', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg> },
                       { label: 'Location', key: 'location_rating', color: 'bg-orange-500', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg> },
-                      // { label: 'Overall', key: 'rating', color: 'bg-yellow-500', icon: <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg> },
                     ].map(cat => {
                       const avg = (reviews.reduce((acc, curr) => acc + (curr[cat.key] || curr.rating), 0) / reviews.length)
                       return (
@@ -2578,7 +2606,7 @@ export default function PropertyDetail() {
                             </div>
                             <span className="text-sm font-bold text-gray-900">{avg.toFixed(1)}</span>
                           </div>
-                          <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                          <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
                             <div className={`h-full ${cat.color} rounded-full transition-all duration-500`} style={{ width: `${(avg / 5) * 100}%` }}></div>
                           </div>
                         </div>
@@ -2589,7 +2617,7 @@ export default function PropertyDetail() {
                   {/* Filter Options */}
                   <div>
                     <h4 className="text-xs font-bold text-gray-900 uppercase tracking-wider mb-3">Sort By</h4>
-                    <div className="flex flex-col gap-1.5">
+                    <div className="flex flex-row md:flex-col gap-1.5 overflow-x-auto md:overflow-x-visible pb-2 md:pb-0">
                       {[
                         { key: 'most_relevant', label: 'Most Relevant' },
                         { key: 'most_recent', label: 'Most Recent' },
@@ -2599,7 +2627,7 @@ export default function PropertyDetail() {
                         <button
                           key={filter.key}
                           onClick={() => setReviewFilter(filter.key)}
-                          className={`text-left px-3 py-2.5 rounded-lg text-sm font-medium transition-all cursor-pointer ${reviewFilter === filter.key
+                          className={`text-left px-3 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${reviewFilter === filter.key
                             ? 'bg-black text-white'
                             : 'text-gray-600 hover:bg-gray-100'
                             }`}
@@ -2612,7 +2640,7 @@ export default function PropertyDetail() {
                 </div>
 
                 {/* Right Panel - Reviews List */}
-                <div className="flex-1 overflow-y-auto p-6">
+                <div className="flex-1 overflow-y-auto p-4 md:p-6">
                   <div className="space-y-4">
                     {(() => {
                       let sorted = [...reviews]

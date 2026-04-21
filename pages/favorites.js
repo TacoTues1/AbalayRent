@@ -14,6 +14,7 @@ export default function FavoritesPage() {
   const [properties, setProperties] = useState([])
   const [propertyStats, setPropertyStats] = useState({})
   const [currentImageIndex, setCurrentImageIndex] = useState({})
+  const [hoveredPropertyId, setHoveredPropertyId] = useState(null)
   const skeletonFavoriteIndices = Array.from({ length: 8 }, (_, index) => index)
 
   useEffect(() => {
@@ -68,23 +69,22 @@ export default function FavoritesPage() {
   }, [router])
 
   useEffect(() => {
-    if (properties.length === 0) return
+    if (!hoveredPropertyId) return
+
+    const hoveredProperty = properties.find(p => p.id === hoveredPropertyId)
+    if (!hoveredProperty) return
+    const images = getPropertyImages(hoveredProperty)
+    if (images.length <= 1) return
 
     const interval = setInterval(() => {
-      setCurrentImageIndex(prev => {
-        const next = { ...prev }
-        properties.forEach((property) => {
-          const images = getPropertyImages(property)
-          if (images.length > 1) {
-            next[property.id] = ((prev[property.id] || 0) + 1) % images.length
-          }
-        })
-        return next
-      })
-    }, 2500)
+      setCurrentImageIndex(prev => ({
+        ...prev,
+        [hoveredPropertyId]: ((prev[hoveredPropertyId] || 0) + 1) % images.length,
+      }))
+    }, 1250)
 
     return () => clearInterval(interval)
-  }, [properties])
+  }, [hoveredPropertyId, properties])
 
   async function loadFavorites(userId) {
     setLoading(true)
@@ -278,6 +278,8 @@ export default function FavoritesPage() {
                   onPrevImage={() => prevImage(property.id, images.length)}
                   onNextImage={() => nextImage(property.id, images.length)}
                   showCompare={false}
+                  onMouseEnter={() => setHoveredPropertyId(property.id)}
+                  onMouseLeave={() => setHoveredPropertyId(null)}
                 />
               )
             })}

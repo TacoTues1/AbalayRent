@@ -4,6 +4,7 @@ import { showToast } from 'nextjs-toast-notify'
 import { useEffect, useRef, useState } from 'react'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import StripePaymentForm from '../components/StripePaymentForm'
+import { downloadExcel } from '../lib/exportExcel'
 import { supabase } from '../lib/supabaseClient'
 
 const PAYMENT_REQUESTS_PER_PAGE = 15
@@ -1729,7 +1730,32 @@ export default function PaymentsPage() {
               </>
             )}
           </div>
-          <div className="flex gap-2 w-full sm:w-auto">
+          <div className="flex gap-2 w-full sm:w-auto flex-wrap">
+            {paymentRequests.length > 0 && (
+              <button
+                onClick={() => {
+                  const rows = paymentRequests.map(r => ({
+                    'Property': r.properties?.title || '-',
+                    'Tenant': r.tenant_profile ? `${r.tenant_profile.first_name || ''} ${r.tenant_profile.middle_name || ''} ${r.tenant_profile.last_name || ''}`.replace(/\s+/g, ' ').trim() : '-',
+                    'Rent': r.rent_amount || 0,
+                    'Water': r.water_bill || 0,
+                    'Electricity': r.electrical_bill || 0,
+                    'Internet': r.wifi_bill || 0,
+                    'Other': r.other_bills || 0,
+                    'Total': (parseFloat(r.rent_amount || 0) + parseFloat(r.water_bill || 0) + parseFloat(r.electrical_bill || 0) + parseFloat(r.wifi_bill || 0) + parseFloat(r.other_bills || 0)).toFixed(2),
+                    'Status': (r.status || '').replace(/_/g, ' '),
+                    'Due Date': r.due_date ? new Date(r.due_date).toLocaleDateString() : '-',
+                    'Created': r.created_at ? new Date(r.created_at).toLocaleDateString() : '-',
+                  }))
+                  downloadExcel(rows, 'Payments', `payments_${new Date().toISOString().slice(0, 10)}`)
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 border-2 border-gray-300 text-gray-700 font-bold rounded-lg hover:bg-gray-50 text-sm cursor-pointer flex-1 sm:flex-none justify-center"
+                title="Download as Excel"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                Export Excel
+              </button>
+            )}
             {userRole === 'landlord' && (
               <Link
                 href="/payment-history"

@@ -62,10 +62,11 @@ export default function NewProperty() {
     deposit_same_as_rent: true,
     has_advance: true,
     advance_amount: '',
-    advance_same_as_rent: true
+    advance_same_as_rent: true,
+    custom_property_type: ''
   })
 
-  const propertyTypes = ['House Apartment', 'Studio Type', 'Solo Room', 'Boarding House']
+  const propertyTypes = ['House Apartment', 'Studio Type', 'Solo Room', 'Boarding House', 'Other']
   const bedTypes = ['Single Bed', 'Double Bed', 'Triple Bed']
 
   const [showAllAmenities, setShowAllAmenities] = useState(false)
@@ -354,10 +355,13 @@ export default function NewProperty() {
 
     const sanitizeNumber = (val) => (val === '' || val === null ? 0 : val)
 
-    const { deposit_same_as_rent, advance_same_as_rent, ...cleanedFormData } = formData
+    const { deposit_same_as_rent, advance_same_as_rent, custom_property_type, ...cleanedFormData } = formData
+
+    const finalPropertyType = formData.property_type === 'Other' ? formData.custom_property_type : formData.property_type
 
     const payload = {
       ...cleanedFormData,
+      property_type: finalPropertyType,
       amenities: normalizeAmenities(cleanedFormData.amenities),
       zip: sanitizeNumber(formData.zip),
       price: sanitizeNumber(formData.price),
@@ -367,6 +371,7 @@ export default function NewProperty() {
       bedrooms: sanitizeNumber(formData.bedrooms),
       bathrooms: sanitizeNumber(formData.bathrooms),
       area_sqft: sanitizeNumber(formData.area_sqft),
+      max_occupancy: sanitizeNumber(formData.max_occupancy),
       landlord: session.user.id,
       images: validImageUrls.length > 0 ? validImageUrls : null,
       has_security_deposit: formData.has_security_deposit,
@@ -430,9 +435,12 @@ export default function NewProperty() {
       if (!formData.city.trim()) { warn('City is required'); return false }
       if (!formData.country.trim()) { warn('Country is required'); return false }
       if (!formData.state_province.trim()) { warn(shouldSuggestPhilippineProvinces ? 'Province is required' : 'State/Province is required'); return false }
+      if (!formData.zip) { warn('ZIP Code is required'); return false }
     }
     if (step === 2) {
       if (!formData.price) { warn('Monthly price is required'); return false }
+      if (!formData.property_type) { warn('Apartment type is required'); return false }
+      if (formData.property_type === 'Other' && !formData.custom_property_type.trim()) { warn('Please specify the apartment type'); return false }
     }
     return true
   }
@@ -553,7 +561,7 @@ export default function NewProperty() {
                     <input type="text" name="state_province" required list="state-province-options" placeholder={shouldSuggestPhilippineProvinces ? 'Select or type a Philippine province' : 'Select or type a state/province'} className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black outline-none" value={formData.state_province} onChange={handleChange} />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-semibold text-gray-500 ml-1">ZIP</label>
+                    <label className="text-xs font-semibold text-gray-500 ml-1">ZIP *</label>
                   <input
                     type="number"
                     name="zip"
@@ -621,6 +629,32 @@ export default function NewProperty() {
                   <div className="space-y-1">
                     <label className="text-xs font-semibold text-gray-500 ml-1">Area (Sqft)</label>
                     <input type="number" name="area_sqft" min="0" className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none" value={formData.area_sqft} onChange={handleChange} />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-500 ml-1">Apartment Type *</label>
+                    <select name="property_type" value={formData.property_type} onChange={handleChange} className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none cursor-pointer">
+                      {propertyTypes.map((type) => (
+                        <option key={type} value={type}>{type}</option>
+                      ))}
+                    </select>
+                    {formData.property_type === 'Other' && (
+                      <div className="mt-2 animate-in slide-in-from-top-2 duration-200">
+                        <label className="text-[10px] font-bold text-gray-400 uppercase ml-1">Specify Type *</label>
+                        <input
+                          type="text"
+                          name="custom_property_type"
+                          placeholder="e.g. Condominium, Loft, etc."
+                          className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none mt-1"
+                          value={formData.custom_property_type}
+                          onChange={handleChange}
+                          required
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-500 ml-1">Good for (People)</label>
+                    <input type="number" name="max_occupancy" min="1" className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none" value={formData.max_occupancy} onChange={handleChange} />
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-semibold text-gray-500 ml-1">Status</label>

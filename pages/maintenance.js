@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useRouter } from 'next/router'
 import { createNotification, NotificationTemplates } from '../lib/notifications'
+import { downloadExcel } from '../lib/exportExcel'
 import { showToast } from 'nextjs-toast-notify'
 
 const MAX_ACTIVE_MAINTENANCE_REQUESTS = 2
@@ -1246,28 +1247,54 @@ export default function MaintenancePage() {
                 : 'Report issues and track resolution status.'}
             </p>
           </div>
-          {profile?.role === 'tenant' && (
-            <button
-              onClick={() => {
-                if (loading) {
-                  return
-                }
-                if (reachedMaintenanceRequestLimit) {
-                  showToast.error(`Maximum of ${MAX_ACTIVE_MAINTENANCE_REQUESTS} active requests reached. Please wait for one to be completed or cancelled.`)
-                  return
-                }
-                setShowModal(true)
-              }}
-              disabled={disableNewRequestButton}
-              className="w-full sm:w-auto px-6 py-3 bg-black text-white hover:bg-gray-800 rounded-xl font-bold text-sm shadow-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading
-                ? 'Loading...'
-                : reachedMaintenanceRequestLimit
-                ? `Max ${MAX_ACTIVE_MAINTENANCE_REQUESTS} Active Requests`
-                : '+ New Request'}
-            </button>
-          )}
+          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+            {requests.length > 0 && (
+              <button
+                onClick={() => {
+                  const rows = requests.map(r => ({
+                    'ID': r.id || '-',
+                    'Title': r.title || '-',
+                    'Property': r.properties?.title || '-',
+                    'Tenant': r.tenant_profile ? `${r.tenant_profile.first_name || ''} ${r.tenant_profile.middle_name || ''} ${r.tenant_profile.last_name || ''}`.replace(/\s+/g, ' ').trim() : '-',
+                    'Priority': r.priority || '-',
+                    'Status': (r.status || '').replace(/_/g, ' '),
+                    'Description': r.description || '-',
+                    'Cost': r.maintenance_cost || 0,
+                    'Created': r.created_at ? new Date(r.created_at).toLocaleDateString() : '-',
+                    'Resolved': r.resolved_at ? new Date(r.resolved_at).toLocaleDateString() : '-',
+                  }))
+                  downloadExcel(rows, 'Maintenance', `maintenance_${new Date().toISOString().slice(0, 10)}`)
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 border-2 border-gray-300 text-gray-700 font-bold rounded-lg hover:bg-gray-50 text-sm cursor-pointer justify-center"
+                title="Download as Excel"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                Export Excel
+              </button>
+            )}
+            {profile?.role === 'tenant' && (
+              <button
+                onClick={() => {
+                  if (loading) {
+                    return
+                  }
+                  if (reachedMaintenanceRequestLimit) {
+                    showToast.error(`Maximum of ${MAX_ACTIVE_MAINTENANCE_REQUESTS} active requests reached. Please wait for one to be completed or cancelled.`)
+                    return
+                  }
+                  setShowModal(true)
+                }}
+                disabled={disableNewRequestButton}
+                className="w-full sm:w-auto px-6 py-3 bg-black text-white hover:bg-gray-800 rounded-xl font-bold text-sm shadow-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading
+                  ? 'Loading...'
+                  : reachedMaintenanceRequestLimit
+                  ? `Max ${MAX_ACTIVE_MAINTENANCE_REQUESTS} Active Requests`
+                  : '+ New Request'}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Filter & Search Bar */}

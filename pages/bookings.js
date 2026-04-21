@@ -2,6 +2,7 @@ import { useRouter } from 'next/router'
 import { showToast } from 'nextjs-toast-notify'
 import { useEffect, useRef, useState } from 'react'
 import { createNotification } from '../lib/notifications'
+import { downloadExcel } from '../lib/exportExcel'
 import { supabase } from '../lib/supabaseClient'
 
 const BOOKINGS_PER_PAGE = 5
@@ -1994,6 +1995,27 @@ export default function BookingsPage() {
                 {userRoleLower === 'landlord' ? 'Manage viewing requests from prospective tenants.' : 'Manage your viewing appointments.'}
               </p>
             </div>
+            {bookings.length > 0 && (
+              <button
+                onClick={() => {
+                  const rows = bookings.filter(b => !b.is_application).map(b => ({
+                    'Property': b.property?.title || '-',
+                    'Tenant': b.tenant_profile ? `${b.tenant_profile.first_name || ''} ${b.tenant_profile.middle_name || ''} ${b.tenant_profile.last_name || ''}`.replace(/\s+/g, ' ').trim() : '-',
+                    'Status': (b.status || '').replace(/_/g, ' '),
+                    'Booking Date': b.booking_date ? new Date(b.booking_date).toLocaleDateString() : '-',
+                    'Start Time': b.start_time ? new Date(b.start_time).toLocaleString() : '-',
+                    'End Time': b.end_time ? new Date(b.end_time).toLocaleString() : '-',
+                    'Notes': extractTenantPreferredSchedule(b.notes).cleanNotes || '-',
+                  }))
+                  downloadExcel(rows, 'Bookings', `bookings_${new Date().toISOString().slice(0, 10)}`)
+                }}
+                className="flex items-center gap-1.5 px-3 py-2 border-2 border-gray-300 text-gray-700 font-bold rounded-lg hover:bg-gray-50 text-sm cursor-pointer w-full md:w-auto justify-center"
+                title="Download as Excel"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                Export Excel
+              </button>
+            )}
           </div>
 
           {/* Stats Cards */}

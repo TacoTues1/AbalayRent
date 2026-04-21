@@ -11,7 +11,9 @@ export default function PropertyCard({
   onToggleCompare,
   onPrevImage,
   onNextImage,
-  showCompare = true
+  showCompare = true,
+  onMouseEnter,
+  onMouseLeave
 }) {
   const router = useRouter()
 
@@ -19,6 +21,8 @@ export default function PropertyCard({
     <div 
       className={`group bg-white rounded-2xl shadow-sm border overflow-hidden cursor-pointer flex flex-col transition-all duration-300 hover:shadow-lg ${isSelectedForCompare ? 'ring-2 ring-black border-black' : 'border-gray-100'}`}
       onClick={() => router.push(`/properties/${property.id}`)}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
       {/* Image Slider - Top */}
       <div className="relative aspect-[4/3] overflow-hidden bg-gray-100">
@@ -81,20 +85,6 @@ export default function PropertyCard({
           </div>
         )}
         
-        {/* Image Indicators */}
-        {images.length > 1 && (
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1 z-10">
-            {images.map((_, idx) => (
-              <div
-                key={idx}
-                className={`h-1 rounded-full transition-all duration-300 shadow-sm ${
-                  idx === currentIndex ? 'w-4 bg-white' : 'w-1 bg-white/60'
-                }`}
-              />
-            ))}
-          </div>
-        )}
-
         {/* Gradient Overlay */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-60"></div>
 

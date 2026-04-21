@@ -163,28 +163,6 @@ function FlyToPhilippines() {
   return null;
 }
 
-function MapZoomTracker({ onZoomChange }) {
-  const { map, isLoaded } = useMap();
-
-  useEffect(() => {
-    if (!isLoaded || !map) return;
-
-    const updateZoom = () => {
-      onZoomChange(map.getZoom());
-    };
-
-    updateZoom();
-    map.on("zoom", updateZoom);
-    map.on("moveend", updateZoom);
-
-    return () => {
-      map.off("zoom", updateZoom);
-      map.off("moveend", updateZoom);
-    };
-  }, [map, isLoaded, onZoomChange]);
-
-  return null;
-}
 
 function MapAutoFocusToUser({ userLocation, enabled, radiusKm = 1, onFocusStart, onFocused }) {
   const { map, isLoaded } = useMap();
@@ -243,6 +221,7 @@ export default function AllProperties() {
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
   const [currentImageIndex, setCurrentImageIndex] = useState({})
+  const [hoveredPropertyId, setHoveredPropertyId] = useState(null)
 
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState('')
@@ -262,7 +241,6 @@ export default function AllProperties() {
 
   // --- Location & Map State ---
   const [userLocation, setUserLocation] = useState(null)
-  const [mapZoom, setMapZoom] = useState(null)
   const [nearbyFocusZoom, setNearbyFocusZoom] = useState(null)
   const [shouldAutoFocusUser, setShouldAutoFocusUser] = useState(false)
   const [hasInitialMapAutoFocusPlayed, setHasInitialMapAutoFocusPlayed] = useState(false)
@@ -343,7 +321,7 @@ export default function AllProperties() {
       if (userLocation) {
         const hash = hashString(property.id || property.title)
         const angle = (hash % 360) * (Math.PI / 180)
-        const radius = 0.003 + ((hash % 6) * 0.00022)
+        const radius = 0.0006 + ((hash % 6) * 0.0001) // Small radius fallback (~60m)
         return {
           lat: userLocation.latitude + (Math.sin(angle) * radius),
           lng: userLocation.longitude + (Math.cos(angle) * radius)
@@ -376,7 +354,7 @@ export default function AllProperties() {
     if (userLocation) {
       const hash = hashString(property.id || cityKey)
       const angle = (hash % 360) * (Math.PI / 180)
-      const radius = 0.003 + ((hash % 6) * 0.00022)
+      const radius = 0.0006 + ((hash % 6) * 0.0001) // Small radius fallback (~60m)
       return {
         lat: userLocation.latitude + (Math.sin(angle) * radius),
         lng: userLocation.longitude + (Math.cos(angle) * radius)
@@ -409,29 +387,22 @@ export default function AllProperties() {
   'Wheelchair accessible', 'Ramp access'
 ]
 
-  // Auto-slide images for property cards
+  // Hover-triggered image sliding for property cards
   useEffect(() => {
-    if (properties.length === 0) return
+    if (!hoveredPropertyId) return
+
+    const hoveredProperty = properties.find(p => p.id === hoveredPropertyId)
+    if (!hoveredProperty || !hoveredProperty.images || !Array.isArray(hoveredProperty.images) || hoveredProperty.images.length <= 1) return
 
     const interval = setInterval(() => {
       setCurrentImageIndex(prev => {
-        const newIndex = { ...prev }
-        properties.forEach(property => {
-          if (property.images && Array.isArray(property.images) && property.images.length > 1) {
-            const currentIdx = prev[property.id] || 0
-            newIndex[property.id] = (currentIdx + 1) % property.images.length
-          }
-        })
-        return newIndex
+        const currentIdx = prev[hoveredPropertyId] || 0
+        return { ...prev, [hoveredPropertyId]: (currentIdx + 1) % hoveredProperty.images.length }
       })
-      // ⏱ SPEED CONTROL: Change the number below to adjust auto-slide speed
-      // 1450 = 1.45 seconds (fast, matches visitor dashboard)
-      // 3000 = 3 seconds (moderate)
-      // 5000 = 5 seconds (slow)
-    }, 2450)
+    }, 1250)
 
     return () => clearInterval(interval)
-  }, [properties])
+  }, [hoveredPropertyId, properties])
 
   useEffect(() => {
     supabase.auth.getSession().then(result => {
@@ -1151,6 +1122,8 @@ export default function AllProperties() {
         key={property.id}
         className={`group bg-white rounded-2xl shadow-sm border overflow-hidden cursor-pointer flex flex-col h-full ${isSelectedForCompare ? 'ring-2 ring-black border-black' : 'border-gray-100'}`}
         onClick={() => router.push(`/properties/${property.id}`)}
+        onMouseEnter={() => setHoveredPropertyId(property.id)}
+        onMouseLeave={() => setHoveredPropertyId(null)}
       >
         {/* Image Slider */}
         <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-2xl">
@@ -1205,19 +1178,6 @@ export default function AllProperties() {
               >
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
               </button>
-            </div>
-          )}
-
-          {/* Dots */}
-          {images.length > 1 && (
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1 z-10">
-              {images.map((_, idx) => (
-                <div
-                  key={idx}
-                  className={`h-1 rounded-full shadow-sm ${idx === currentIndex ? 'w-3 sm:w-4 bg-white' : 'w-1 bg-white/60'
-                    }`}
-                />
-              ))}
             </div>
           )}
 
@@ -1462,14 +1422,13 @@ export default function AllProperties() {
                       </div>
                     </div>
                   )}
-                <Map
-                  key="all-properties-map"
-                  center={userLocation && hasInitialMapAutoFocusPlayed ? [userLocation.longitude, userLocation.latitude] : DEFAULT_MAP_CENTER}
-                  zoom={userLocation && hasInitialMapAutoFocusPlayed ? (nearbyFocusZoom || USER_FOCUS_FALLBACK_ZOOM) : DEFAULT_MAP_ZOOM}
-                  mapStyle="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
-                  className="w-full h-full"
-                >
-                  <MapZoomTracker onZoomChange={setMapZoom} />
+                   <Map
+                    key="all-properties-map"
+                    center={userLocation && hasInitialMapAutoFocusPlayed ? [userLocation.longitude, userLocation.latitude] : DEFAULT_MAP_CENTER}
+                    zoom={userLocation && hasInitialMapAutoFocusPlayed ? (nearbyFocusZoom || USER_FOCUS_FALLBACK_ZOOM) : DEFAULT_MAP_ZOOM}
+                    mapStyle="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+                    className="w-full h-full"
+                  >
                   <MapAutoFocusToUser
                     userLocation={userLocation}
                     enabled={showMapView && shouldAutoFocusUser && !!userLocation}

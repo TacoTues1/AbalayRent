@@ -49,10 +49,11 @@ export default function EditProperty() {
     deposit_same_as_rent: true,
     has_advance: true,
     advance_amount: '',
-    advance_same_as_rent: true
+    advance_same_as_rent: true,
+    custom_property_type: ''
   })
 
-  const propertyTypes = ['House Apartment', 'Studio Type', 'Solo Room', 'Boarding House']
+  const propertyTypes = ['House Apartment', 'Studio Type', 'Solo Room', 'Boarding House', 'Other']
   const bedTypes = ['Single Bed', 'Double Bed', 'Triple Bed']
 
   const [showAllAmenities, setShowAllAmenities] = useState(false)
@@ -190,7 +191,8 @@ export default function EditProperty() {
       area_sqft: data.area_sqft || '',
       available: data.available ?? true,
       status: data.status || 'available',
-      property_type: data.property_type || 'House Apartment',
+      property_type: ['House Apartment', 'Studio Type', 'Solo Room', 'Boarding House'].includes(data.property_type) ? (data.property_type || 'House Apartment') : 'Other',
+      custom_property_type: ['House Apartment', 'Studio Type', 'Solo Room', 'Boarding House'].includes(data.property_type) ? '' : (data.property_type || ''),
       bed_type: data.bed_type || 'Single Bed',
       max_occupancy: data.max_occupancy || 1,
       terms_conditions: data.terms_conditions || '',
@@ -408,10 +410,13 @@ export default function EditProperty() {
     // Helper to ensure numeric fields are sent as numbers or 0 (not empty strings)
     const sanitizeNumber = (val) => (val === '' || val === null ? 0 : val)
 
-    const { deposit_same_as_rent, advance_same_as_rent, ...cleanedFormData } = formData
+    const { deposit_same_as_rent, advance_same_as_rent, custom_property_type, ...cleanedFormData } = formData
+
+    const finalPropertyType = formData.property_type === 'Other' ? formData.custom_property_type : formData.property_type
 
     const payload = {
       ...cleanedFormData,
+      property_type: finalPropertyType,
       amenities: normalizeAmenities(cleanedFormData.amenities),
       zip: sanitizeNumber(formData.zip),
       price: sanitizeNumber(formData.price),
@@ -421,6 +426,7 @@ export default function EditProperty() {
       bedrooms: sanitizeNumber(formData.bedrooms),
       bathrooms: sanitizeNumber(formData.bathrooms),
       area_sqft: sanitizeNumber(formData.area_sqft),
+      max_occupancy: sanitizeNumber(formData.max_occupancy),
       images: validImageUrls.length > 0 ? validImageUrls : null,
       has_security_deposit: formData.has_security_deposit,
       security_deposit_amount: formData.has_security_deposit ? (formData.deposit_same_as_rent ? sanitizeNumber(formData.price) : sanitizeNumber(formData.security_deposit_amount)) : 0,
@@ -614,16 +620,17 @@ export default function EditProperty() {
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-gray-500 ml-1">ZIP *</label>
-                  <input
-                    type="number"
-                    name="zip"
-                    className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black focus:ring-0 outline-none"
-                    value={formData.zip}
-                    onChange={handleChange}
-                  />
-                </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-500 ml-1">ZIP *</label>
+                    <input
+                      type="number"
+                      name="zip"
+                      required
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black focus:ring-0 outline-none"
+                      value={formData.zip}
+                      onChange={handleChange}
+                    />
+                  </div>
                 <div className="space-y-1 md:col-span-3">
                   <label className="text-xs font-semibold text-gray-500 ml-1">Google Map Link (Preferred)</label>
                   <input
@@ -730,6 +737,45 @@ export default function EditProperty() {
                       min="0"
                       className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none"
                       value={formData.area_sqft}
+                      onChange={handleChange}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-500 ml-1">Apartment Type *</label>
+                    <select
+                      name="property_type"
+                      value={formData.property_type}
+                      onChange={handleChange}
+                      required
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none cursor-pointer"
+                    >
+                      {propertyTypes.map((type) => (
+                        <option key={type} value={type}>{type}</option>
+                      ))}
+                    </select>
+                    {formData.property_type === 'Other' && (
+                      <div className="mt-2 animate-in slide-in-from-top-2 duration-200">
+                        <label className="text-[10px] font-bold text-gray-400 uppercase ml-1">Specify Type *</label>
+                        <input
+                          type="text"
+                          name="custom_property_type"
+                          placeholder="e.g. Condominium, Loft, etc."
+                          className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none mt-1"
+                          value={formData.custom_property_type}
+                          onChange={handleChange}
+                          required
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-500 ml-1">Good for (People)</label>
+                    <input
+                      type="number"
+                      name="max_occupancy"
+                      min="1"
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none"
+                      value={formData.max_occupancy}
                       onChange={handleChange}
                     />
                   </div>

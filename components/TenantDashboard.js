@@ -79,6 +79,7 @@ export default function TenantDashboard({ session, profile }) {
   const [properties, setProperties] = useState([])
   const [loading, setLoading] = useState(true)
   const [currentImageIndex, setCurrentImageIndex] = useState({})
+  const [hoveredPropertyId, setHoveredPropertyId] = useState(null)
   const [activePropertyImageIndex, setActivePropertyImageIndex] = useState(0)
   const [tenantOccupancy, setTenantOccupancy] = useState(null)
   const [pendingPayments, setPendingPayments] = useState([])
@@ -221,24 +222,21 @@ export default function TenantDashboard({ session, profile }) {
   const suggestedSearchProperties = properties.slice(0, 6)
 
   useEffect(() => {
+    if (!hoveredPropertyId) return
+
     const allProperties = [...properties, ...guestFavorites, ...nearbyProperties, ...mostFavoriteProperties, ...topRated]
-    if (allProperties.length === 0) return
+    const hoveredProperty = allProperties.find(p => p.id === hoveredPropertyId)
+    if (!hoveredProperty || !hoveredProperty.images || !Array.isArray(hoveredProperty.images) || hoveredProperty.images.length <= 1) return
 
     const interval = setInterval(() => {
       setCurrentImageIndex(prev => {
-        const newIndex = { ...prev }
-        allProperties.forEach(property => {
-          if (property.images && Array.isArray(property.images) && property.images.length > 1) {
-            const currentIdx = prev[property.id] || 0
-            newIndex[property.id] = (currentIdx + 1) % property.images.length
-          }
-        })
-        return newIndex
+        const currentIdx = prev[hoveredPropertyId] || 0
+        return { ...prev, [hoveredPropertyId]: (currentIdx + 1) % hoveredProperty.images.length }
       })
     }, 1450)
 
     return () => clearInterval(interval)
-  }, [properties, guestFavorites, nearbyProperties, mostFavoriteProperties, topRated])
+  }, [hoveredPropertyId, properties, guestFavorites, nearbyProperties, mostFavoriteProperties, topRated])
 
 
   useEffect(() => {
@@ -248,7 +246,7 @@ export default function TenantDashboard({ session, profile }) {
       setActivePropertyImageIndex(prev =>
         (prev + 1) % tenantOccupancy.property.images.length
       )
-    }, 2500) 
+    }, 1250) 
 
     return () => clearInterval(interval)
   }, [tenantOccupancy])
@@ -1703,30 +1701,14 @@ export default function TenantDashboard({ session, profile }) {
     setShowFamilyModal(true)
   }
 
-  function closeFamilyModal(options = {}) {
-    const { force = false } = options
-    const hasDraft = familySearchQuery.trim().length > 0
-
-    if (!force && hasDraft && typeof window !== 'undefined') {
-      const confirmed = window.confirm('Leave this modal? Your family member search input will be discarded.')
-      if (!confirmed) return
-    }
-
+  function closeFamilyModal() {
     setShowFamilyModal(false)
     setFamilySearchQuery('')
     setFamilySearchResults([])
     setFamilySearching(false)
   }
 
-  function closeEndRequestModal(options = {}) {
-    const { force = false } = options
-    const hasDraft = Boolean(endRequestDate || endRequestReason.trim())
-
-    if (!force && hasDraft && typeof window !== 'undefined') {
-      const confirmed = window.confirm('Leave this modal? Your leave request details will be discarded.')
-      if (!confirmed) return
-    }
-
+  function closeEndRequestModal() {
     setShowEndRequestModal(false)
     setEndRequestDate('')
     setEndRequestReason('')
@@ -1796,6 +1778,8 @@ export default function TenantDashboard({ session, profile }) {
     <div
       className={`group bg-white rounded-2xl shadow-sm border overflow-hidden cursor-pointer flex flex-col h-full card-hover ${isSelectedForCompare ? 'ring-2 ring-black border-black' : 'border-gray-100 hover:border-gray-300'}`}
       onClick={() => router.push(`/properties/${property.id}`)}
+      onMouseEnter={() => setHoveredPropertyId(property.id)}
+      onMouseLeave={() => setHoveredPropertyId(null)}
     >
       <div className="relative aspect-[4/3] overflow-hidden bg-gray-100 rounded-2xl">
         <img src={images[currentIndex]} alt={property.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
@@ -1810,13 +1794,6 @@ export default function TenantDashboard({ session, profile }) {
             </div>
           </label>
         </div>
-        {images.length > 1 && (
-          <div className="absolute bottom-1.5 sm:bottom-2 md:bottom-3 left-1/2 -translate-x-1/2 flex gap-0.5 sm:gap-1 z-10">
-            {images.map((_, idx) => (
-              <div key={idx} className={`h-0.5 sm:h-1 rounded-full transition-all duration-300 shadow-sm ${idx === currentIndex ? 'w-3 sm:w-4 bg-white' : 'w-0.5 sm:w-1 bg-white/60'}`} />
-            ))}
-          </div>
-        )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-60"></div>
         <div className="absolute top-1.5 sm:top-2 md:top-3 left-1.5 sm:left-2 md:left-3 z-10 flex flex-col gap-0.5 sm:gap-1 items-start">
           <span
@@ -2055,9 +2032,19 @@ export default function TenantDashboard({ session, profile }) {
                           <svg className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                           <span className="line-clamp-2 leading-snug">{tenantOccupancy.property?.city}, {tenantOccupancy.property?.address}</span>
                         </p>
-                        <span className={`self-start px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide border ${tenantOccupancy.status === 'pending_end' ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-[#E3F6ED] text-[#1E9A5B] border-[#1E9A5B]/20'} shadow-sm`}>
-                          {tenantOccupancy.status === 'pending_end' ? 'Move-out Pending' : 'Active Property'}
+                        <span className={`self-start px-2 py-0.5 rounded-md text-[10px] font-bold tracking-wide border ${tenantOccupancy.end_request_status === 'approved' ? 'bg-blue-50 text-blue-600 border-blue-100' : (tenantOccupancy.status === 'pending_end' ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-[#E3F6ED] text-[#1E9A5B] border-[#1E9A5B]/20')} shadow-sm`}>
+                          {tenantOccupancy.end_request_status === 'approved' 
+                            ? `Move-out Approved (${new Date(tenantOccupancy.end_request_date).toLocaleDateString()})` 
+                            : (tenantOccupancy.status === 'pending_end' ? 'Move-out Pending' : 'Active Property')}
                         </span>
+                        {tenantOccupancy.end_request_status === 'approved' && (
+                          <div className="mt-1.5 flex items-start gap-1 p-1 bg-red-50 rounded border border-red-100">
+                             <svg className="w-3 h-3 text-red-500 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
+                             <p className="text-[9px] text-red-700 font-black leading-tight">
+                               Auto-cancellation risk: Settle all bills before the date above.
+                             </p>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -2410,8 +2397,10 @@ export default function TenantDashboard({ session, profile }) {
                         const total = rent + water + electric + wifi + other + security + advance;
 
                         let billType = 'Other Bill';
-                        if (rent > 0) billType = 'House Rent';
-                        else if (security > 0 && rent > 0) billType = 'Move-In Bill'; // Special case
+                        if ((rent > 0 && security > 0) || (rent > 0 && advance > 0 && security > 0)) billType = 'Move-In Bill';
+                        else if (rent > 0) billType = 'House Rent';
+                        else if (advance > 0) billType = 'Advance Payment';
+                        else if (security > 0) billType = 'Security Deposit';
                         else if (electric > 0) billType = 'Electric Bill';
                         else if (water > 0) billType = 'Water Bill';
                         else if (wifi > 0) billType = 'Wifi Bill';
@@ -2956,8 +2945,8 @@ export default function TenantDashboard({ session, profile }) {
       {/* End Request Modal */}
       {
         showEndRequestModal && tenantOccupancy && (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6">
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={closeEndRequestModal}>
+            <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
               <h3 className="text-xl font-bold mb-4">Request to Leave</h3>
 
               <div className="mb-4">
@@ -3042,7 +3031,7 @@ export default function TenantDashboard({ session, profile }) {
       {
         showReviewModal && reviewTarget && (
           <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={handleCancelReview}>
-            <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full p-8 max-h-[90vh] overflow-y-auto relative" style={{ animation: 'reviewModalIn 0.25s ease-out' }} onClick={e => e.stopPropagation()}>
+            <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full p-6 sm:p-8 max-h-[90vh] overflow-y-auto relative" style={{ animation: 'reviewModalIn 0.25s ease-out' }} onClick={e => e.stopPropagation()}>
 
               {/* Close (X) Button — just closes, doesn't permanently dismiss */}
               <button

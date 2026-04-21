@@ -42,7 +42,9 @@ export default function AssignTenantPage() {
     const [wifiDueDay, setWifiDueDay] = useState('')
     const [waterDueDay, setWaterDueDay] = useState('')
     const [electricityDueDay, setElectricityDueDay] = useState('')
-    const [alreadyPaid, setAlreadyPaid] = useState(false)
+    const [paidRent, setPaidRent] = useState(false)
+    const [paidAdvance, setPaidAdvance] = useState(false)
+    const [paidDeposit, setPaidDeposit] = useState(false)
 
     // Confirmation
     const [showConfirm, setShowConfirm] = useState(false)
@@ -238,9 +240,14 @@ export default function AssignTenantPage() {
         await supabase.from('bookings').update({ status: 'completed' }).eq('id', booking.id)
 
         // Notifications
+        const allPaid = paidRent && paidAdvance && paidDeposit
+        const somePaid = paidRent || paidAdvance || paidDeposit
         let message = `You have been assigned to occupy "${selectedProp.title}" starting ${new Date(startDate).toLocaleDateString('en-US')}.`
-        if (!alreadyPaid && securityDepositAmount > 0) message += ` Security deposit: ₱${Number(securityDepositAmount).toLocaleString()}.`
-        if (alreadyPaid) message += ` Move-in fees were marked as paid.`
+        if (!paidDeposit && securityDepositAmount > 0) message += ` Security deposit: ₱${Number(securityDepositAmount).toLocaleString()}.`
+        if (somePaid) {
+            const paidItems = [paidRent && 'Rent', paidAdvance && 'Advance', paidDeposit && 'Security Deposit'].filter(Boolean)
+            message += ` Already paid: ${paidItems.join(', ')}.`
+        }
         if (penaltyDetails && parseFloat(penaltyDetails) > 0) message += ` Late payment fee: ₱${Number(penaltyDetails).toLocaleString()}`
         if (contractPdfUrl) message += ` Contract PDF: ${contractPdfUrl}`
 
@@ -251,8 +258,8 @@ export default function AssignTenantPage() {
         }
         fetch('/api/send-email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookingId: booking.id, type: 'assignment', customMessage: message }) }).catch(err => console.error('Email Error:', err))
 
-        // Only send move-in notification template when move-in fees are not yet paid.
-        if (!alreadyPaid) {
+        // Only send move-in notification template when not all fees are paid.
+        if (!allPaid) {
             fetch('/api/notify', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -269,41 +276,70 @@ export default function AssignTenantPage() {
             }).catch(err => console.error('Move-in notification error:', err))
         }
 
-        if (!alreadyPaid) {
-            // Auto-bill for move-in only when not yet paid.
-            const dueDate = new Date(startDate)
+        // Calculate what's already paid vs what needs billing
+        const paidRentAmt = paidRent ? rentAmount : 0
+        const paidDepositAmt = paidDeposit ? securityDepositAmount : 0
+        const paidAdvanceAmt = paidAdvance ? advanceAmount : 0
+        const unpaidRentAmt = paidRent ? 0 : rentAmount
+        const unpaidDepositAmt = paidDeposit ? 0 : securityDepositAmount
+        const unpaidAdvanceAmt = paidAdvance ? 0 : advanceAmount
 
-            try {
+        const dueDate = new Date(startDate)
+        const totalPaid = paidRentAmt + paidDepositAmt + paidAdvanceAmt
+        const totalUnpaid = unpaidRentAmt + unpaidDepositAmt + unpaidAdvanceAmt
+
+        try {
+            // Record pre-paid items (if any) as a 'paid' record
+            if (totalPaid > 0) {
+                const paidItems = [paidRent && 'Rent', paidAdvance && 'Advance', paidDeposit && 'Deposit'].filter(Boolean).join(' + ')
+                await supabase.from('payment_requests').insert({
+                    landlord: session.user.id,
+                    tenant: booking.tenant,
+                    property_id: selectedPropertyId,
+                    occupancy_id: occupancyId,
+                    rent_amount: paidRentAmt,
+                    security_deposit_amount: paidDepositAmt,
+                    advance_amount: paidAdvanceAmt,
+                    water_bill: 0, electrical_bill: 0, other_bills: 0,
+                    bills_description: `Move-in (${paidItems} - Paid in Person)`,
+                    due_date: dueDate.toISOString(),
+                    status: 'paid',
+                    paid_at: new Date().toISOString(),
+                    amount_paid: totalPaid,
+                    is_move_in_payment: true
+                })
+            }
+
+            // Create pending bill for unpaid items (if any)
+            if (totalUnpaid > 0) {
+                const unpaidItems = [!paidRent && 'Rent', !paidAdvance && 'Advance', !paidDeposit && 'Deposit'].filter(Boolean).join(' + ')
                 const { error: billError } = await supabase.from('payment_requests').insert({
                     landlord: session.user.id,
                     tenant: booking.tenant,
                     property_id: selectedPropertyId,
                     occupancy_id: occupancyId,
-                    rent_amount: rentAmount,
-                    security_deposit_amount: securityDepositAmount,
-                    advance_amount: advanceAmount,
-                    water_bill: 0,
-                    electrical_bill: 0,
-                    other_bills: 0,
-                    bills_description: 'Move-in Payment (Rent + Advance + Security Deposit)',
+                    rent_amount: unpaidRentAmt,
+                    security_deposit_amount: unpaidDepositAmt,
+                    advance_amount: unpaidAdvanceAmt,
+                    water_bill: 0, electrical_bill: 0, other_bills: 0,
+                    bills_description: `Move-in Payment (${unpaidItems})`,
                     due_date: dueDate.toISOString(),
                     status: 'pending',
                     is_move_in_payment: true
                 })
                 if (!billError) {
-                    const totalAmount = rentAmount + advanceAmount + securityDepositAmount
                     await createNotification({
                         recipient: booking.tenant,
                         actor: session.user.id,
                         type: 'payment_request',
-                        message: `Move-in payment: ₱${Number(totalAmount).toLocaleString()} Total. Due: ${dueDate.toLocaleDateString('en-US')}`,
+                        message: `Move-in payment: ₱${Number(totalUnpaid).toLocaleString()} (${unpaidItems}). Due: ${dueDate.toLocaleDateString('en-US')}`,
                         link: '/payments'
                     })
                 }
-            } catch (err) { console.error('Auto-bill exception:', err) }
-        }
+            }
+        } catch (err) { console.error('Bill creation exception:', err) }
 
-        toast('success', alreadyPaid ? 'Tenant assigned successfully! No move-in payment bill was created.' : 'Tenant assigned! Move-in payment bill sent.')
+        toast('success', allPaid ? 'Tenant assigned! All move-in fees recorded as paid.' : somePaid ? 'Tenant assigned! Remaining balance billed to tenant.' : 'Tenant assigned! Move-in payment bill sent.')
         setTimeout(() => router.push('/bookings'), 1500)
     }
 
@@ -575,16 +611,72 @@ export default function AssignTenantPage() {
                 {!isWifiAvailable ? <UnavailableBadge label="WiFi" icon={wifiIcon} /> : !isWifiFree ? <DayPickerModal label="WiFi" icon={wifiIcon} selectedDay={wifiDueDay} onSelect={setWifiDueDay} accentColor="violet" pickerKey="wifi" /> : <FreeBadge label="Free WiFi" icon={wifiIcon} />}
 
                 <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <p className="text-xs font-bold text-gray-900">Tenant already paid move-in fee?</p>
-                            <p className="text-[10px] text-gray-500 mt-0.5">If active, the first generated bill will be for next month's rent instead.</p>
+                    <p className="text-xs font-bold text-gray-900 mb-1">Tenant already paid?</p>
+                    <p className="text-[10px] text-gray-500 mb-3">Toggle each item the tenant has already paid in person.</p>
+                    <div className="space-y-2">
+                        {/* Rent Toggle */}
+                        <div className="flex items-center justify-between p-2.5 rounded-xl border border-gray-100 hover:bg-gray-50 transition-colors">
+                            <div className="flex items-center gap-2.5">
+                                <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
+                                </div>
+                                <div>
+                                    <p className="text-xs font-bold text-gray-800">Rent (1 Month)</p>
+                                    <p className="text-[10px] text-gray-400">₱{Number(selectedProp?.price || 0).toLocaleString()}</p>
+                                </div>
+                            </div>
+                            <button type="button" onClick={() => setPaidRent(!paidRent)} className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer ${paidRent ? 'bg-green-500' : 'bg-gray-300'}`}>
+                                <div className={`w-4 h-4 rounded-full bg-white shadow transition-transform ${paidRent ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                            </button>
                         </div>
-                        <button type="button" onClick={() => setAlreadyPaid(!alreadyPaid)} className={`w-11 h-6 rounded-full transition-all duration-200 cursor-pointer ${alreadyPaid ? 'bg-green-500' : 'bg-gray-300'}`}>
-                            <div className={`w-5 h-5 rounded-full bg-white shadow transition-transform ${alreadyPaid ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                        </button>
+
+                        {/* Advance Toggle */}
+                        {selectedProp?.has_advance !== false && (
+                            <div className="flex items-center justify-between p-2.5 rounded-xl border border-gray-100 hover:bg-gray-50 transition-colors">
+                                <div className="flex items-center gap-2.5">
+                                    <div className="w-7 h-7 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center">
+                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                    </div>
+                                    <div>
+                                        <p className="text-xs font-bold text-gray-800">Advance Payment</p>
+                                        <p className="text-[10px] text-gray-400">₱{Number(selectedProp?.advance_amount || selectedProp?.price || 0).toLocaleString()}</p>
+                                    </div>
+                                </div>
+                                <button type="button" onClick={() => setPaidAdvance(!paidAdvance)} className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer ${paidAdvance ? 'bg-green-500' : 'bg-gray-300'}`}>
+                                    <div className={`w-4 h-4 rounded-full bg-white shadow transition-transform ${paidAdvance ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Security Deposit Toggle */}
+                        {selectedProp?.has_security_deposit !== false && (
+                            <div className="flex items-center justify-between p-2.5 rounded-xl border border-gray-100 hover:bg-gray-50 transition-colors">
+                                <div className="flex items-center gap-2.5">
+                                    <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                                    </div>
+                                    <div>
+                                        <p className="text-xs font-bold text-gray-800">Security Deposit</p>
+                                        <p className="text-[10px] text-gray-400">₱{Number(selectedProp?.security_deposit_amount || selectedProp?.price || 0).toLocaleString()}</p>
+                                    </div>
+                                </div>
+                                <button type="button" onClick={() => setPaidDeposit(!paidDeposit)} className={`w-10 h-5 rounded-full transition-all duration-200 cursor-pointer ${paidDeposit ? 'bg-green-500' : 'bg-gray-300'}`}>
+                                    <div className={`w-4 h-4 rounded-full bg-white shadow transition-transform ${paidDeposit ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                                </button>
+                            </div>
+                        )}
                     </div>
-                    {alreadyPaid && <p className="text-[10px] text-green-600 font-bold mt-2 flex items-center gap-1"><svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg> First bill will be generated for next month</p>}
+
+                    {(paidRent || paidAdvance || paidDeposit) && (
+                        <div className="mt-3 p-2 bg-green-50 rounded-lg border border-green-100">
+                            <p className="text-[10px] text-green-700 font-bold flex items-center gap-1">
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                {paidRent && paidAdvance && paidDeposit
+                                    ? 'All fees paid — no move-in bill will be created'
+                                    : `Paid items won't appear in the tenant's bill`}
+                            </p>
+                        </div>
+                    )}
                 </div>
 
                 {/* Placeholder for modal moved to root */}
