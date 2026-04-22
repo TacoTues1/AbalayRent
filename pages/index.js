@@ -95,6 +95,12 @@ export default function Home({ setHomeNavbarLoading }) {
 
 
   useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        router.replace('/dashboard')
+      }
+    })
+
     const hasSeenSplash = sessionStorage.getItem('hasSeenSplash')
 
     if (hasSeenSplash) {

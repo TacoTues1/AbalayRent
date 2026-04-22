@@ -86,6 +86,7 @@ export default function TenantDashboard({ session, profile }) {
   const [paymentHistory, setPaymentHistory] = useState([])
   const [familyPaidBills, setFamilyPaidBills] = useState([])
   const [showEndRequestModal, setShowEndRequestModal] = useState(false)
+  const [showEndWarningModal, setShowEndWarningModal] = useState(false)
   const [endRequestDate, setEndRequestDate] = useState('')
   const [endRequestReason, setEndRequestReason] = useState('')
   const [submittingEndRequest, setSubmittingEndRequest] = useState(false)
@@ -1594,6 +1595,11 @@ export default function TenantDashboard({ session, profile }) {
       showToast.error("Please fill in both Date and Reason");
       return;
     }
+    setShowEndWarningModal(true)
+  }
+
+  async function confirmRequestEndOccupancy() {
+    setShowEndWarningModal(false)
     setSubmittingEndRequest(true)
 
     // Check for pending payments before allowing end request
@@ -2992,6 +2998,42 @@ export default function TenantDashboard({ session, profile }) {
                 <span className="text-xs text-gray-400 font-normal normal-case">(Select at least 2)</span>
               )}
             </button>
+          </div>
+        )
+      }
+
+      {/* End Request Modal Warning Confirmation */}
+      {
+        showEndWarningModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[60] p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-[32px] shadow-2xl max-w-sm w-full p-8 text-center transform animate-in zoom-in-95 duration-200">
+              <div className="w-20 h-20 bg-yellow-50 text-yellow-600 rounded-full flex items-center justify-center mx-auto mb-6 border-4 border-white">
+                <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              
+              <h3 className="text-2xl font-black text-gray-900 mb-3 uppercase tracking-tight">Final Warning</h3>
+              
+              <p className="text-gray-600 text-sm leading-relaxed mb-8">
+                This request <span className="font-bold text-yellow-600">cannot be undone</span> once submitted. The move-out date you selected will be final upon approval. Are you absolutely sure?
+              </p>
+
+              <div className="flex flex-col gap-3">
+                <button 
+                  onClick={confirmRequestEndOccupancy}
+                  className="w-full py-4 bg-yellow-500 hover:bg-yellow-600 text-white font-black rounded-2xl transition-all cursor-pointer uppercase tracking-widest text-xs"
+                >
+                  Yes, Confirm Request
+                </button>
+                <button 
+                  onClick={() => setShowEndWarningModal(false)}
+                  className="w-full py-4 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold rounded-2xl transition-all cursor-pointer uppercase tracking-widest text-xs"
+                >
+                  Wait, Go Back
+                </button>
+              </div>
+            </div>
           </div>
         )
       }
