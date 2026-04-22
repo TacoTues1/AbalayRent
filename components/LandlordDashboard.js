@@ -2450,7 +2450,7 @@ export default function LandlordDashboard({ session, profile }) {
               </button>
               <button onClick={() => setActivePanel('scheduled')} className={`w-auto lg:w-full text-left px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 sm:gap-3 cursor-pointer ${activePanel === 'scheduled' ? 'bg-black text-white shadow-md' : 'text-gray-600 hover:bg-gray-50'}`}>
                 <svg className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2v2m-6 0h6" /></svg>
-                <span className="hidden sm:inline">Scheduled Booking Today</span>
+                <span className="hidden sm:inline">Scheduled Viewing Today</span>
                 <span className="sm:hidden">Scheduled</span>
                 <span className={`ml-auto min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-black border inline-flex items-center justify-center ${activePanel === 'scheduled' ? 'bg-white/15 text-white border-white/25' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>{scheduledToolCount}</span>
               </button>

@@ -1095,7 +1095,7 @@ export default function Navbar({ isHomeLoading = false }) {
               {effectiveRole === 'landlord' && (
                 <>
                   <Link href="/bookings" className={`nav-link text-sm font-semibold whitespace-nowrap transition-colors relative group ${isActive('/bookings') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
-                    Tenants Bookings
+                    Tenants Viewing Requests
                     {bookingCount > 0 && (
                       <span className="absolute top-0 right-0 transform translate-x-3 -translate-y-2 bg-[#FF4B60] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center shadow-sm">
                         {bookingCount > 9 ? '9+' : bookingCount}
@@ -1129,7 +1129,7 @@ export default function Navbar({ isHomeLoading = false }) {
                   {effectiveRole === 'tenant' && (
                     <>
                       <Link href="/bookings" className={`nav-link text-sm font-semibold whitespace-nowrap transition-colors relative group ${isActive('/bookings') ? 'active text-gray-900' : 'text-gray-500 hover:text-gray-900'} ${disabledClass}`}>
-                        My Bookings
+                        My Viewing Requests
                         {bookingCount > 0 && (
                           <span className="absolute top-0 right-0 transform translate-x-3 -translate-y-2 bg-[#FF4B60] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[1.25rem] text-center shadow-sm">
                             {bookingCount > 9 ? '9+' : bookingCount}
@@ -1403,7 +1403,7 @@ export default function Navbar({ isHomeLoading = false }) {
                   <Link href="/properties/new" onClick={() => setShowMobileMenu(false)} className={`flex items-center justify-center px-3 py-2 rounded-lg text-xs font-medium transition-all ${isActive('/properties/new') ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-100'} ${disabledClass}`}>Add Property</Link>
                   <Link href="/applications" onClick={() => setShowMobileMenu(false)} className={`flex items-center justify-center px-3 py-2 rounded-lg text-xs font-medium transition-all ${isActive('/applications') ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-100'} ${disabledClass}`}>Tenants Inquiries</Link>
                   <Link href="/bookings" onClick={() => setShowMobileMenu(false)} className={`flex items-center justify-center px-3 py-2 rounded-lg text-xs font-medium transition-all relative ${isActive('/bookings') ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-100'} ${disabledClass}`}>
-                    Tenants Bookings
+                    Tenants Viewing Requests
                     {bookingCount > 0 && (
                       <span className={`absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 text-[8px] font-bold px-1 py-0.5 rounded-full min-w-[1rem] text-center border border-white shadow-sm ${isActive('/bookings') ? 'bg-white text-black' : 'bg-red-500 text-white'}`}>
                         {bookingCount > 9 ? '9+' : bookingCount}
@@ -1427,7 +1427,7 @@ export default function Navbar({ isHomeLoading = false }) {
                   {effectiveRole === 'tenant' && (
                     <>
                       <Link href="/bookings" onClick={() => setShowMobileMenu(false)} className={`flex items-center justify-center px-3 py-2 rounded-lg text-xs font-medium transition-all relative ${isActive('/bookings') ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-100'} ${disabledClass}`}>
-                        My Bookings
+                        My Viewing Requests
                         {bookingCount > 0 && (
                           <span className={`absolute top-0 right-0 transform translate-x-1/4 -translate-y-1/4 text-[8px] font-bold px-1 py-0.5 rounded-full min-w-[1rem] text-center border border-white shadow-sm ${isActive('/bookings') ? 'bg-white text-black' : 'bg-red-500 text-white'}`}>
                             {bookingCount > 9 ? '9+' : bookingCount}

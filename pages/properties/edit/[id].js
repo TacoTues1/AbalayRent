@@ -40,8 +40,6 @@ export default function EditProperty() {
     area_sqft: '',
     available: true,
     status: 'available',
-    property_type: 'House Apartment',
-    bed_type: 'Single Bed',
     max_occupancy: 1,
     terms_conditions: '',
     amenities: [],
@@ -51,11 +49,9 @@ export default function EditProperty() {
     has_advance: true,
     advance_amount: '',
     advance_same_as_rent: true,
-    custom_property_type: ''
   })
 
-  const propertyTypes = ['House Apartment', 'Studio Type', 'Solo Room', 'Boarding House', 'Other']
-  const bedTypes = ['Single Bed', 'Double Bed', 'Triple Bed']
+
 
   const [showAllAmenities, setShowAllAmenities] = useState(false)
 
@@ -195,9 +191,6 @@ export default function EditProperty() {
       area_sqft: data.area_sqft || '',
       available: data.available ?? true,
       status: data.status || 'available',
-      property_type: ['House Apartment', 'Studio Type', 'Solo Room', 'Boarding House'].includes(data.property_type) ? (data.property_type || 'House Apartment') : 'Other',
-      custom_property_type: ['House Apartment', 'Studio Type', 'Solo Room', 'Boarding House'].includes(data.property_type) ? '' : (data.property_type || ''),
-      bed_type: data.bed_type || 'Single Bed',
       max_occupancy: hasNoOccupancyLimit ? 0 : (data.max_occupancy ?? 1),
       terms_conditions: data.terms_conditions || '',
       amenities: normalizeAmenities(data.amenities || []),
@@ -427,13 +420,10 @@ export default function EditProperty() {
     // Helper to ensure numeric fields are sent as numbers or 0 (not empty strings)
     const sanitizeNumber = (val) => (val === '' || val === null ? 0 : val)
 
-    const { deposit_same_as_rent, advance_same_as_rent, custom_property_type, ...cleanedFormData } = formData
-
-    const finalPropertyType = formData.property_type === 'Other' ? formData.custom_property_type : formData.property_type
+    const { deposit_same_as_rent, advance_same_as_rent, ...cleanedFormData } = formData
 
     const payload = {
       ...cleanedFormData,
-      property_type: finalPropertyType,
       amenities: normalizeAmenities(cleanedFormData.amenities),
       zip: sanitizeNumber(formData.zip),
       price: sanitizeNumber(formData.price),
@@ -711,7 +701,7 @@ export default function EditProperty() {
                   <span className="w-1.5 h-4 bg-black rounded-full"></span> Details
                 </h3>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1 col-span-2">
+                  <div className="space-y-1">
                     <label className="text-xs font-bold text-gray-700 ml-1">Monthly Price (₱) *</label>
                     <input
                       type="number"
@@ -722,6 +712,19 @@ export default function EditProperty() {
                       value={formData.price}
                       onChange={handleChange}
                     />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-gray-500 ml-1">Status *</label>
+                    <select
+                      name="status"
+                      value={formData.status}
+                      onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-black outline-none cursor-pointer"
+                    >
+                      <option value="available">Available</option>
+                      <option value="occupied">Occupied</option>
+                      <option value="not available">Unavailable</option>
+                    </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-semibold text-gray-500 ml-1">Beds</label>
@@ -758,34 +761,6 @@ export default function EditProperty() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-semibold text-gray-500 ml-1">Apartment Type *</label>
-                    <select
-                      name="property_type"
-                      value={formData.property_type}
-                      onChange={handleChange}
-                      required
-                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none cursor-pointer"
-                    >
-                      {propertyTypes.map((type) => (
-                        <option key={type} value={type}>{type}</option>
-                      ))}
-                    </select>
-                    {formData.property_type === 'Other' && (
-                      <div className="mt-2 animate-in slide-in-from-top-2 duration-200">
-                        <label className="text-[10px] font-bold text-gray-400 uppercase ml-1">Specify Type *</label>
-                        <input
-                          type="text"
-                          name="custom_property_type"
-                          placeholder="e.g. Condominium, Loft, etc."
-                          className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none mt-1"
-                          value={formData.custom_property_type}
-                          onChange={handleChange}
-                          required
-                        />
-                      </div>
-                    )}
-                  </div>
-                  <div className="space-y-1">
                     <label className="text-xs font-semibold text-gray-500 ml-1">Good for (People)</label>
                     {noOccupancyLimit ? (
                       <input
@@ -814,19 +789,7 @@ export default function EditProperty() {
                       No limits
                     </label>
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-gray-500 ml-1">Status</label>
-                    <select
-                      name="status"
-                      value={formData.status}
-                      onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-                      className="w-full bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-black outline-none cursor-pointer"
-                    >
-                      <option value="available">Available</option>
-                      <option value="occupied">Occupied</option>
-                      <option value="not available">Unavailable</option>
-                    </select>
-                  </div>
+
                 </div>
               </div>
 

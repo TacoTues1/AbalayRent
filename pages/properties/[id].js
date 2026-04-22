@@ -1804,13 +1804,6 @@ export default function PropertyDetail() {
                 <div className="mb-3 rounded-lg border border-gray-200 p-3">
                   <h4 className="text-[10px] font-black text-gray-500 uppercase tracking-wider mb-2">Apartment Details</h4>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-3">
-                    <div>
-                      <p className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">Type</p>
-                      <p className="mt-1 text-sm font-bold text-gray-900 flex items-center gap-1.5">
-                        <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7a2 2 0 012-2h14a2 2 0 012 2v3H3V7z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 10h14v7a2 2 0 01-2 2H7a2 2 0 01-2-2v-7z" /></svg>
-                        {apartmentTypeLabel}
-                      </p>
-                    </div>
 
                     <div>
                       <p className="text-[10px] text-gray-500 uppercase tracking-wider font-bold">Capacity</p>
