@@ -26,6 +26,7 @@ export default async function handler(req, res) {
                     .select('id, property:properties(title)')
                     .eq('id', fmRecord.parent_occupancy_id)
                     .in('status', ['active', 'pending_end'])
+                    .lte('start_date', new Date().toISOString())
                     .maybeSingle()
 
                 if (liteErr) return res.status(500).json({ error: liteErr.message })
@@ -37,6 +38,7 @@ export default async function handler(req, res) {
                 .select(`*, property:properties(id, title, address, city, images, price, terms_conditions), landlord:profiles!tenant_occupancies_landlord_id_fkey(id, first_name, middle_name, last_name), tenant:profiles!tenant_occupancies_tenant_id_fkey(id, first_name, middle_name, last_name, email, phone, avatar_url)`)
                 .eq('id', fmRecord.parent_occupancy_id)
                 .in('status', ['active', 'pending_end'])
+                .lte('start_date', new Date().toISOString())
                 .maybeSingle()
 
             if (occErr) return res.status(500).json({ error: occErr.message })

@@ -1313,6 +1313,7 @@ export default function TenantDashboard({ session, profile }) {
       .select(`*, property:properties(id, title, address, city, images, price, terms_conditions, amenities), landlord:profiles!tenant_occupancies_landlord_id_fkey(id, first_name, middle_name, last_name)`)
       .eq('tenant_id', session.user.id)
       .in('status', ['active', 'pending_end'])
+      .lte('start_date', new Date().toISOString())
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()

@@ -946,7 +946,7 @@ export default function LandlordDashboard({ session, profile }) {
   }
 
   async function loadPendingEndRequests() {
-    const { data } = await supabase.from('tenant_occupancies').select(`*, tenant:profiles!tenant_occupancies_tenant_id_fkey(id, first_name, middle_name, last_name, phone), property:properties(id, title, address)`).eq('landlord_id', session.user.id).eq('end_request_status', 'pending')
+    const { data } = await supabase.from('tenant_occupancies').select(`*, tenant:profiles!tenant_occupancies_tenant_id_fkey(id, first_name, middle_name, last_name, phone), property:properties(id, title, address)`).eq('landlord_id', session.user.id).in('end_request_status', ['pending', 'approved'])
     setPendingEndRequests(data || [])
   }
 
@@ -956,7 +956,6 @@ export default function LandlordDashboard({ session, profile }) {
   }
 
   async function loadIncomingEnds() {
-    // Fetch all active occupancies and filter in JS for better compatibility and logic
     const { data, error } = await supabase
       .from('tenant_occupancies')
       .select(`
@@ -965,7 +964,7 @@ export default function LandlordDashboard({ session, profile }) {
         property:properties(id, title, images, price, address, city)
       `)
       .eq('landlord_id', session.user.id)
-      .eq('status', 'active')
+      .in('status', ['active', 'pending_end'])
 
     if (error) {
       console.error('Error loading incoming ends:', error)
@@ -979,9 +978,9 @@ export default function LandlordDashboard({ session, profile }) {
       thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30)
 
       const filtered = data.filter(item => {
-        // Case 1: Approved move-out
-        if (item.end_request_status === 'approved' && item.end_request_date) {
-          return true // Show all approved move-outs until they are processed/archived
+        // Case 1: Approved or Pending move-out
+        if ((item.end_request_status === 'approved' || item.end_request_status === 'pending' || item.end_request_status === 'cancel_pending') && item.end_request_date) {
+          return true // Show all approved/pending move-outs until they are processed/archived
         }
 
         // Case 2: Contract ending soon OR already ended but still active status
@@ -2304,7 +2303,7 @@ export default function LandlordDashboard({ session, profile }) {
   const billingToolCount = billingSchedule.length
   const propertiesToolCount = activeOccupancies.length
   const terminationsToolCount = incomingEnds.length + pendingCancelEndRequests.length
-  const actionsToolCount = pendingEndRequests.length + pendingRenewalRequests.length + pendingCancelEndRequests.length + dashboardTasks.payments.length + dashboardTasks.maintenance.length
+  const actionsToolCount = pendingEndRequests.filter(r => r.end_request_status === 'pending').length + pendingRenewalRequests.length + pendingCancelEndRequests.length + dashboardTasks.payments.length + dashboardTasks.maintenance.length
   const scheduledToolCount = scheduledTodayBookings.length
   const hasNoAvailabilitySchedule = availabilityScheduleCount === 0
 
@@ -2444,7 +2443,7 @@ export default function LandlordDashboard({ session, profile }) {
               </button>
               <button onClick={() => setActivePanel('terminations')} className={`w-auto lg:w-full text-left px-3 sm:px-4 py-2 sm:py-3 rounded-lg sm:rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 sm:gap-3 cursor-pointer ${activePanel === 'terminations' ? 'bg-black text-white shadow-md' : 'text-gray-600 hover:bg-gray-50'}`}>
                 <svg className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
-                <span className="hidden sm:inline">Property Ends</span>
+                <span className="hidden sm:inline">Approved Property Request leave</span>
                 <span className="sm:hidden">Ends</span>
                 <span className={`ml-auto min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-black border inline-flex items-center justify-center ${activePanel === 'terminations' ? 'bg-white/15 text-white border-white/25' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>{terminationsToolCount}</span>
               </button>
@@ -2530,6 +2529,62 @@ export default function LandlordDashboard({ session, profile }) {
                   <p className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mt-0.5 sm:mt-1">Pending Tasks</p>
                 </div>
               </div>
+
+                {/* PROPERTY ENDS (DASHBOARD SUMMARY) */}
+                {/* {incomingEnds.length > 0 && (
+                  <div className="bg-white rounded-xl sm:rounded-2xl p-4 sm:p-6 border border-gray-200/60 shadow-sm mb-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h3 className="text-base sm:text-lg font-black text-gray-900 tracking-tight">Property Ends</h3>
+                        <p className="text-xs sm:text-sm font-medium text-gray-500">Scheduled move-outs and expirations</p>
+                      </div>
+                      <button onClick={() => setActivePanel('terminations')} className="text-xs font-bold text-blue-600 hover:text-blue-700 cursor-pointer">
+                        View All
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {incomingEnds.slice(0, 4).map(req => {
+                        const isApprovedMoveOut = req.end_request_status === 'approved'
+                        const isPending = req.end_request_status === 'pending'
+                        const rawEndDate = isApprovedMoveOut || isPending ? req.end_request_date : req.contract_end_date
+                        const endDateObj = new Date(rawEndDate)
+                        const isOverdue = endDateObj < new Date().setHours(0,0,0,0)
+                        
+                        return (
+                          <div key={req.id} className="p-3 bg-gray-50 rounded-xl border border-gray-100 hover:border-blue-200 transition-all">
+                            <div className="flex items-start gap-3">
+                              <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isApprovedMoveOut ? 'bg-emerald-100 text-emerald-600' : (isPending ? 'bg-orange-100 text-orange-600' : (isOverdue ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'))}`}>
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  {isApprovedMoveOut ? (
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  ) : isPending ? (
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  ) : (
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  )}
+                                </svg>
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-2 mb-0.5">
+                                  <span className={`px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider rounded ${isApprovedMoveOut ? 'bg-emerald-50 text-emerald-700' : (isPending ? 'bg-orange-50 text-orange-700' : (isOverdue ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'))}`}>
+                                    {isApprovedMoveOut ? 'Scheduled' : (isPending ? 'Pending Approval' : (isOverdue ? 'Expired' : 'Expiring'))}
+                                  </span>
+                                </div>
+                                <h4 className="font-bold text-xs text-gray-900 truncate">{req.property?.title}</h4>
+                                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                                  <p className="text-[10px] text-gray-500 truncate max-w-[100px]">{req.tenant?.first_name} {req.tenant?.last_name}</p>
+                                  <p className={`text-[10px] font-bold ${isOverdue && !isApprovedMoveOut ? 'text-rose-600' : 'text-gray-700'}`}>
+                                    Ends: {new Date(rawEndDate).toLocaleDateString()}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )} */}
 
                 {/* PROPERTIES GRID */}
                 <div className="bg-white rounded-xl sm:rounded-2xl p-4 sm:p-6 border border-gray-200/60 shadow-sm">
@@ -2944,7 +2999,7 @@ export default function LandlordDashboard({ session, profile }) {
                     <div>
                       <h3 className="text-base sm:text-lg font-black text-gray-900 tracking-tight flex items-center gap-2">
                         Pending Tasks
-                        {(pendingEndRequests.length + pendingRenewalRequests.length + dashboardTasks.payments.length + dashboardTasks.maintenance.length) > 0 && (
+                        {(pendingEndRequests.filter(r => r.end_request_status === 'pending').length + pendingRenewalRequests.length + dashboardTasks.payments.length + dashboardTasks.maintenance.length) > 0 && (
                           <span className="flex h-2.5 w-2.5 relative">
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
                             <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
@@ -2954,7 +3009,7 @@ export default function LandlordDashboard({ session, profile }) {
                     </div>
                   </div>
 
-                  {(pendingEndRequests.length + pendingRenewalRequests.length + pendingCancelEndRequests.length + dashboardTasks.payments.length + dashboardTasks.maintenance.length) > 0 ? (
+                  {(pendingEndRequests.filter(r => r.end_request_status === 'pending').length + pendingRenewalRequests.length + pendingCancelEndRequests.length + dashboardTasks.payments.length + dashboardTasks.maintenance.length) > 0 ? (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
                       {pendingCancelEndRequests.map(req => (
                         <div key={req.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-200 hover:border-emerald-300 hover:shadow-md transition-all cursor-pointer group" onClick={() => openEndConfirmation('approve_cancel_end', req.id)}>
@@ -2977,34 +3032,43 @@ export default function LandlordDashboard({ session, profile }) {
                         </div>
                       ))}
 
-                      {pendingEndRequests.map(req => (
-                        <div key={req.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-200 hover:border-orange-300 hover:shadow-md transition-all cursor-pointer group" onClick={() => openEndConfirmation('approve', req.id)}>
-                          <div className="flex items-start gap-4">
-                            <div className="w-10 h-10 rounded-xl bg-orange-100 flex items-center justify-center shrink-0">
-                              <svg className="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3M13 19H7a2 2 0 01-2-2V7a2 2 0 012-2h6" /></svg>
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center justify-between gap-2 mb-1">
-                                <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-[10px] font-bold uppercase tracking-wider rounded-md">Move-Out</span>
-                                <span className="text-[10px] text-gray-400 font-medium">Request Pending</span>
-                              </div>
-                              <h4 className="font-bold text-sm text-gray-900 group-hover:text-orange-700 transition-colors truncate">{req.property?.title}</h4>
-                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
-                                <p className="text-xs text-gray-500 flex items-center gap-1.5">
-                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-                                  {req.tenant?.first_name} {req.tenant?.last_name}
-                                </p>
-                                {req.end_request_date && (
-                                  <p className="text-xs text-orange-600 font-bold flex items-center gap-1.5">
-                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                                    Leaves: {new Date(req.end_request_date).toLocaleDateString()}
-                                  </p>
+                      {pendingEndRequests.filter(req => req.end_request_status === 'pending').map(req => {
+                        const isApproved = req.end_request_status === 'approved';
+                        return (
+                          <div key={req.id} className={`p-4 bg-gray-50 rounded-2xl border transition-all cursor-pointer group ${isApproved ? 'border-emerald-200 hover:border-emerald-300' : 'border-gray-200 hover:border-orange-300'} hover:shadow-md`} onClick={() => isApproved ? setActivePanel('terminations') : openEndConfirmation('approve', req.id)}>
+                            <div className="flex items-start gap-4">
+                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${isApproved ? 'bg-emerald-100 text-emerald-600' : 'bg-orange-100 text-orange-600'}`}>
+                                {isApproved ? (
+                                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                ) : (
+                                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3M13 19H7a2 2 0 01-2-2V7a2 2 0 012-2h6" /></svg>
                                 )}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-2 mb-1">
+                                  <span className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-md ${isApproved ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-100 text-orange-700'}`}>
+                                    {isApproved ? 'Scheduled Move-Out' : 'Move-Out'}
+                                  </span>
+                                  <span className="text-[10px] text-gray-400 font-medium">{isApproved ? 'Already Approved' : 'Request Pending'}</span>
+                                </div>
+                                <h4 className={`font-bold text-sm text-gray-900 transition-colors truncate ${isApproved ? 'group-hover:text-emerald-700' : 'group-hover:text-orange-700'}`}>{req.property?.title}</h4>
+                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
+                                  <p className="text-xs text-gray-500 flex items-center gap-1.5">
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                                    {req.tenant?.first_name} {req.tenant?.last_name}
+                                  </p>
+                                  {req.end_request_date && (
+                                    <p className={`text-xs font-bold flex items-center gap-1.5 ${isApproved ? 'text-emerald-600' : 'text-orange-600'}`}>
+                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                                      Leaves: {new Date(req.end_request_date).toLocaleDateString()}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        )
+                      })}
 
                       {pendingRenewalRequests.map(req => (
                         <div key={req.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all cursor-pointer group" onClick={() => openRenewalModal(req, 'approve')}>

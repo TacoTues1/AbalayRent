@@ -57,7 +57,7 @@ export default function AdminDashboard({ session, profile }) {
     { id: 'bookings', label: 'Bookings List', icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
     { id: 'schedules', label: 'Schedule Days', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
     { id: 'maintenance', label: 'Maintenance', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z' },
-    { id: 'leaves', label: 'Leave Pending', icon: 'M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1' },
+    { id: 'leaves', label: 'Leave Pending monitoring', icon: 'M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1' },
   ]
 
   // Management Modals State
@@ -210,8 +210,13 @@ export default function AdminDashboard({ session, profile }) {
 
   async function handleDeletePayment(id) {
     try {
+      // 1. Delete associated payouts first to avoid foreign key constraint error
+      await supabase.from('payouts').delete().eq('payment_request_id', id)
+      
+      // 2. Delete the payment request
       const { error } = await supabase.from('payment_requests').delete().eq('id', id)
       if (error) throw error
+      
       showToast.success("Payment deleted")
       refresh()
     } catch (error) {
@@ -371,6 +376,83 @@ export default function AdminDashboard({ session, profile }) {
     }
   }
 
+  async function handleDeleteLeave(id) {
+    try {
+      console.log("Starting deletion for occupancy:", id)
+      // 1. Get all payment requests associated with this occupancy
+      const { data: payReqs, error: payReqError } = await supabase.from('payment_requests').select('id, payment_id').eq('occupancy_id', id).limit(10000)
+      if (payReqError) throw payReqError
+      const payReqIds = payReqs?.map(r => r.id) || []
+      const paymentIds = payReqs?.map(r => r.payment_id).filter(Boolean) || []
+      console.log(`Found ${payReqIds.length} payment requests and ${paymentIds.length} linked payment records`)
+
+      // 2. Tenant-Centric Payout Cleanup
+      console.log("Starting tenant-centric payout cleanup...")
+      const { data: occInfo } = await supabase.from('tenant_occupancies').select('tenant_id').eq('id', id).single()
+      const tenantId = occInfo?.tenant_id
+      
+      if (tenantId) {
+        // Fetch all payouts for this tenant to manually check links
+        const { data: tenantPayouts } = await supabase.from('payouts').select('id, payment_request_id, payment_id').eq('tenant_id', tenantId)
+        
+        const idsToDelete = tenantPayouts?.filter(p => 
+          (p.payment_request_id && payReqIds.includes(p.payment_request_id)) || 
+          (p.payment_id && paymentIds.includes(p.payment_id))
+        ).map(p => p.id) || []
+        
+        if (idsToDelete.length > 0) {
+          console.log(`Deleting ${idsToDelete.length} payouts for tenant ${tenantId}`)
+          const { error: pdelError } = await supabase.from('payouts').delete().in('id', idsToDelete)
+          if (pdelError) throw pdelError
+        }
+      }
+
+      // 2.1 Direct Payout Cleanup (Safety net for payouts missing tenant_id or cross-linked)
+      console.log("Performing direct payout cleanup by IDs...")
+      if (payReqIds.length > 0) {
+        const { error: prPayoutError } = await supabase.from('payouts').delete().in('payment_request_id', payReqIds)
+        if (prPayoutError) console.warn("Direct payment_request_id payout delete failed:", prPayoutError)
+      }
+      if (paymentIds.length > 0) {
+        const { error: pPayoutError } = await supabase.from('payouts').delete().in('payment_id', paymentIds)
+        if (pPayoutError) console.warn("Direct payment_id payout delete failed:", pPayoutError)
+      }
+      
+      console.log("Payouts cleanup completed")
+
+      // 3. Delete tenant balances for this occupancy
+      await supabase.from('tenant_balances').delete().eq('occupancy_id', id)
+      console.log("Tenant balances cleanup attempted")
+
+      // 4. Delete associated payment requests individually
+      for (const reqId of payReqIds) {
+        const { error: payDeleteError } = await supabase.from('payment_requests').delete().eq('id', reqId)
+        if (payDeleteError) {
+          console.warn(`Payment request ${reqId} blocked, trying deep cleanup...`)
+          // Try to delete any payout that might still be lingering for this specific request
+          await supabase.from('payouts').delete().eq('payment_request_id', reqId)
+          const { error: retryError } = await supabase.from('payment_requests').delete().eq('id', reqId)
+          if (retryError) throw retryError
+        }
+      }
+      console.log("Payment requests cleanup completed")
+
+      // 5. Delete associated family members
+      await supabase.from('family_members').delete().eq('parent_occupancy_id', id)
+      
+      // 6. Finally delete the occupancy record
+      const { error: occError } = await supabase.from('tenant_occupancies').delete().eq('id', id)
+      if (occError) throw occError
+      
+      showToast.success("Occupancy and all associated records deleted")
+      refresh()
+    } catch (error) {
+      console.error("Delete error:", error)
+      showToast.error(error.message || "Failed to delete occupancy")
+    }
+  }
+
+
   async function handleEndOccupancyConfirm() {
     if (!occToEnd) return
     try {
@@ -526,6 +608,7 @@ export default function AdminDashboard({ session, profile }) {
               setLeaveForm={setLeaveForm}
               setEditingLeave={setEditingLeave}
               setShowLeaveModal={setShowLeaveModal}
+              handleDeleteLeave={handleDeleteLeave}
             />
           )}
           {activeTab === 'profile' && <AdminProfileView session={session} profile={profile} />}
@@ -753,6 +836,7 @@ export default function AdminDashboard({ session, profile }) {
               <select className="w-full border rounded-xl px-3 py-2 text-sm" value={leaveForm.end_request_status} onChange={e => setLeaveForm({...leaveForm, end_request_status: e.target.value})}>
                 <option value="pending">Pending</option>
                 <option value="approved">Approved</option>
+                <option value="completed">Completed</option>
                 <option value="rejected">Rejected</option>
                 <option value="cancel_pending">Cancellation Requested</option>
                 <option value="cancelled">Cancelled</option>
@@ -3689,7 +3773,7 @@ function MaintenanceMonitoringView({ refreshTrigger, setMaintenanceForm, setEdit
   )
 }
 
-function LeaveMonitoringView({ refreshTrigger, setLeaveForm, setEditingLeave, setShowLeaveModal }) {
+function LeaveMonitoringView({ refreshTrigger, setLeaveForm, setEditingLeave, setShowLeaveModal, handleDeleteLeave }) {
   const LEAVE_PAGE_SIZE = 10
   const [requests, setRequests] = useState([])
   const [loading, setLoading] = useState(true)
@@ -3743,7 +3827,7 @@ function LeaveMonitoringView({ refreshTrigger, setLeaveForm, setEditingLeave, se
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white/80 backdrop-blur-sm p-6 rounded-2xl shadow-sm border border-gray-100/80">
         <div>
-          <h2 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight">Leave Pending Monitoring</h2>
+          <h2 className="text-2xl md:text-3xl font-black text-gray-900 tracking-tight">Leave Monitoring</h2>
           <p className="text-gray-500 mt-1 text-sm md:text-base">Track and monitor tenant move-out requests.</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto">
@@ -3751,6 +3835,7 @@ function LeaveMonitoringView({ refreshTrigger, setLeaveForm, setEditingLeave, se
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="border rounded px-3 py-2 bg-gray-50 focus:ring-2 focus:ring-black outline-none cursor-pointer font-medium w-full sm:w-auto">
             <option value="pending">Pending</option>
             <option value="approved">Approved</option>
+            <option value="completed">Completed</option>
             <option value="rejected">Rejected</option>
             <option value="all">All Requests</option>
           </select>
@@ -3790,7 +3875,7 @@ function LeaveMonitoringView({ refreshTrigger, setLeaveForm, setEditingLeave, se
                       {r.end_request_date ? new Date(r.end_request_date).toLocaleDateString() : 'N/A'}
                     </td>
                     <td className="p-4 md:p-5">
-                      <Badge variant={r.end_request_status === 'approved' ? 'success' : r.end_request_status === 'pending' ? 'warning' : 'default'}>
+                      <Badge variant={r.end_request_status === 'completed' ? 'success' : r.end_request_status === 'approved' ? 'success' : r.end_request_status === 'pending' ? 'warning' : 'default'}>
                         {r.end_request_status}
                       </Badge>
                     </td>
@@ -3808,6 +3893,14 @@ function LeaveMonitoringView({ refreshTrigger, setLeaveForm, setEditingLeave, se
                         className="text-black bg-gray-100 font-bold text-[10px] cursor-pointer px-2 py-1.5 rounded-lg hover:bg-gray-200 transition-colors"
                       >
                         Edit
+                      </button>
+                      <button 
+                        onClick={() => {
+                          if (confirm('Permanently delete this occupancy record? This cannot be undone.')) handleDeleteLeave(r.id);
+                        }}
+                        className="text-red-700 bg-red-50 font-bold text-[10px] cursor-pointer px-2 py-1.5 rounded-lg border border-red-100 hover:bg-red-100 transition-colors"
+                      >
+                        Delete
                       </button>
                     </td>
                   </tr>
