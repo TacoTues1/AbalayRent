@@ -2387,7 +2387,7 @@ export default function BookingsPage() {
 
             <div className="bg-red-50 border border-red-100 rounded-xl p-3 mb-5">
               <p className="text-xs uppercase tracking-wider font-bold text-red-600 mb-1">Warning</p>
-              <p className="text-sm text-red-700">This action cannot be undone.</p>
+              {/* <p className="text-sm text-red-700">This action cannot be undone.</p> */}
             </div>
 
             <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 mb-5">

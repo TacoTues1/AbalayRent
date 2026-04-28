@@ -115,6 +115,12 @@ export default function LandlordDashboard({ session, profile }) {
   const [scheduledTodayBookings, setScheduledTodayBookings] = useState([])
   const [availabilityScheduleCount, setAvailabilityScheduleCount] = useState(0)
 
+  // Property Slot System State
+  const [propertySlotPlan, setPropertySlotPlan] = useState(null)
+  const [loadingSlotPlan, setLoadingSlotPlan] = useState(false)
+  const [showSlotPurchaseModal, setShowSlotPurchaseModal] = useState(false)
+  const [purchasingSlot, setPurchasingSlot] = useState(false)
+
   // Advance Bill Confirmation Modal State
   const [advanceBillModal, setAdvanceBillModal] = useState({
     isOpen: false,
@@ -177,9 +183,30 @@ export default function LandlordDashboard({ session, profile }) {
         loadScheduledTodayBookings(),
         loadAvailabilityScheduleCount(),
         loadMonthlyIncome(),
-        loadTotalIncome()
+        loadTotalIncome(),
+        loadPropertySlotPlan()
       ]).then(() => {
         setStatsLoaded(true)
+
+        // Handle slot purchase success/cancel from URL params
+        if (typeof window !== 'undefined') {
+          const params = new URLSearchParams(window.location.search)
+          if (params.get('slot_purchase_success') === 'true') {
+            const paymentId = params.get('payment_id')
+            if (paymentId) {
+              fetch('/api/payments/landlord-subscriptions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'confirm-payment', payment_id: paymentId, payment_method: 'paymongo' })
+              }).then(() => loadPropertySlotPlan())
+            }
+            showToast.success('Property slot purchased successfully!', { duration: 4000, transition: 'bounceIn' })
+            window.history.replaceState({}, '', '/dashboard')
+          } else if (params.get('slot_purchase_cancelled') === 'true') {
+            showToast.warning('Property slot purchase was cancelled.', { duration: 3000, transition: 'bounceIn' })
+            window.history.replaceState({}, '', '/dashboard')
+          }
+        }
       })
     }
     // Reminders are now handled automatically by Supabase pg_cron
@@ -238,6 +265,43 @@ export default function LandlordDashboard({ session, profile }) {
     setProperties(data || [])
     setLoading(false)
     setRefreshing(false)
+  }
+
+  async function loadPropertySlotPlan() {
+    try {
+      setLoadingSlotPlan(true)
+      const res = await fetch(`/api/payments/landlord-subscriptions?landlord_id=${session.user.id}`)
+      const data = await res.json()
+      if (data.plan) {
+        setPropertySlotPlan(data.plan)
+      }
+    } catch (err) {
+      console.error('Error loading property slot plan:', err)
+    } finally {
+      setLoadingSlotPlan(false)
+    }
+  }
+
+  async function handlePurchasePropertySlot() {
+    setPurchasingSlot(true)
+    try {
+      const res = await fetch('/api/payments/landlord-slot-checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ landlord_id: session.user.id })
+      })
+      const data = await res.json()
+      if (data.checkoutUrl) {
+        window.location.href = data.checkoutUrl
+      } else {
+        showToast.error(data.error || 'Failed to start checkout', { duration: 4000, transition: 'bounceIn' })
+      }
+    } catch (err) {
+      console.error('Error purchasing property slot:', err)
+      showToast.error('Something went wrong. Please try again.', { duration: 4000, transition: 'bounceIn' })
+    } finally {
+      setPurchasingSlot(false)
+    }
   }
 
   async function loadDashboardTasks() {
@@ -2619,13 +2683,41 @@ export default function LandlordDashboard({ session, profile }) {
                     <div>
                       <h3 className="text-base sm:text-lg font-black text-gray-900 tracking-tight">Your Properties</h3>
                       <p className="text-xs sm:text-sm font-medium text-gray-500 mt-0.5">Manage all your uploaded properties here</p>
+                      {propertySlotPlan && (
+                        <div className="flex items-center gap-2 mt-1.5">
+                          <span className="text-[10px] sm:text-xs font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
+                            {propertySlotPlan.used_slots}/{propertySlotPlan.total_slots} slots used
+                          </span>
+                          {propertySlotPlan.paid_slots > 0 && (
+                            <span className="text-[10px] sm:text-xs font-bold px-2 py-0.5 rounded-full bg-yellow-50 text-black border border-yellow-400">
+                              {propertySlotPlan.paid_slots} purchased
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <button
-                        onClick={() => router.push('/properties/new')}
-                        className="w-full sm:w-auto px-4 sm:px-5 py-2 sm:py-2.5 bg-black text-white text-xs sm:text-sm font-bold rounded-xl cursor-pointer hover:bg-gray-800 transition-all shadow-sm"
-                    >
-                        + Add New Properties
-                    </button>
+                    {propertySlotPlan && propertySlotPlan.used_slots >= propertySlotPlan.total_slots ? (
+                      propertySlotPlan.total_slots >= propertySlotPlan.max_slots ? (
+                        <div className="w-full sm:w-auto px-4 sm:px-5 py-2 sm:py-2.5 bg-gray-100 text-gray-500 text-xs sm:text-sm font-bold rounded-xl text-center border border-gray-200">
+                          Maximum {propertySlotPlan.max_slots} slots reached
+                        </div>
+                      ) : (
+                        <button
+                            onClick={() => setShowSlotPurchaseModal(true)}
+                            className="w-full sm:w-auto px-4 sm:px-5 py-2 sm:py-2.5 bg-black text-white text-xs sm:text-sm font-bold rounded-xl cursor-pointer hover:bg-gray-800 transition-all shadow-sm flex items-center justify-center gap-2"
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                            Buy Property Slot (₱{propertySlotPlan.slot_price})
+                        </button>
+                      )
+                    ) : (
+                      <button
+                          onClick={() => router.push('/properties/new')}
+                          className="w-full sm:w-auto px-4 sm:px-5 py-2 sm:py-2.5 bg-black text-white text-xs sm:text-sm font-bold rounded-xl cursor-pointer hover:bg-gray-800 transition-all shadow-sm"
+                      >
+                          + Add New Properties
+                      </button>
+                    )}
                   </div>
  
                   {properties.length === 0 ? (
@@ -4429,6 +4521,88 @@ export default function LandlordDashboard({ session, profile }) {
             </div>
           </div>
         </div>
+      )}
+      {showSlotPurchaseModal && createPortal(
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200" onClick={() => !purchasingSlot && setShowSlotPurchaseModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-300" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="px-6 py-5 border-b border-gray-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-black flex items-center justify-center text-white">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-gray-900">Buy Property Slot</h3>
+                  <p className="text-xs text-gray-500 font-medium">Add another property listing slot</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="p-6">
+              <div className="bg-black border border-white rounded-xl p-4 mb-5">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm font-bold text-white">Current Plan</span>
+                  <span className="text-xs font-bold px-2 py-1 rounded-full bg-gray-100 text-black uppercase tracking-wider">{propertySlotPlan?.type}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div>
+                    <p className="text-xl font-black text-white">{propertySlotPlan?.used_slots}</p>
+                    <p className="text-[10px] font-bold text-white uppercase tracking-wider">Used</p>
+                  </div>
+                  <div>
+                    <p className="text-xl font-black text-white">{propertySlotPlan?.total_slots}</p>
+                    <p className="text-[10px] font-bold text-white uppercase tracking-wider">Total</p>
+                  </div>
+                  <div>
+                    <p className="text-xl font-black text-white">{propertySlotPlan?.max_slots}</p>
+                    <p className="text-[10px] font-bold text-white uppercase tracking-wider">Max</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-bold text-gray-900 text-sm">+1 Property Slot</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Permanent addition to your account</p>
+                  </div>
+                  <p className="text-2xl font-black text-gray-900">{'\u20b1'}50</p>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-gray-400 mt-3 text-center">
+                After purchase, your total slots will be <strong>{(propertySlotPlan?.total_slots || 3) + 1}</strong>. Payment via GCash, Maya, or Card.
+              </p>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex gap-3 justify-end">
+              <button
+                onClick={() => setShowSlotPurchaseModal(false)}
+                disabled={purchasingSlot}
+                className="px-5 py-2.5 border border-gray-200 text-gray-700 font-bold rounded-xl hover:bg-gray-100 cursor-pointer transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePurchasePropertySlot}
+                disabled={purchasingSlot}
+                className="px-5 py-2.5 bg-black text-white font-bold rounded-xl hover:bg-gray-900 cursor-pointer shadow-lg shadow-blue-200 transition-all flex items-center gap-2 disabled:opacity-50"
+              >
+                {purchasingSlot ? (
+                  <>
+                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    Processing...
+                  </>
+                ) : (
+                  'Proceed to Payment'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
 
     </div>

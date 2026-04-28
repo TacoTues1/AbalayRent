@@ -108,6 +108,75 @@ export default async function handler(req, res) {
             return res.status(200).json({ received: true, success: true, type: 'subscription_slot' });
         }
 
+        // ─── HANDLE LANDLORD PROPERTY SLOT PAYMENTS ───
+        if (metadata.type === 'landlord_property_slot') {
+            const landlordSlotPaymentId = metadata.landlord_slot_payment_id;
+            const landlordSubscriptionId = metadata.landlord_subscription_id;
+            const landlordId = metadata.landlord_id;
+
+            console.log(`[PayMongo Webhook] Processing LANDLORD PROPERTY SLOT payment for landlord: ${landlordId}`);
+
+            if (!landlordSlotPaymentId || !landlordSubscriptionId) {
+                console.error('[PayMongo Webhook] Missing landlord slot payment metadata');
+                return res.status(200).json({ received: true, error: 'Missing landlord slot metadata' });
+            }
+
+            const { data: existingLandlordPayment } = await supabase
+                .from('landlord_slot_payments')
+                .select('status, subscription_id')
+                .eq('id', landlordSlotPaymentId)
+                .single();
+
+            if (existingLandlordPayment?.status !== 'paid') {
+                await supabase
+                    .from('landlord_slot_payments')
+                    .update({
+                        status: 'paid',
+                        payment_method: 'paymongo',
+                        paid_at: new Date().toISOString()
+                    })
+                    .eq('id', landlordSlotPaymentId);
+            }
+
+            const resolvedLandlordSubId = existingLandlordPayment?.subscription_id || landlordSubscriptionId;
+            const LANDLORD_FREE_SLOTS = 3;
+            const MAX_PROPERTY_SLOTS = 10;
+
+            const { count: landlordPaidCount } = await supabase
+                .from('landlord_slot_payments')
+                .select('id', { count: 'exact', head: true })
+                .eq('subscription_id', resolvedLandlordSubId)
+                .eq('status', 'paid');
+
+            const maxLandlordPaidSlots = Math.max(0, MAX_PROPERTY_SLOTS - LANDLORD_FREE_SLOTS);
+            const newLandlordPaidSlots = Math.min(landlordPaidCount || 0, maxLandlordPaidSlots);
+            const newLandlordTotalSlots = Math.min(MAX_PROPERTY_SLOTS, LANDLORD_FREE_SLOTS + newLandlordPaidSlots);
+
+            await supabase
+                .from('landlord_subscriptions')
+                .update({
+                    paid_slots: newLandlordPaidSlots,
+                    total_slots: newLandlordTotalSlots,
+                    plan_type: newLandlordPaidSlots > 0 ? 'paid' : 'free',
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', resolvedLandlordSubId);
+
+            console.log(`[PayMongo Webhook] ✅ Landlord subscription reconciled: ${newLandlordTotalSlots} total property slots for landlord ${landlordId}`);
+
+            if (landlordId) {
+                await supabase.from('notifications').insert({
+                    recipient: landlordId,
+                    type: 'property_slot_purchased',
+                    message: `Your property slot has been unlocked! You now have ${newLandlordTotalSlots} property slot(s).`,
+                    data: { subscription_id: landlordSubscriptionId },
+                    read: false
+                });
+            }
+
+            return res.status(200).json({ received: true, success: true, type: 'landlord_property_slot' });
+        }
+
         // ─── HANDLE REGULAR RENT PAYMENTS ───
 
         // Find the successful payment

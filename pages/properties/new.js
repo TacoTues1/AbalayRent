@@ -360,6 +360,28 @@ export default function NewProperty() {
       return
     }
 
+    // Check property slot availability for landlords
+    if (profile.role === 'landlord') {
+      try {
+        const slotRes = await fetch('/api/payments/landlord-subscriptions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'check-can-add', landlord_id: session.user.id })
+        })
+        const slotData = await slotRes.json()
+        if (!slotData.can_add) {
+          if (slotData.max_reached) {
+            notifyError(`You've reached the maximum of ${slotData.max_slots} property slots.`)
+          } else {
+            notifyError(`All ${slotData.total_slots} property slots are used. Please purchase an additional slot from your dashboard.`)
+          }
+          return
+        }
+      } catch (err) {
+        console.error('Error checking property slots:', err)
+      }
+    }
+
     setLoading(true)
 
     const sanitizeNumber = (val) => (val === '' || val === null ? 0 : val)
