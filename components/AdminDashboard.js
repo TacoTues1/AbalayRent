@@ -236,23 +236,22 @@ export default function AdminDashboard({ session, profile }) {
         landlord: paymentForm.landlord_id,
         tenant: paymentForm.tenant_id,
         rent_amount: parseFloat(paymentForm.rent_amount) || 0,
-        other_bills: parseFloat(paymentForm.other_bills) || 0,
-        amount: (parseFloat(paymentForm.rent_amount) || 0) + 
-                (parseFloat(paymentForm.other_bills) || 0)
+        other_bills: parseFloat(paymentForm.other_bills) || 0
       }
       delete payload.landlord_id
       delete payload.tenant_id
 
-      let err;
       if (editingPayment) {
-        const { error } = await supabase.from('payment_requests').update(payload).eq('id', editingPayment.id)
-        err = error
+        await adminJsonRequest('/api/admin/payment-requests', {
+          method: 'PATCH',
+          body: JSON.stringify({ id: editingPayment.id, ...payload })
+        })
       } else {
-        const { error } = await supabase.from('payment_requests').insert([payload])
-        err = error
+        await adminJsonRequest('/api/admin/payment-requests', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        })
       }
-
-      if (err) throw err
       showToast.success(editingPayment ? "Payment updated" : "Payment created")
       setShowPaymentModal(false)
       setEditingPayment(null)
@@ -268,8 +267,10 @@ export default function AdminDashboard({ session, profile }) {
       return
     }
     try {
-      const { error } = await supabase.from('payment_requests').update({ status: 'cancelled' }).eq('id', id)
-      if (error) throw error
+      await adminJsonRequest('/api/admin/payment-requests', {
+        method: 'PATCH',
+        body: JSON.stringify({ id, status: 'cancelled' })
+      })
       showToast.success("Payment cancelled")
       refresh()
     } catch (error) {
@@ -279,13 +280,10 @@ export default function AdminDashboard({ session, profile }) {
 
   async function handleDeletePayment(id) {
     try {
-      // 1. Delete associated payouts first to avoid foreign key constraint error
-      await supabase.from('payouts').delete().eq('payment_request_id', id)
-      
-      // 2. Delete the payment request
-      const { error } = await supabase.from('payment_requests').delete().eq('id', id)
-      if (error) throw error
-      
+      await adminJsonRequest('/api/admin/payment-requests', {
+        method: 'DELETE',
+        body: JSON.stringify({ id })
+      })
       showToast.success("Payment deleted")
       refresh()
     } catch (error) {
@@ -3148,7 +3146,7 @@ function ActiveOccupanciesView({ refreshTrigger, onRefresh }) {
                     </div>
                     <div>
                       <p className="text-gray-500">End Date</p>
-                      <p className="font-semibold">{occupancyDetails?.occupancy?.end_date ? new Date(occupancyDetails.occupancy.end_date).toLocaleDateString() : 'N/A'}</p>
+                      <p className="font-semibold">{(occupancyDetails?.occupancy?.end_request_date || occupancyDetails?.occupancy?.contract_end_date) ? new Date(occupancyDetails.occupancy.end_request_date || occupancyDetails.occupancy.contract_end_date).toLocaleDateString() : 'N/A'}</p>
                     </div>
                   </div>
                 </div>
@@ -3211,7 +3209,7 @@ function ActiveOccupanciesView({ refreshTrigger, onRefresh }) {
         }}
         onConfirm={confirmEndOccupancy}
         title="End Occupancy"
-        message={`End occupancy for ${endTarget?.tenantName || 'this tenant'} at ${endTarget?.propertyTitle || 'this property'}? This will mark the property available and complete related bookings/applications.`}
+        message={`End occupancy for ${endTarget?.tenantName || 'this tenant'} at ${endTarget?.propertyTitle || 'this property'}? This will mark the property available and complete related bookings.`}
         confirmText={endingOccupancy ? 'Ending...' : 'End Occupancy'}
         zIndexClass="z-[110]"
       />
@@ -3536,7 +3534,10 @@ function PaymentsView({ refreshTrigger, setPaymentForm, setEditingPayment, setSh
         const other = parseFloat(r.other_bills) || 0
         const securityDeposit = parseFloat(r.security_deposit_amount) || 0
         const advance = parseFloat(r.advance_amount) || 0
-        const total = rent + other + securityDeposit + advance
+        const water = parseFloat(r.water_bill) || 0
+        const electric = parseFloat(r.electrical_bill) || 0
+        const wifi = parseFloat(r.wifi_bill) || 0
+        const total = rent + other + securityDeposit + advance + water + electric + wifi
         const billType = getBillType(r)
         const isPastDue = r.due_date && new Date(r.due_date) < new Date() && r.status === 'pending'
 

@@ -43,7 +43,6 @@ export default async function handler(req, res) {
                 gender: gender || null,
                 avatar_url: avatar_url || null,
                 role,
-                is_verified: true,
                 is_deleted: false,
             })
 

@@ -43,7 +43,6 @@ async function cleanupFamilyMembers(occupancy) {
       .from('tenant_occupancies')
       .update({
         status: 'ended',
-        end_date: new Date().toISOString(),
         is_family_member: false,
         parent_occupancy_id: null
       })
@@ -55,13 +54,6 @@ async function cleanupFamilyMembers(occupancy) {
       .eq('tenant', member.member_id)
       .eq('property_id', occupancy.property_id)
       .in('status', BOOKING_FINALIZE_STATUSES))
-
-    throwIfError(await supabaseAdmin
-      .from('applications')
-      .update({ status: 'completed' })
-      .eq('tenant', member.member_id)
-      .eq('property_id', occupancy.property_id)
-      .eq('status', 'accepted'))
   }
 
   const { error: deleteFamilyError } = await supabaseAdmin
@@ -110,11 +102,10 @@ export default async function handler(req, res) {
       .from('tenant_occupancies')
       .update({
         status: 'ended',
-        end_date: endedAt,
         end_request_status: 'completed'
       })
       .eq('id', occupancy.id)
-      .select('id, property_id, tenant_id, status, end_date')
+      .select('id, property_id, tenant_id, status, end_request_date')
       .maybeSingle()
 
     if (endError) throw new Error(endError.message)
@@ -132,13 +123,6 @@ export default async function handler(req, res) {
         .eq('tenant', occupancy.tenant_id)
         .eq('property_id', occupancy.property_id)
         .in('status', BOOKING_FINALIZE_STATUSES))
-
-      throwIfError(await supabaseAdmin
-        .from('applications')
-        .update({ status: 'completed' })
-        .eq('tenant', occupancy.tenant_id)
-        .eq('property_id', occupancy.property_id)
-        .eq('status', 'accepted'))
 
       throwIfError(await supabaseAdmin
         .from('maintenance_requests')
