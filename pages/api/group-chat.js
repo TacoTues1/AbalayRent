@@ -7,6 +7,11 @@ function buildProfileDisplayName(profileRow, fallback = 'A member') {
     return fullName || fallback
 }
 
+function normalizeMemberIds(memberIds = []) {
+    if (!Array.isArray(memberIds)) return []
+    return Array.from(new Set(memberIds.filter(Boolean)))
+}
+
 async function getAllowedGroupMemberIdsForLandlord(landlordId) {
     const allowedMemberIds = new Set()
 
@@ -38,6 +43,51 @@ async function getAllowedGroupMemberIdsForLandlord(landlordId) {
     }
 
     return allowedMemberIds
+}
+
+async function cleanupCreatedGroup(groupId) {
+    if (!groupId) return
+
+    await supabaseAdmin
+        .from('group_conversation_members')
+        .delete()
+        .eq('group_conversation_id', groupId)
+
+    await supabaseAdmin
+        .from('group_conversations')
+        .delete()
+        .eq('id', groupId)
+}
+
+async function insertMissingGroupMembers(groupId, members = []) {
+    const normalizedMembers = []
+    const seenUserIds = new Set()
+
+    ;(members || []).forEach(member => {
+        if (!member?.user_id || seenUserIds.has(member.user_id)) return
+        seenUserIds.add(member.user_id)
+        normalizedMembers.push(member)
+    })
+
+    if (normalizedMembers.length === 0) return
+
+    const { data: existingMembers, error: existingError } = await supabaseAdmin
+        .from('group_conversation_members')
+        .select('user_id')
+        .eq('group_conversation_id', groupId)
+
+    if (existingError) throw existingError
+
+    const existingUserIds = new Set((existingMembers || []).map(member => member.user_id))
+    const missingMembers = normalizedMembers.filter(member => !existingUserIds.has(member.user_id))
+
+    if (missingMembers.length === 0) return
+
+    const { error: memberError } = await supabaseAdmin
+        .from('group_conversation_members')
+        .insert(missingMembers)
+
+    if (memberError) throw memberError
 }
 
 async function syncGroupMembershipForGroup(groupId, allowedMembersCache = new Map()) {
@@ -483,45 +533,21 @@ export default async function handler(req, res) {
             }
 
             const { name, member_ids } = req.body
+            const selectedMemberIds = normalizeMemberIds(member_ids)
             if (!name?.trim()) {
                 return res.status(400).json({ error: 'Group name is required' })
             }
-            if (!member_ids || member_ids.length === 0) {
+            if (selectedMemberIds.length === 0) {
                 return res.status(400).json({ error: 'At least one member must be selected' })
             }
 
+            let createdGroupId = null
+
             try {
-                // Validate all members are under landlord's active occupancies
-                const { data: occupancies } = await supabaseAdmin
-                    .from('tenant_occupancies')
-                    .select('id, tenant_id')
-                    .eq('landlord_id', userId)
-                    .in('status', ['active', 'pending_end'])
-
-                const allowedTenantIds = new Set()
-                const occupancyIds = [];
-
-                (occupancies || []).forEach(occ => {
-                    if (occ?.tenant_id) allowedTenantIds.add(occ.tenant_id)
-                    if (occ?.id) occupancyIds.push(occ.id)
-                })
-
-                // Also include family members
-                if (occupancyIds.length > 0) {
-                    for (const occId of occupancyIds) {
-                        const { data: familyMembers } = await supabaseAdmin
-                            .from('family_members')
-                            .select('member_id')
-                            .eq('parent_occupancy_id', occId)
-
-                        ;(familyMembers || []).forEach(fm => {
-                            if (fm.member_id) allowedTenantIds.add(fm.member_id)
-                        })
-                    }
-                }
+                const allowedTenantIds = await getAllowedGroupMemberIdsForLandlord(userId)
 
                 // Validate all selected members
-                const invalidMembers = member_ids.filter(id => !allowedTenantIds.has(id))
+                const invalidMembers = selectedMemberIds.filter(id => !allowedTenantIds.has(id))
                 if (invalidMembers.length > 0) {
                     return res.status(403).json({
                         error: 'Some selected members are not under your active occupancies'
@@ -539,30 +565,27 @@ export default async function handler(req, res) {
                     .single()
 
                 if (createError) throw createError
+                createdGroupId = group.id
 
-                // Add landlord as admin
-                const memberInserts = [
+                // Some deployments auto-add the creator as admin with a DB trigger.
+                // Insert only missing rows so group creation works with or without that trigger.
+                await insertMissingGroupMembers(group.id, [
                     {
                         group_conversation_id: group.id,
                         user_id: userId,
                         role: 'admin'
                     },
-                    ...member_ids.map(memberId => ({
+                    ...selectedMemberIds.map(memberId => ({
                         group_conversation_id: group.id,
                         user_id: memberId,
                         role: 'member'
                     }))
-                ]
-
-                const { error: memberError } = await supabaseAdmin
-                    .from('group_conversation_members')
-                    .insert(memberInserts)
-
-                if (memberError) throw memberError
+                ])
 
                 return res.status(200).json({ success: true, group })
             } catch (err) {
                 console.error('Error creating group chat:', err)
+                await cleanupCreatedGroup(createdGroupId)
                 return res.status(500).json({ error: 'Failed to create group chat' })
             }
         }
@@ -570,6 +593,7 @@ export default async function handler(req, res) {
         // Add members to existing group
         if (action === 'add_members') {
             const { group_id, member_ids } = req.body
+            const selectedMemberIds = normalizeMemberIds(member_ids)
 
             if (profile.role !== 'landlord') {
                 return res.status(403).json({ error: 'Only landlords can add members' })
@@ -616,7 +640,7 @@ export default async function handler(req, res) {
                     }
                 }
 
-                const validMembers = (member_ids || []).filter(id => allowedTenantIds.has(id))
+                const validMembers = selectedMemberIds.filter(id => allowedTenantIds.has(id))
                 if (validMembers.length === 0) {
                     return res.status(400).json({ error: 'No valid members to add' })
                 }
